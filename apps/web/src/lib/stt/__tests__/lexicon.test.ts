@@ -171,6 +171,141 @@ describe("buildMeetingLexicon", () => {
     });
     expect(lexicon.terms).toEqual(["real-term"]);
   });
+
+  // ---------------------------------------------------------------
+  // FT-1c: >=100 glossary headwords used to starve the pack tier
+  // completely (strict concatenation, prefix-only caps) — a talk's
+  // OWN jargon never reached the recognizer. interleaveByShare fixes
+  // the prefix; roundRobinByPack's DOMAIN_PACK_WEIGHT fixes which
+  // pack terms land first within that share.
+  // ---------------------------------------------------------------
+
+  function packTermsAcross(packs: string[], perPack: number): { term: string; pack: string }[] {
+    const out: { term: string; pack: string }[] = [];
+    for (const pack of packs) {
+      for (let i = 0; i < perPack; i++) out.push({ term: `${pack}-t${i}`, pack });
+    }
+    return out;
+  }
+
+  // bioinformatics-edam/pharma-biotech listed FIRST so the round-robin's
+  // first-appearance ordering front-loads their (weighted) terms — the
+  // other 8 are real PACKS ids that PACK_DOMAINS deliberately leaves
+  // unmapped (see packs.ts), so they stay weight-1 regardless of domain.
+  const BIOTECH_TALK_PACKS = [
+    "bioinformatics-edam",
+    "pharma-biotech",
+    "core",
+    "meeting-flow",
+    "project",
+    "feedback",
+    "softening",
+    "chitchat",
+    "tech-terms",
+    "modern-usage",
+  ];
+
+  it("FT-1c biotech repro: a 120-headword glossary no longer starves the pack tier once the meeting's domain is active — today this returns 100 glossary terms and zero pack terms", () => {
+    mockPackTermsForBias.mockReturnValue(packTermsAcross(BIOTECH_TALK_PACKS, 20));
+    const entries = Array.from({ length: 120 }, (_, i) => glossaryEntry(`gloss-${i}`));
+    const lexicon = buildMeetingLexicon({
+      customEntries: entries,
+      enabledPacks: null,
+      learnset: {},
+      activeDomains: new Set(["genomics", "pharma"]),
+    });
+    const parsed: string[] = JSON.parse(projectForOsSpeechContextualJson(lexicon)!);
+    const packHits = parsed.filter((t) => !t.startsWith("gloss-"));
+    expect(packHits.length).toBeGreaterThanOrEqual(40);
+    const boosted = packHits.filter(
+      (t) => t.startsWith("bioinformatics-edam") || t.startsWith("pharma-biotech"),
+    );
+    expect(boosted.length).toBeGreaterThanOrEqual(18);
+  });
+
+  it("a `biomed` domain also boosts the pharma/genomics packs, via DOMAIN_ADJACENT (no pack carries `biomed` itself)", () => {
+    mockPackTermsForBias.mockReturnValue(packTermsAcross(BIOTECH_TALK_PACKS, 20));
+    const entries = Array.from({ length: 120 }, (_, i) => glossaryEntry(`gloss-${i}`));
+    const lexicon = buildMeetingLexicon({
+      customEntries: entries,
+      enabledPacks: null,
+      learnset: {},
+      activeDomains: new Set(["biomed"]),
+    });
+    const parsed: string[] = JSON.parse(projectForOsSpeechContextualJson(lexicon)!);
+    const boosted = parsed.filter(
+      (t) => t.startsWith("bioinformatics-edam") || t.startsWith("pharma-biotech"),
+    );
+    expect(boosted.length).toBeGreaterThanOrEqual(18);
+  });
+
+  it("glossary floor: 1000 headwords, 0 packs — still exactly the glossary, no crash", () => {
+    const entries = Array.from({ length: 1000 }, (_, i) => glossaryEntry(`gloss-${i}`));
+    const lexicon = buildMeetingLexicon({ customEntries: entries, enabledPacks: null, learnset: {} });
+    expect(lexicon.terms).toHaveLength(500); // LEXICON_MAX_TERMS belt
+    expect(lexicon.terms.every((t) => t.startsWith("gloss-"))).toBe(true);
+  });
+
+  it("pack floor: 500 headwords + 200 pack terms — the 100-term prefix holds 40±1 pack terms", () => {
+    mockPackTermsForBias.mockReturnValue(packTermsAcross(BIOTECH_TALK_PACKS, 20));
+    const entries = Array.from({ length: 500 }, (_, i) => glossaryEntry(`gloss-${i}`));
+    const lexicon = buildMeetingLexicon({ customEntries: entries, enabledPacks: null, learnset: {} });
+    const parsed: string[] = JSON.parse(projectForOsSpeechContextualJson(lexicon)!);
+    const packHits = parsed.filter((t) => !t.startsWith("gloss-"));
+    expect(packHits.length).toBeGreaterThanOrEqual(39);
+    expect(packHits.length).toBeLessThanOrEqual(41);
+  });
+
+  it("unknown domain (empty Set) — pinned literal output of the share-interleave", () => {
+    mockPackTermsForBias.mockReturnValue([
+      { term: "p1", pack: "A" },
+      { term: "p2", pack: "B" },
+      { term: "p3", pack: "A" },
+      { term: "p4", pack: "B" },
+    ]);
+    const entries = ["g1", "g2", "g3", "g4", "g5"].map((h) => glossaryEntry(h));
+    const lexicon = buildMeetingLexicon({
+      customEntries: entries,
+      enabledPacks: null,
+      learnset: {},
+      activeDomains: new Set(),
+    });
+    expect(lexicon.terms).toEqual(["g1", "g2", "p1", "g3", "p2", "g4", "g5", "p3", "p4"]);
+  });
+
+  it("unmapped domain ('software', a real DomainTag no PACKS entry maps to) — even split, identical to the empty-domain case", () => {
+    mockPackTermsForBias.mockReturnValue([
+      { term: "p1", pack: "A" },
+      { term: "p2", pack: "B" },
+      { term: "p3", pack: "A" },
+      { term: "p4", pack: "B" },
+    ]);
+    const entries = ["g1", "g2", "g3", "g4", "g5"].map((h) => glossaryEntry(h));
+    const withUnmapped = buildMeetingLexicon({
+      customEntries: entries,
+      enabledPacks: null,
+      learnset: {},
+      activeDomains: new Set(["software"]),
+    });
+    const withEmpty = buildMeetingLexicon({
+      customEntries: entries,
+      enabledPacks: null,
+      learnset: {},
+      activeDomains: new Set(),
+    });
+    expect(withUnmapped.terms).toEqual(withEmpty.terms);
+  });
+
+  it("determinism: identical input twice matches, and a permuted activeDomains Set iteration order doesn't change output", () => {
+    mockPackTermsForBias.mockReturnValue(packTermsAcross(BIOTECH_TALK_PACKS, 20));
+    const entries = Array.from({ length: 120 }, (_, i) => glossaryEntry(`gloss-${i}`));
+    const base = { customEntries: entries, enabledPacks: null, learnset: {} };
+    const a = buildMeetingLexicon({ ...base, activeDomains: new Set(["genomics", "pharma"]) });
+    const b = buildMeetingLexicon({ ...base, activeDomains: new Set(["genomics", "pharma"]) });
+    expect(a).toEqual(b);
+    const c = buildMeetingLexicon({ ...base, activeDomains: new Set(["pharma", "genomics"]) });
+    expect(a).toEqual(c);
+  });
 });
 
 // v0.5 Wave-1 Feature 8 (named custom dictionary packs, blueprint §1
@@ -182,6 +317,16 @@ describe("buildMeetingLexicon", () => {
 // reset between tests (no vi.resetModules() here, unlike glossary.
 // test.ts), so a name collision would spuriously throw.
 describe("buildMeetingLexicon — pack-aware filtering (the Wave-0 seam, A7)", () => {
+  // vi.clearAllMocks() (the first describe block's own afterEach) clears
+  // call history but NOT a mockReturnValue override — this block's own
+  // tests assume packTermsForBias returns [] (only the glossary tier is
+  // under test here), so pin that explicitly rather than depending on
+  // whichever value the LAST test elsewhere in this file happened to
+  // leave behind.
+  beforeEach(() => {
+    mockPackTermsForBias.mockReturnValue([]);
+  });
+
   it("excludes a disabled custom pack's entries from the glossary tier", async () => {
     const packs = await glossary.createCustomPack("Lexicon Pack A");
     const pack = packs.find((p) => p.name === "Lexicon Pack A")!;
@@ -321,5 +466,21 @@ describe("projectForInitialPrompt — D3 END-priority projection (Sol F14)", () 
     // t200..t249 never made it into the candidate prefix at all.
     expect(prompt).not.toContain("t249");
     expect(prompt).not.toContain("t200");
+  });
+
+  it("the reverse invariant survives buildMeetingLexicon's own share-interleaved output — last token is lexicon.terms[0]", () => {
+    mockPackTermsForBias.mockReturnValue([
+      { term: "pack-term-a", pack: "A" },
+      { term: "pack-term-b", pack: "B" },
+    ]);
+    const lexicon = buildMeetingLexicon({
+      customEntries: [glossaryEntry("headword-a"), glossaryEntry("headword-b")],
+      enabledPacks: null,
+      learnset: {},
+      activeDomains: new Set(),
+    });
+    const prompt = projectForInitialPrompt(lexicon)!;
+    const emitted = prompt.split(", ");
+    expect(emitted[emitted.length - 1]).toBe(lexicon.terms[0]);
   });
 });

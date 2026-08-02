@@ -34,6 +34,8 @@
 
 import { termNormKey } from "@jargonslayer/core/detect/dedupe";
 import { packTermsForBias } from "@jargonslayer/core/detect/dictionary";
+import type { DomainTag } from "@jargonslayer/core/detect/dictionary-data";
+import { PACK_DOMAINS } from "@jargonslayer/core/detect/packs";
 import type { LearnRecord } from "@jargonslayer/core/learn/types";
 import type { CustomEntry, MeetingLexicon } from "@jargonslayer/core/types";
 import { isCustomPackEnabled } from "../history/glossary";
@@ -52,10 +54,22 @@ const GLOSSARY_VARIANT_CEILING = 3;
 // see it.
 const LEXICON_MAX_TERMS = 500;
 
+// FT-1c: >=100 glossary headwords used to leave the strict-concatenation
+// tiers below (glossary, THEN packs) with a PREFIX that was 100% glossary
+// — any cap taking a prefix of that concatenation saw zero pack terms,
+// no matter how the pack tier was internally balanced. Sharing the
+// budget at every prefix length (not just at the full, uncapped list)
+// is what actually fixes it — see interleaveByShare below.
+const GLOSSARY_BUDGET_SHARE = 0.6;
+
+const EMPTY_ACTIVE_DOMAINS: ReadonlySet<DomainTag> = new Set();
+
 export interface BuildMeetingLexiconInput {
   customEntries: CustomEntry[];
   enabledPacks: string[] | null;
   learnset: Record<string, LearnRecord>;
+  /** FT-1c: the SHIPPED meeting-domain signal. Empty/omitted => even split. */
+  activeDomains?: ReadonlySet<DomainTag>;
 }
 
 function pushUnique(target: string[], seen: Set<string>, surface: string): void {
@@ -67,14 +81,62 @@ function pushUnique(target: string[], seen: Set<string>, surface: string): void 
   target.push(trimmed);
 }
 
-/** D3 Sol F3: round-robins pack candidates ACROSS packs (one term per
- *  pack per round) so a null enabledPacks default (every pack on,
- *  including the large generic business packs) can't let those crowd
- *  out a smaller tech/domain pack's own terms before per-adapter caps
- *  ever get to them — every enabled pack gets a fair, interleaved
- *  share of the budget instead of first-come-first-served by table
- *  order. */
-function roundRobinByPack(items: { term: string; pack: string }[]): string[] {
+/** Deterministic share-interleave: primary takes `share` of every
+ *  prefix, secondary the rest; when either runs dry the other takes
+ *  everything. Order WITHIN each stream is never disturbed. */
+function interleaveByShare(primary: string[], secondary: string[], share: number): string[] {
+  const out: string[] = [];
+  let i = 0,
+    j = 0;
+  while (i < primary.length || j < secondary.length) {
+    const wantPrimary = i < (out.length + 1) * share;
+    if (i < primary.length && (wantPrimary || j >= secondary.length)) out.push(primary[i++]);
+    else out.push(secondary[j++]);
+  }
+  return out;
+}
+
+// ponytail: flat weight, per-domain tuning if the field says so
+const DOMAIN_PACK_WEIGHT = 4;
+
+// Bias-path only. PACK_DOMAINS gives each pack ONE primary tag, which is
+// right for sense scoring but too narrow here: a talk tagged `biomed`
+// should still bias toward the pharma and genomics packs, since no pack
+// carries `biomed` at all.
+const DOMAIN_ADJACENT: Partial<Record<DomainTag, readonly DomainTag[]>> = {
+  biomed: ["pharma", "genomics"],
+  clinical: ["pharma"],
+};
+
+/** True when `pack`'s own PACK_DOMAINS tag is active, or is reachable
+ *  from an active tag via DOMAIN_ADJACENT above. */
+function isInDomain(pack: string, active: ReadonlySet<DomainTag>): boolean {
+  const domain = PACK_DOMAINS[pack];
+  if (!domain) return false;
+  if (active.has(domain)) return true;
+  for (const d of active) {
+    if (DOMAIN_ADJACENT[d]?.includes(domain)) return true;
+  }
+  return false;
+}
+
+/** D3 Sol F3: round-robins pack candidates ACROSS packs so a null
+ *  enabledPacks default (every pack on, including the large generic
+ *  business packs) can't let those crowd out a smaller tech/domain
+ *  pack's own terms before per-adapter caps ever get to them — every
+ *  enabled pack gets a fair, interleaved share of the budget instead of
+ *  first-come-first-served by table order.
+ *
+ *  FT-1c: a pack whose PACK_DOMAINS tag is active this meeting (directly
+ *  or via DOMAIN_ADJACENT) gets DOMAIN_PACK_WEIGHT consecutive terms per
+ *  cycle instead of 1 — packs still visited in unchanged first-
+ *  appearance order, loop still terminating when a full cycle emits
+ *  nothing. `activeDomains` empty => every weight 1 => byte-identical to
+ *  the un-weighted round-robin this replaces. */
+function roundRobinByPack(
+  items: { term: string; pack: string }[],
+  activeDomains: ReadonlySet<DomainTag>,
+): string[] {
   const byPack = new Map<string, string[]>();
   for (const item of items) {
     const bucket = byPack.get(item.pack);
@@ -82,15 +144,20 @@ function roundRobinByPack(items: { term: string; pack: string }[]): string[] {
     else byPack.set(item.pack, [item.term]);
   }
   const packIds = [...byPack.keys()];
+  const cursors = new Map<string, number>();
   const out: string[] = [];
-  for (let round = 0; ; round++) {
+  for (;;) {
     let addedAny = false;
     for (const id of packIds) {
       const bucket = byPack.get(id)!;
-      if (round < bucket.length) {
-        out.push(bucket[round]);
+      let cursor = cursors.get(id) ?? 0;
+      if (cursor >= bucket.length) continue;
+      const weight = isInDomain(id, activeDomains) ? DOMAIN_PACK_WEIGHT : 1;
+      for (let k = 0; k < weight && cursor < bucket.length; k++, cursor++) {
+        out.push(bucket[cursor]);
         addedAny = true;
       }
+      cursors.set(id, cursor);
     }
     if (!addedAny) break;
   }
@@ -103,10 +170,16 @@ function roundRobinByPack(items: { term: string; pack: string }[]): string[] {
  *  term list from an explicit input snapshot.
  *
  *  D3 tier order:
- *   1. user glossary — every entry's headword, THEN every entry's
- *      variants backfilled up to GLOSSARY_VARIANT_CEILING each.
- *   2. enabled packs — round-robin allocated across packs (Sol F3).
- *   3. suppressed learn-set terms, ranked LAST — still eligible (Opus
+ *   1. user glossary (headwords, THEN variants backfilled up to
+ *      GLOSSARY_VARIANT_CEILING each) INTERLEAVED with enabled packs
+ *      (round-robin allocated across packs, Sol F3) at GLOSSARY_BUDGET_
+ *      SHARE — FT-1c: a strict glossary-then-packs concatenation let
+ *      a >=100-headword glossary alone fill every adapter's prefix
+ *      cap, leaving zero room for pack terms no matter how the pack
+ *      tier itself was balanced. Sharing the budget at every prefix
+ *      length (interleaveByShare), not just across the full uncapped
+ *      list, is what actually fixes that.
+ *   2. suppressed learn-set terms, ranked LAST — still eligible (Opus
  *      over Sol's filter-out): suppression is detector policy ("don't
  *      re-explain"), while the recognizer still mis-hears exactly
  *      those terms. Ranked-last means they only fill leftover slots
@@ -123,17 +196,21 @@ export function buildMeetingLexicon(input: BuildMeetingLexiconInput): MeetingLex
   // bias terms — see the header note above.
   const enabledEntries = input.customEntries.filter((e) => isCustomPackEnabled(e.packId));
 
+  const glossaryStream: string[] = [];
   for (const entry of enabledEntries) {
-    pushUnique(terms, seen, entry.headword);
+    glossaryStream.push(entry.headword);
   }
   for (const entry of enabledEntries) {
     for (const variant of entry.variants.slice(0, GLOSSARY_VARIANT_CEILING)) {
-      pushUnique(terms, seen, variant);
+      glossaryStream.push(variant);
     }
   }
 
+  const activeDomains = input.activeDomains ?? EMPTY_ACTIVE_DOMAINS;
   const packCandidates = packTermsForBias(input.enabledPacks);
-  for (const term of roundRobinByPack(packCandidates)) {
+  const packStream = roundRobinByPack(packCandidates, activeDomains);
+
+  for (const term of interleaveByShare(glossaryStream, packStream, GLOSSARY_BUDGET_SHARE)) {
     pushUnique(terms, seen, term);
   }
 

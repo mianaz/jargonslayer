@@ -774,10 +774,31 @@ export function useMeeting(): UseMeetingResult {
     // would gate this whole build+pass step right here (e.g. `settings
     // .termBiasEnabled === false ? undefined : buildMeetingLexicon(...)`)
     // rather than inside any individual adapter.
+    const st = useApp.getState();
+    // FT-1c: buildMeetingLexicon's own pack round-robin weights toward
+    // whatever domain this meeting is actually about, so it needs that
+    // domain here — reusing the SHIPPED signal (resolveSenseContext's
+    // own inferredDomains + the in-meeting DomainTracker), not a second
+    // one.
+    const activeDomains = new Set<DomainTag>([
+      ...st.inferredDomains, // LLM signal
+      ...getMeetingDomainTracker().activeDomains(), // in-meeting evidence
+    ]);
+    // Both sources are provably EMPTY at t=0 (beginMeeting resets
+    // inferredDomains; the tracker needs >=2 detected headwords), and
+    // STTEngine has no re-bias method — bias is a start()-only argument. So
+    // without this fallback the weighting cannot help the meeting it was
+    // built for. Same shipped keyword table resolveSenseContext already uses.
+    if (activeDomains.size === 0) {
+      for (const d of inferDomainsFromKeywords(st.customEntries.map((e) => e.headword).join(" "))) {
+        activeDomains.add(d);
+      }
+    }
     const lexicon = buildMeetingLexicon({
-      customEntries: useApp.getState().customEntries,
+      customEntries: st.customEntries,
       enabledPacks: settings.enabledPacks,
-      learnset: useApp.getState().learnset,
+      learnset: st.learnset,
+      activeDomains,
     });
     await engine.start(events, settings, lexicon);
     return !attachFailed;
