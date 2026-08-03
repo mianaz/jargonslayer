@@ -45,11 +45,18 @@ struct CLIArguments {
 /// capture"), plus the BCP-47 `--locale`; `--duration`/`--contextual-json`
 /// are optional (the former mirrors capture's own optional `--duration`,
 /// same meaning: self-stop after N seconds, used for testing).
+/// Dual-capture mic producer — `source` is ALWAYS resolved by the time
+/// this struct exists (parseArguments defaults a bare `--transcribe`,
+/// with no `--source` at all, to `.system` — see that function's own
+/// comment), so this is a plain non-optional `TranscribeSource`, never
+/// the raw optional string `--source`/`--target` share with translate
+/// mode below.
 struct TranscribeArguments {
     let excludePID: pid_t
     let locale: String
     let durationSeconds: Double?
     let contextualJSON: String?
+    let source: TranscribeSource
 }
 
 /// v0.6 (Apple on-device translate lane) — `--probe-translate`'s and
@@ -153,6 +160,15 @@ func parseArguments(_ arguments: [String]) -> CLIMode? {
     // --preinstall-osspeech below so neither can ever fall through into
     // the plain-capture guard at the bottom: both require --source/
     // --target and reject every capture/transcribe-only flag.
+    //
+    // Dual-capture mic producer — `--source` is now DUAL-PURPOSE: a
+    // BCP-47 tag for --probe-translate/--translate (unchanged, above),
+    // but mic|system|dual for --transcribe (below). Both branches parse
+    // the exact same `source: String?` captured by the shared `case
+    // "--source":` arm above (the switch can only match that literal
+    // flag text once) — never ambiguous in practice, since
+    // wantsProbeTranslate/wantsTranslate/wantsTranscribe are already
+    // mutually exclusive here (each guard above rejects the others).
     if wantsProbeTranslate {
         guard !wantsTranslate, !wantsTranscribe, !wantsPreinstall,
             let source, let target,
@@ -170,7 +186,18 @@ func parseArguments(_ arguments: [String]) -> CLIMode? {
     if wantsTranscribe {
         // §A5: --exclude-pid required in transcribe mode too.
         guard !wantsPreinstall, let excludePID, let locale else { return nil }
-        return .transcribe(TranscribeArguments(excludePID: excludePID, locale: locale, durationSeconds: durationSeconds, contextualJSON: contextualJSON))
+        // Absent --source defaults to .system (backward compatible —
+        // today's Rust caller passes no flag at all); present-but-unknown
+        // is a validation error, same "return nil -> usage + exit(2)"
+        // idiom every other malformed flag in this function already uses.
+        let transcribeSource: TranscribeSource
+        if let source {
+            guard let resolved = TranscribeSource(rawValue: source) else { return nil }
+            transcribeSource = resolved
+        } else {
+            transcribeSource = .system
+        }
+        return .transcribe(TranscribeArguments(excludePID: excludePID, locale: locale, durationSeconds: durationSeconds, contextualJSON: contextualJSON, source: transcribeSource))
     }
     if wantsPreinstall {
         guard let locale, excludePID == nil, durationSeconds == nil, contextualJSON == nil else { return nil }
@@ -184,7 +211,7 @@ func printUsageAndExit() -> Never {
     let usage = """
     usage: jargonslayer-audiocap --exclude-pid <pid> [--duration <seconds>] \
     | jargonslayer-audiocap --sweep-orphans \
-    | jargonslayer-audiocap --transcribe --exclude-pid <pid> --locale <bcp47> [--duration <seconds>] [--contextual-json <jsonArray>] \
+    | jargonslayer-audiocap --transcribe --exclude-pid <pid> --locale <bcp47> [--duration <seconds>] [--contextual-json <jsonArray>] [--source mic|system|dual] \
     | jargonslayer-audiocap --probe-osspeech \
     | jargonslayer-audiocap --preinstall-osspeech --locale <bcp47> \
     | jargonslayer-audiocap --probe-translate --source <bcp47> --target <bcp47> \
@@ -683,25 +710,44 @@ func handleTranslateRequestLine(_ line: String, session: TranslationSession) {
     TranslateEvents.emitResult(id: request.id, translations: translations)
 }
 
-// S11 (§0/§Q1) — `--transcribe`: reuses the EXACT same CoreAudio setup
-// as runCapture above (translate/create tap/create aggregate/create
-// IOProc — byte-identical calls into AudioCapCore, see each step's own
-// comment in runCapture for the full rationale, not repeated here) up
-// through the ring/ioBlock, then hands off to `AnalyzerSeam` for
-// everything Speech-related (locale/asset/analyzer/results/finalize).
-// Two deliberate deltas from runCapture: (1) no stdout Framing stream
-// header/chunks/EOS at all — blueprint §0: "no PCM ever leaves the
-// process, and no stdout wire is used"; (2) `ShutdownSignal
-// .startStdinEOFMonitor()` is NOT called — §A1: `StdinCommandMonitor`
-// is the ONLY stdin reader in transcribe mode (two threads reading the
-// same stdin would race and split lines unpredictably); EOF handling
-// lives in StdinCommandMonitor's own `onEOF` callback instead, wired to
-// the SAME shared shutdown flag via `requestShutdownFromWriteFailure`
-// (reused purely for its mechanical effect — see that method's own doc
-// comment on why a write failure and a stdin EOF are the same
-// "the parent is gone" signal, just observed from opposite directions).
+// Dual-capture mic producer — `--transcribe`'s own `--source` dispatcher:
+// forks to one of three bodies below by audio producer. `runTranscribeSystem`
+// is the pre-existing S11 body, renamed but otherwise BYTE-IDENTICAL
+// (source=system, the default, is "unchanged behavior" per this slice's
+// own spec) — see that function's own header comment for the full
+// CoreAudio-setup rationale, not repeated on the other two.
 @available(macOS 26.0, *)
-func runTranscribe(excludePID: pid_t, locale: String, durationSeconds: Double?, contextualJSON: String?) -> Never {
+func runTranscribe(excludePID: pid_t, locale: String, durationSeconds: Double?, contextualJSON: String?, source: TranscribeSource) -> Never {
+    switch source {
+    case .system:
+        runTranscribeSystem(excludePID: excludePID, locale: locale, durationSeconds: durationSeconds, contextualJSON: contextualJSON)
+    case .mic:
+        runTranscribeMic(locale: locale, durationSeconds: durationSeconds, contextualJSON: contextualJSON)
+    case .dual:
+        runTranscribeDual(excludePID: excludePID, locale: locale, durationSeconds: durationSeconds, contextualJSON: contextualJSON)
+    }
+}
+
+// S11 (§0/§Q1) — `--transcribe --source system` (the default): reuses
+// the EXACT same CoreAudio setup as runCapture above (translate/create
+// tap/create aggregate/create IOProc — byte-identical calls into
+// AudioCapCore, see each step's own comment in runCapture for the full
+// rationale, not repeated here) up through the ring/ioBlock, then hands
+// off to `AnalyzerSeam` for everything Speech-related (locale/asset/
+// analyzer/results/finalize). Two deliberate deltas from runCapture: (1)
+// no stdout Framing stream header/chunks/EOS at all — blueprint §0: "no
+// PCM ever leaves the process, and no stdout wire is used"; (2)
+// `ShutdownSignal.startStdinEOFMonitor()` is NOT called — §A1:
+// `StdinCommandMonitor` is the ONLY stdin reader in transcribe mode (two
+// threads reading the same stdin would race and split lines
+// unpredictably); EOF handling lives in StdinCommandMonitor's own
+// `onEOF` callback instead, wired to the SAME shared shutdown flag via
+// `requestShutdownFromWriteFailure` (reused purely for its mechanical
+// effect — see that method's own doc comment on why a write failure and
+// a stdin EOF are the same "the parent is gone" signal, just observed
+// from opposite directions).
+@available(macOS 26.0, *)
+func runTranscribeSystem(excludePID: pid_t, locale: String, durationSeconds: Double?, contextualJSON: String?) -> Never {
     let shutdown = ShutdownSignal()
     shutdown.installSignalHandlers()
     let stdinMonitor = StdinCommandMonitor(onEOF: shutdown.requestShutdownFromWriteFailure)
@@ -821,6 +867,240 @@ func runTranscribe(excludePID: pid_t, locale: String, durationSeconds: Double?, 
     }
 }
 
+// Dual-capture mic producer — `--transcribe --source mic`: same session
+// structure as runTranscribeSystem immediately above (shutdown/stdin
+// lifecycle, "starting"/"capturing"/"finished" status reused unchanged
+// at the SAME emission sites — §2.2's own state machine, never forked),
+// but the ring is fed by MicCapture instead of a CoreAudio tap: no
+// CATapDescription/aggregate/IOProc at all, so `excludePID` (meaningful
+// only for excluding a process from a system-audio TAP) plays no role
+// here and this function simply never asks for one. `channel` is left
+// at `run`'s own default (`nil`) — a single-source run, mic alone, is
+// exactly as unambiguous as system alone (this slice's own "single-
+// source runs stay byte-identical to today's protocol" requirement).
+@available(macOS 26.0, *)
+func runTranscribeMic(locale: String, durationSeconds: Double?, contextualJSON: String?) -> Never {
+    let shutdown = ShutdownSignal()
+    shutdown.installSignalHandlers()
+    let stdinMonitor = StdinCommandMonitor(onEOF: shutdown.requestShutdownFromWriteFailure)
+    stdinMonitor.start()
+
+    let ring = SPSCByteRing(capacity: ringCapacityBytes)
+    let micCapture = MicCapture(ring: ring)
+
+    func teardownAndExit(code: Int32) -> Never {
+        // MicCapture.stop()'s own doc comment: safe to call even if
+        // setup()/start() never got far enough to need it (engine.stop()
+        // on a never-started engine, removeTap on a bus with no tap
+        // installed, are both documented no-ops).
+        micCapture.stop()
+        exit(code)
+    }
+
+    do {
+        let sampleRate = try micCapture.setup()
+        let channels: UInt16 = 1 // MicCapture always extracts channel 0 only — see its own header comment.
+
+        // No stdout stream header (transcribe mode never opens the
+        // Framing/stdout wire — see runTranscribeSystem's own comment).
+        // "starting" reused unchanged (§2.2) at the same placement
+        // semantics: emitted once the mic's real format is known, same
+        // as runTranscribeSystem's own "starting" emission once the
+        // tap's format is known.
+        StatusEvents.emitStatus(state: "starting", sampleRate: sampleRate, channels: channels)
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var outcome = SpeechSessionOutcome.failure
+        Task {
+            outcome = await SpeechAnalyzerSession().run(
+                locale: locale,
+                contextualJSON: contextualJSON,
+                durationSeconds: durationSeconds,
+                ring: ring,
+                channels: channels,
+                isNonInterleaved: false, // mono — never planar (see MicCapture.extractChannelZeroAndPush)
+                sampleRate: sampleRate,
+                shutdown: shutdown,
+                isPaused: stdinMonitor.isPaused,
+                startTap: { try micCapture.start() },
+                stopTap: { micCapture.stop() }
+            )
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        // AnalyzerSeam.run already called stopTap (== micCapture.stop())
+        // at the correct point in its own teardown — mirrors
+        // runTranscribeSystem's own identically-reasoned redundant call
+        // just above: a second micCapture.stop() here is a harmless
+        // no-op, and also covers the case where `run` threw before ever
+        // calling `startTap` at all (e.g. during asset install).
+        micCapture.stop()
+        exit(outcome == .success ? 0 : 1)
+    } catch let error as AudioCapError {
+        StatusEvents.emitError(error)
+        teardownAndExit(code: 1)
+    } catch {
+        StatusEvents.emitError(.deviceStartFailed("unexpected error: \(error)"))
+        teardownAndExit(code: 1)
+    }
+}
+
+// Dual-capture mic producer — `--transcribe --source dual`: the tap
+// (system audio, session A) and MicCapture (session B) setups below are
+// each byte-identical to their single-source counterparts immediately
+// above (see those functions' own comments for the full rationale of
+// each individual step, not repeated here) — this function's only real
+// job is running BOTH `SpeechAnalyzerSession.run` calls concurrently
+// (`async let`, mirroring the aec-spike's own proven `runDualAnalyzer`
+// shape) against ONE shared `ShutdownSignal`/`StdinCommandMonitor`, and
+// making sure the process-level "starting"/"capturing" status is
+// emitted exactly ONCE — from the tap/"system" side, exactly as it is
+// today — never doubled by session B's own internal "capturing" emission
+// (`emitProcessStatus: false` on that one call; see AnalyzerSeam.run's
+// own doc comment). Exit code 0 only if BOTH sessions succeed.
+@available(macOS 26.0, *)
+func runTranscribeDual(excludePID: pid_t, locale: String, durationSeconds: Double?, contextualJSON: String?) -> Never {
+    let shutdown = ShutdownSignal()
+    shutdown.installSignalHandlers()
+    let stdinMonitor = StdinCommandMonitor(onEOF: shutdown.requestShutdownFromWriteFailure)
+    stdinMonitor.start()
+
+    var tapID: AudioObjectID?
+    var aggregateDeviceID: AudioObjectID?
+    var ioProcID: AudioDeviceIOProcID?
+    let ringMic = SPSCByteRing(capacity: ringCapacityBytes)
+    let micCapture = MicCapture(ring: ringMic)
+
+    func teardownAndExit(code: Int32) -> Never {
+        ProcessTapCapture.teardown(tapID: tapID, aggregateDeviceID: aggregateDeviceID, ioProcID: ioProcID)
+        micCapture.stop()
+        exit(code)
+    }
+
+    do {
+        // ---- tap/system side setup (session A) — see runTranscribeSystem's own comments for the full rationale of each step ----
+        guard kill(excludePID, 0) == 0 || errno == EPERM else {
+            throw AudioCapError.pidTranslateFailed("pid \(excludePID) does not exist (kill(pid, 0) -> ESRCH)")
+        }
+
+        let processObjectID = try ProcessTapCapture.translateExcludePID(excludePID)
+        if processObjectID == nil {
+            StatusEvents.emitNote(
+                state: "exclude-pid-inactive",
+                message: "pid \(excludePID) has no CoreAudio process object (never audio-active) — nothing to exclude; proceeding with a global tap and an empty exclusion list"
+            )
+        }
+
+        let created = try ProcessTapCapture.createProcessTap(excluding: processObjectID, name: "JargonSlayer System Audio Tap (Transcribe Dual)")
+        tapID = created.tapID
+        let format = created.format
+
+        guard TapFormatDescription.isFloat32(format) else {
+            throw AudioCapError.tapCreateFailed(
+                "tap format is not Float32 (formatID \(format.mFormatID), flags \(format.mFormatFlags), bitsPerChannel \(format.mBitsPerChannel)) — jargonslayer-audiocap only knows how to forward Float32 tap output"
+            )
+        }
+        let isNonInterleaved = TapFormatDescription.isNonInterleaved(format)
+        let tapChannels = UInt16(TapFormatDescription.channelCount(format))
+        let tapSampleRate = UInt32(format.mSampleRate)
+
+        let aggregateUID = "com.bioinfospace.jargonslayer.audiocap.osspeech.dual." + UUID().uuidString
+        let resolvedAggregateDeviceID = try ProcessTapCapture.createAggregateDevice(
+            uid: aggregateUID,
+            name: "JargonSlayer System Audio Transcribe (Dual)",
+            tapUID: created.tapUID
+        )
+        aggregateDeviceID = resolvedAggregateDeviceID
+
+        let ringTap = SPSCByteRing(capacity: ringCapacityBytes)
+        let ioBlock: AudioDeviceIOBlock = { _, inInputData, _, _, _ in
+            // REALTIME THREAD — identical contract to runTranscribeSystem's own ioBlock.
+            let bufferList = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
+            var frameCount: UInt32 = 0
+            if let first = bufferList.first, first.mDataByteSize > 0 {
+                let bytesPerChannelFrame = isNonInterleaved ? 4 : Int(tapChannels) * 4
+                frameCount = bytesPerChannelFrame > 0 ? UInt32(Int(first.mDataByteSize) / bytesPerChannelFrame) : 0
+            }
+            ringTap.tryPush(frameCount: frameCount, buffers: bufferList)
+        }
+        let resolvedIOProcID = try ProcessTapCapture.createIOProc(aggregateDeviceID: resolvedAggregateDeviceID, block: ioBlock)
+        ioProcID = resolvedIOProcID
+
+        // ---- mic side setup (session B) ----
+        let micSampleRate = try micCapture.setup()
+
+        // "starting"/"capturing": emitted ONCE for the process, from the
+        // tap side only (this function's own header comment) — session
+        // B's own `run` call below passes `emitProcessStatus: false` so
+        // its internal "capturing" emission is suppressed; "starting" is
+        // simply never called a second time here either.
+        StatusEvents.emitStatus(state: "starting", sampleRate: tapSampleRate, channels: tapChannels)
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var outcomeA = SpeechSessionOutcome.failure
+        var outcomeB = SpeechSessionOutcome.failure
+        Task {
+            // durationSeconds is force-nil for BOTH dual sessions — the
+            // 2026-08-02 spike observed the duration cutoff hanging
+            // `run` ≥90s when it lands mid-utterance
+            // (dual-capture-2026-08.md §spike 6). Dual's only lifecycle
+            // is the shared ShutdownSignal (stdin EOF / signals).
+            async let sessionA = SpeechAnalyzerSession().run(
+                locale: locale,
+                contextualJSON: contextualJSON,
+                durationSeconds: nil,
+                ring: ringTap,
+                channels: tapChannels,
+                isNonInterleaved: isNonInterleaved,
+                sampleRate: tapSampleRate,
+                shutdown: shutdown,
+                isPaused: stdinMonitor.isPaused,
+                startTap: {
+                    try ProcessTapCapture.start(aggregateDeviceID: resolvedAggregateDeviceID, ioProcID: resolvedIOProcID)
+                },
+                stopTap: {
+                    ProcessTapCapture.stopDevice(aggregateDeviceID: resolvedAggregateDeviceID, ioProcID: resolvedIOProcID)
+                },
+                channel: "system"
+            )
+            async let sessionB = SpeechAnalyzerSession().run(
+                locale: locale,
+                contextualJSON: contextualJSON,
+                durationSeconds: nil,
+                ring: ringMic,
+                channels: 1,
+                isNonInterleaved: false,
+                sampleRate: micSampleRate,
+                shutdown: shutdown,
+                isPaused: stdinMonitor.isPaused,
+                startTap: { try micCapture.start() },
+                stopTap: { micCapture.stop() },
+                channel: "mic",
+                emitProcessStatus: false
+            )
+            (outcomeA, outcomeB) = await (sessionA, sessionB)
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        // Both AnalyzerSeam.run calls already called their own stopTap —
+        // these two are the same harmless, unconditional redundant calls
+        // runTranscribeSystem/runTranscribeMic each make one file above.
+        ProcessTapCapture.teardown(tapID: tapID, aggregateDeviceID: aggregateDeviceID, ioProcID: ioProcID)
+        micCapture.stop()
+        // Dual mode's own exit-code contract (this function's own header
+        // comment): 0 only if BOTH sessions succeeded.
+        exit(outcomeA == .success && outcomeB == .success ? 0 : 1)
+    } catch let error as AudioCapError {
+        StatusEvents.emitError(error)
+        teardownAndExit(code: 1)
+    } catch {
+        StatusEvents.emitError(.deviceStartFailed("unexpected error: \(error)"))
+        teardownAndExit(code: 1)
+    }
+}
+
 // ---- entry point (everything above is declarations only) ----
 
 // Ignore SIGPIPE up front: if the parent (Rust) side closes its end of
@@ -884,7 +1164,8 @@ case .transcribe(let transcribeArguments):
             excludePID: transcribeArguments.excludePID,
             locale: transcribeArguments.locale,
             durationSeconds: transcribeArguments.durationSeconds,
-            contextualJSON: transcribeArguments.contextualJSON
+            contextualJSON: transcribeArguments.contextualJSON,
+            source: transcribeArguments.source
         )
     } else {
         StatusEvents.emitError(.unsupportedOS("jargonslayer-audiocap --transcribe requires macOS 26.0+ (Speech framework SpeechAnalyzer)"))

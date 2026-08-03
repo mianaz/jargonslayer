@@ -32,6 +32,12 @@ public enum TranscriptEvents {
         let startMs: Int64
         let endMs: Int64
         let text: String
+        /// Dual-capture mic producer — see StatusEvents.StatsRecord's
+        /// own identical `channel` doc comment one file over for the
+        /// full nil-omission/dual-mode-only rationale; the two fields
+        /// exist for the same reason, just on the two record types Rust
+        /// actually needs per-channel disambiguation for.
+        let channel: String?
     }
 
     /// One struct for all four asset lifecycle states (§2.2) rather than
@@ -88,8 +94,8 @@ public enum TranscriptEvents {
 
     // ---- pure encoders (golden-byte testable, no I/O) ----
 
-    static func transcriptBytes(final: Bool, seq: UInt64, startMs: Int64, endMs: Int64, text: String) -> Data {
-        encodeLine(TranscriptRecord(final: final, seq: seq, startMs: startMs, endMs: endMs, text: truncatedTo4096Bytes(text)))
+    static func transcriptBytes(final: Bool, seq: UInt64, startMs: Int64, endMs: Int64, text: String, channel: String? = nil) -> Data {
+        encodeLine(TranscriptRecord(final: final, seq: seq, startMs: startMs, endMs: endMs, text: truncatedTo4096Bytes(text), channel: channel))
     }
 
     static func assetCheckingBytes() -> Data {
@@ -126,8 +132,8 @@ public enum TranscriptEvents {
 
     // ---- production emitters (real try?-guarded stderr write) ----
 
-    public static func emitTranscript(final: Bool, seq: UInt64, startMs: Int64, endMs: Int64, text: String) {
-        write(transcriptBytes(final: final, seq: seq, startMs: startMs, endMs: endMs, text: text))
+    public static func emitTranscript(final: Bool, seq: UInt64, startMs: Int64, endMs: Int64, text: String, channel: String? = nil) {
+        write(transcriptBytes(final: final, seq: seq, startMs: startMs, endMs: endMs, text: text, channel: channel))
     }
 
     public static func emitAssetChecking() {

@@ -31,6 +31,20 @@ final class TranscriptEventsTests: XCTestCase {
         XCTAssertEqual(string(data), #"{"endMs":4920,"final":true,"seq":13,"startMs":0,"text":"Jargon slayer is a tool.","type":"transcript"}"# + "\n")
     }
 
+    // ---- dual-capture mic producer: channel field (nil-omitted, same
+    // encodeIfPresent posture every other optional field in this file
+    // already has — AssetRecord's own doc comment) ----
+
+    func testTranscriptBytesOmitsChannelWhenNil() {
+        let data = TranscriptEvents.transcriptBytes(final: false, seq: 1, startMs: 0, endMs: 100, text: "hi")
+        XCTAssertFalse(string(data).contains("channel"), "a nil channel must be omitted entirely, not written as null — single-source runs must stay byte-identical to today's protocol")
+    }
+
+    func testTranscriptBytesIncludesChannelWhenNonNil() {
+        let data = TranscriptEvents.transcriptBytes(final: false, seq: 1, startMs: 0, endMs: 100, text: "hi", channel: "mic")
+        XCTAssertEqual(string(data), #"{"channel":"mic","endMs":100,"final":false,"seq":1,"startMs":0,"text":"hi","type":"transcript"}"# + "\n")
+    }
+
     func testAssetCheckingGoldenBytesOmitsProgressAndMessage() {
         let data = TranscriptEvents.assetCheckingBytes()
         XCTAssertEqual(string(data), #"{"state":"checking","type":"asset"}"# + "\n")

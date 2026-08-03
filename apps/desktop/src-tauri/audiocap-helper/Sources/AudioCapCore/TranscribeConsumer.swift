@@ -73,6 +73,13 @@ public final class TranscribeConsumer: @unchecked Sendable {
     private let pollInterval: TimeInterval
     private let statsInterval: TimeInterval
     private let starvationTimeout: TimeInterval
+    /// Dual-capture mic producer — threaded straight through into every
+    /// `StatusEvents.emitStats` call this class makes (below and in
+    /// `emitFinalStats`); see StatusEvents.StatsRecord's own `channel`
+    /// doc comment for the full nil-omission/dual-mode-only rationale.
+    /// `nil` for every existing caller (this class's OWN pre-existing
+    /// callers never passed a channel — see the defaulted init param).
+    private let channel: String?
 
     private var framesOut: UInt64 = 0
     private var ringHighWater: UInt64 = 0
@@ -91,7 +98,8 @@ public final class TranscribeConsumer: @unchecked Sendable {
         pollInterval: TimeInterval = 0.004,
         starvationTimeout: TimeInterval = 3.0,
         statsInterval: TimeInterval = 5.0,
-        clock: @escaping () -> Date = Date.init
+        clock: @escaping () -> Date = Date.init,
+        channel: String? = nil
     ) {
         self.ring = ring
         self.channels = channels
@@ -103,6 +111,7 @@ public final class TranscribeConsumer: @unchecked Sendable {
         self.statsInterval = statsInterval
         self.clock = clock
         self.lastStats = clock()
+        self.channel = channel
     }
 
     #if DEBUG
@@ -124,7 +133,8 @@ public final class TranscribeConsumer: @unchecked Sendable {
             framesOut: framesOut,
             droppedFrames: ring.droppedFrameCount(),
             peak: peak,
-            windowPeak: windowPeak
+            windowPeak: windowPeak,
+            channel: channel
         )
     }
 
@@ -175,7 +185,8 @@ public final class TranscribeConsumer: @unchecked Sendable {
                 framesOut: framesOut,
                 droppedFrames: ring.droppedFrameCount(),
                 peak: peak,
-                windowPeak: windowPeak
+                windowPeak: windowPeak,
+                channel: channel
             )
             lastStats = now
             windowPeak = 0

@@ -2,15 +2,20 @@
 // S9.1 deliverable list) — the CLOSED set of typed error codes this
 // helper ever emits on stderr as `{"type":"error","code":"...",
 // "message":"..."}` (StatusEvents.emitError). Deliberately closed
-// (exactly the seven codes the blueprint spells out, six from S9.1 plus
-// F6's own deviceChanged below) rather than open-ended: S9.2's Rust side
-// is expected to exhaustively match on `code`, and an ad hoc extra case
-// here would silently break that the moment it showed up. CLI usage
-// errors (missing/malformed --exclude-pid, unknown flags) are NOT part
-// of this taxonomy — they happen before this helper's stderr protocol
-// begins at all (no tap/aggregate/device state exists yet to describe),
-// so main.swift reports those as a plain usage line + exit(2), the same
-// way any other Unix CLI would.
+// (exactly the codes enumerated below — six from S9.1, F6's own
+// deviceChanged, and the dual-capture mic producer's own
+// micPermissionDenied) rather than open-ended: S9.2's Rust side is
+// expected to exhaustively match on `code`, and an ad hoc extra case
+// here would silently break that the moment it showed up (osspeech.rs's
+// own `error_record_kind` is the belt-and-suspenders backstop for a code
+// it doesn't yet recognize — falls through to `Crashed` with the
+// message text preserved rather than failing to parse, which is what
+// makes it safe to land a new code here ahead of any matching Rust-side
+// change). CLI usage errors (missing/malformed --exclude-pid, unknown
+// flags) are NOT part of this taxonomy — they happen before this
+// helper's stderr protocol begins at all (no tap/aggregate/device state
+// exists yet to describe), so main.swift reports those as a plain usage
+// line + exit(2), the same way any other Unix CLI would.
 public enum AudioCapError: Error {
     /// Below the technical floor (macOS 14.2 — AudioHardwareCreateProcessTap/
     /// CATapDescription's tap-creation entry points). Never actually
@@ -55,6 +60,16 @@ public enum AudioCapError: Error {
     /// directly (StatusEvents.emitError) once `run` returns `.starved`,
     /// rather than via a `throw`/`catch let error as AudioCapError`.
     case deviceChanged(String)
+    /// Dual-capture mic producer (MicCapture.swift) — `AVCaptureDevice
+    /// .authorizationStatus(for: .audio)` is `.denied`/`.restricted`.
+    /// Kept as its OWN code rather than folded into `.permissionDenied`
+    /// (which is specifically CoreAudio's `kAudioDevicePermissionsError`,
+    /// "系统音频录制" / System Audio Recording — a DIFFERENT TCC
+    /// permission with its own JS-side copy, per SpeechAnalyzerSession
+    /// .swift's own FIX S4 comment on why that code's specific wire
+    /// value matters): conflating the two would show the wrong
+    /// permission's copy to a user denied microphone access instead.
+    case micPermissionDenied(String)
 
     public var code: String {
         switch self {
@@ -65,6 +80,7 @@ public enum AudioCapError: Error {
         case .deviceStartFailed: return "device-start-failed"
         case .permissionDenied: return "permission-denied"
         case .deviceChanged: return "device-changed"
+        case .micPermissionDenied: return "mic-permission-denied"
         }
     }
 
@@ -76,7 +92,8 @@ public enum AudioCapError: Error {
              .aggregateCreateFailed(let message),
              .deviceStartFailed(let message),
              .permissionDenied(let message),
-             .deviceChanged(let message):
+             .deviceChanged(let message),
+             .micPermissionDenied(let message):
             return message
         }
     }

@@ -39,6 +39,29 @@ public protocol AnalyzerSeam {
     /// unconditionally (calling `stopDevice` again there too is harmless
     /// — ProcessTapCapture.teardown's own doc comment already documents
     /// that redundancy), exactly like runCapture's own catch-all teardown.
+    /// - Parameters:
+    ///   - channel: Dual-capture mic producer — "mic" | "system" | nil,
+    ///     stamped onto every transcript/stats record this session
+    ///     emits (StatusEvents.StatsRecord's own `channel` doc comment
+    ///     has the full nil-omission/dual-mode-only rationale). `nil`
+    ///     for every single-source run (system or mic alone) — only
+    ///     dual mode's two concurrently running sessions ever pass a
+    ///     real value, one each.
+    ///   - emitProcessStatus: Dual-capture mic producer — gates this
+    ///     call's own PROCESS-LEVEL emissions: the internal "capturing"
+    ///     `StatusEvents.emitStatus` (right after `startTap()` succeeds
+    ///     below) AND the clean-stop "finished" sentinel
+    ///     (`TranscriptEvents.emitFinished`, `.requested` arm below);
+    ///     "starting" is caller-emitted, outside `run` entirely, so it
+    ///     needs no equivalent gate here. Defaults to `true` (today's
+    ///     unconditional behavior) for every single-source run; dual
+    ///     mode's own two concurrent calls pass `true` for exactly ONE
+    ///     of the two (the tap/"system" side, mirroring today's
+    ///     single-source placement) and `false` for the other, so
+    ///     "capturing" and "finished" each hit the wire exactly once per
+    ///     process, never doubled. Typed ERROR records are deliberately
+    ///     NOT gated — a failing mic session must still surface its own
+    ///     error even when its sentinels are suppressed.
     func run(
         locale bcp47: String,
         contextualJSON: String?,
@@ -50,7 +73,9 @@ public protocol AnalyzerSeam {
         shutdown: ShutdownSignal,
         isPaused: @escaping () -> Bool,
         startTap: @escaping () throws -> Void,
-        stopTap: @escaping () -> Void
+        stopTap: @escaping () -> Void,
+        channel: String?,
+        emitProcessStatus: Bool
     ) async -> SpeechSessionOutcome
 
     /// `--preinstall-osspeech`'s own flow (§A2/§Q5): locale resolve +
@@ -101,7 +126,15 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
         shutdown: ShutdownSignal,
         isPaused: @escaping () -> Bool,
         startTap: @escaping () throws -> Void,
-        stopTap: @escaping () -> Void
+        stopTap: @escaping () -> Void,
+        // Defaulted (unlike the protocol requirement above, which can't
+        // carry a default at all): every pre-existing call site —
+        // main.swift's own single-source runTranscribeSystem, and BOTH
+        // of aec-spike's runDualAnalyzer calls (Must-NOT-MODIFY) — keeps
+        // compiling unchanged and gets today's exact behavior (no
+        // channel tag, unconditional "capturing" emission).
+        channel: String? = nil,
+        emitProcessStatus: Bool = true
     ) async -> SpeechSessionOutcome {
         do {
             // ---- locale (§Q4) ----
@@ -200,14 +233,20 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
             // main.swift right after tap/aggregate/IOProc creation
             // (format known), mirroring runCapture's own placement. ----
             try startTap()
-            StatusEvents.emitStatus(state: "capturing", sampleRate: sampleRate, channels: channels)
+            // Dual-capture mic producer — `emitProcessStatus` gates this
+            // ONE call (see this method's own protocol-doc-comment
+            // rationale, AnalyzerSeam.run above); every single-source
+            // caller keeps the unconditional emission it always had.
+            if emitProcessStatus {
+                StatusEvents.emitStatus(state: "capturing", sampleRate: sampleRate, channels: channels)
+            }
 
             try await analyzer.start(inputSequence: stream)
 
             // ---- producer thread (§Q1: "a dedicated producer Thread") ----
             let consumer = TranscribeConsumer(
                 ring: ring, channels: channels, isNonInterleaved: isNonInterleaved,
-                sink: sink, isPaused: isPaused
+                sink: sink, isPaused: isPaused, channel: channel
             )
             let durationDeadline = durationSeconds.map { Date().addingTimeInterval($0) }
             func shouldStopProducing() -> Bool {
@@ -222,7 +261,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
             // right up through finalizeAndFinishThroughEndOfInput). ----
             let resultsErrorBox = ResultsErrorBox()
             let resultsTask = Task {
-                await Self.consumeResults(transcriber: transcriber, shutdown: shutdown, resultsError: resultsErrorBox)
+                await Self.consumeResults(transcriber: transcriber, shutdown: shutdown, resultsError: resultsErrorBox, channel: channel)
             }
 
             // Starts the producer thread and suspends THIS async context
@@ -315,7 +354,15 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
                 if let duringDeliberateStop = resultsErrorBox.duringDeliberateStop, !duringDeliberateStop {
                     return .failure
                 }
-                TranscriptEvents.emitFinished()
+                // Gated like "capturing" above: in dual mode the mic
+                // session must not put a SECOND "finished" sentinel on
+                // the wire — the Rust side treats the first one as
+                // session end, and a mic-side sentinel racing ahead of
+                // the system session's drain would truncate it (verified
+                // live 2026-08-02: ungated dual emitted two).
+                if emitProcessStatus {
+                    TranscriptEvents.emitFinished()
+                }
                 return .success
             case .starved:
                 // Mirrors runCapture's OWN F6 handling exactly (main.swift's
@@ -517,7 +564,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
     /// A `static` function (not an instance method) — captures nothing
     /// from `self`, sidestepping any Sendable-capture question for the
     /// `Task { }` closure that runs it.
-    private static func consumeResults(transcriber: SpeechTranscriber, shutdown: ShutdownSignal, resultsError: ResultsErrorBox) async {
+    private static func consumeResults(transcriber: SpeechTranscriber, shutdown: ShutdownSignal, resultsError: ResultsErrorBox, channel: String?) async {
         var throttle = TranscriptThrottle()
         var seq: UInt64 = 0
         do {
@@ -527,7 +574,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
                 let isFinal = result.isFinal
                 guard throttle.shouldEmit(final: isFinal, startMs: startMs, endMs: endMs) else { continue }
                 seq += 1
-                TranscriptEvents.emitTranscript(final: isFinal, seq: seq, startMs: startMs, endMs: endMs, text: String(result.text.characters))
+                TranscriptEvents.emitTranscript(final: isFinal, seq: seq, startMs: startMs, endMs: endMs, text: String(result.text.characters), channel: channel)
             }
         } catch {
             // FIX S2 (S11 fix round) — read `shutdown.isRequested()`

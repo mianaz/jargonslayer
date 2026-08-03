@@ -6,5 +6,7 @@
 	<string>com.bioinfospace.jargonslayer.audiocap</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>JargonSlayer 需要录制系统音频以实时转录会议中对方的语音；音频仅发送到本机转录服务，不会离开这台电脑。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>JargonSlayer 需要访问麦克风以在「麦克风+系统」双通道模式下转录你自己的发言；音频仅在本机识别，不会离开这台电脑。</string>
 </dict>
 </plist>
