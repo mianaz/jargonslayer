@@ -840,6 +840,14 @@
         </div>
       </div>
 
+      <div class="feat c-orange reveal">
+        <div class="feat-key">翻译不再无声死掉 · 提示词按领域分配 translation recovery &amp; domain-weighted hints (v0.7.5)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>翻译不再无声死掉，提示词按领域分配</b>：以前启动握手失败一次，就把整场会议的翻译通道锁死，只有开头一条提示，之后一片空白——同一天同样设置的另一场却正常出双语。现在通道自动重连，真恢复不了状态栏写「翻译失败」，不再装作还在工作。识别提示词也换了分法：系统识别接受一组提示词来提高专业术语的转录准确率，以前平均分给所有启用的词典包，一场生信报告大部分预算花在金融和日常词汇上；现在按当前会议领域加权，个人生词本也不再独占整个预算。这只提高已有词条被正确转录的概率，不等于新增词条。桌面版「麦克风」模式录到静音的问题同版修复。</span>
+          <span class="lang-en"><b>Translation recovery &amp; domain-weighted hints</b>: a single failed startup handshake used to latch the translation lane off for a whole meeting — one notice at the start, then nothing, while another session the same day on the same settings stayed fully bilingual. The lane now retries on its own, and a genuine failure says 翻译失败 instead of looking like it is still working. Recognition hints changed too: the system recognizer takes a limited list of hint terms, and that list was split evenly across every enabled dictionary pack, so a bioinformatics talk spent most of its budget on finance and everyday vocabulary. Hints now weight toward the meeting's actual domain, and a large personal glossary no longer consumes the whole budget first. This improves the odds a specialist term is transcribed at all; it does not add new dictionary entries. Same release fixes desktop 麦克风 mode recording silence.</span>
+        </div>
+      </div>
+
       <div class="feat c-cyan reveal">
         <div class="feat-key">card experience</div>
         <div class="feat-body">

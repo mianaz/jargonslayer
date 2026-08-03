@@ -28,6 +28,7 @@
     <a href="advanced.html">高级玩法</a>
 
     <div class="label">版本</div>
+    <a href="#v075">v0.7.5</a>
     <a href="#v074">v0.7.4</a>
     <a href="#v073">v0.7.3</a>
     <a href="#v072">v0.7.2</a>
@@ -47,10 +48,23 @@
       <p class="lead">每一条用户能感知到的变化，按时间倒序排列。除非条目里写明具体平台，否则版本号同时覆盖网页版、macOS 桌面版、iOS 测试版和 Chrome 插件。发布下载在 <a href="https://github.com/mianaz/jargonslayer/releases" target="_blank" rel="noopener">GitHub releases</a>；接下来打算做什么见「<a href="features.html#next">功能页</a>」。</p>
     </section>
 
-    <section id="v074">
+    <section id="v075">
       <h2>v0.7</h2>
       <div class="ver">
-        <div class="ver-head"><h3>v0.7.4</h3><span class="ver-date">2026 年 8 月</span><span class="ver-tag">最新</span></div>
+        <div class="ver-head"><h3>v0.7.5</h3><span class="ver-date">2026-08-02</span><span class="ver-tag">最新</span></div>
+        <ul>
+          <li><strong>翻译不再无声死掉：</strong>启动握手失败一次就把整场会议的翻译通道锁死，只有开头一条提示，之后一片空白——同一天同样设置的另一场却正常出双语。现在通道自动重连，真恢复不了状态栏写「翻译失败」，不再装作还在工作。</li>
+          <li><strong>桌面版麦克风模式录到静音：</strong>桌面版系统识别走的是系统输出捕获，没有麦克风通路，选「麦克风」只是给输出捕获贴了个麦克风标签，什么都识别不出来。现在麦克风模式走本地模型；之前已存成错误配置的安装启动时自动修正。</li>
+          <li><strong>采集来源不会再被贴错标签：</strong>设置里的引擎卡片只写引擎不写配套音频来源，选「系统识别」时来源还显示「麦克风」，底栏声称麦克风在录，实际走的是系统音频捕获。</li>
+          <li><strong>识别提示词按会议领域分配：</strong>系统识别接受一组提示词来提高专业术语转录准确率，以前平均分给所有启用的词典包——一场生信报告大部分预算花在金融和日常词汇上。现在按当前会议领域加权，个人生词本也不再独占整个预算。这只提高已有词条被正确转录的概率，不等于新增词条。</li>
+          <li><strong>会议记录一键导出到 Obsidian 和 Notion。</strong></li>
+          <li><strong>端口冲突提示改成人话：</strong>本地转录服务端口 8765/8766 被上次强退的残留进程或第二个 app 实例占着时，启动直接崩出一段 Python 报错；现在写明哪个端口、大概是什么进程、怎么结束它。</li>
+          <li><strong>术语校正：</strong>设置和首次运行教程不再把音频来源当识别引擎列，也不再写「本地 Whisper」——本地模型也跑 Parakeet。</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v074">
+        <div class="ver-head"><h3>v0.7.4</h3><span class="ver-date">2026 年 8 月</span></div>
         <ul>
           <li><strong>多义、按领域排序的释义：</strong>一个词有多种释义时，现在会按会议领域排序——讲癌症恶病质时 CAC 解释成 Cancer-Associated Cachexia，不再是获客成本；「IND … or NDA or BLA」里的 NDA 认成新药申请；机器学习语境里 PR 指 precision-recall，不是 Pull Request；领域不明时依然给出一版可用的解释。</li>
           <li><strong>划词 lookup 重做：</strong>选中任意文字先查词典，命中的词典包和义项全部列出，不再只留一个赢家；真查不到时结合上下文解释并翻译；<code>加入我的词典</code>退到弹窗里的次要位置。</li>
