@@ -311,10 +311,19 @@ fn asset_record_kind(state: &str) -> Option<OsSpeechStatusKind> {
 /// never seen; see `asset_record_kind`, the normal/immediate path for that
 /// same user-facing signal). `engine-failure`/`audio-format` have no kind
 /// of their own (same "falls through to Crashed at exit" posture
-/// audiocap's own unmapped codes get).
+/// audiocap's own unmapped codes get). Dual-capture's own
+/// `mic-permission-denied` (`AudioCapError.micPermissionDenied`,
+/// `MicCapture`'s TCC precheck) reuses this SAME `PermissionDenied` kind
+/// rather than mint a 14th — `OsSpeechStatusKind`'s own doc comment pins
+/// that as a CLOSED set JS exhaustively matches on. JS can currently only
+/// tell mic- and system-audio permission denial apart via the free-text
+/// `message`, not `kind`; widening the kind set (and JS's own match) is a
+/// coordinated follow-up if that turns out not to be enough, not a
+/// Rust-only change.
 fn error_record_kind(code: &str) -> Option<OsSpeechStatusKind> {
     match code {
         "permission-denied" => Some(OsSpeechStatusKind::PermissionDenied),
+        "mic-permission-denied" => Some(OsSpeechStatusKind::PermissionDenied),
         "unsupported-os" => Some(OsSpeechStatusKind::Unsupported),
         "device-changed" => Some(OsSpeechStatusKind::DeviceChanged),
         "unsupported-locale" => Some(OsSpeechStatusKind::UnsupportedLocale),
@@ -415,6 +424,14 @@ struct RawOsSpeechLine {
     #[serde(rename = "endMs")]
     end_ms: Option<u64>,
     text: Option<String>,
+    /// Dual-capture wire addition: present on transcript/stats records
+    /// only when the helper was launched with `--source` (absent on
+    /// every legacy/default-`system` run) — see `build_transcribe_args`.
+    /// A raw, unvalidated passthrough (`"mic"`/`"system"` on the wire
+    /// today) rather than a closed enum here, matching this struct's own
+    /// permissive-parse-then-map-elsewhere posture for every other wire
+    /// string field.
+    channel: Option<String>,
     state: Option<String>,
     progress: Option<f64>,
     message: Option<String>,
@@ -445,6 +462,10 @@ enum ParsedOsSpeechLine {
         start_ms: u64,
         end_ms: u64,
         text: String,
+        /// Dual-capture: `Some("mic"|"system")` when the helper ran with
+        /// `--source`, `None` on a legacy/default-system run — see
+        /// `RawOsSpeechLine::channel`'s own doc comment.
+        channel: Option<String>,
     },
     Asset {
         state: String,
@@ -484,6 +505,12 @@ enum ParsedOsSpeechLine {
     /// field. `Option` because older/foreign stats lines may omit it —
     /// absent must degrade to "no audio evidence", never `Unrecognized`
     /// (the four counters below stay the shape's required fields).
+    ///
+    /// The dual-capture `channel` field a stats record may now also
+    /// carry is deliberately NOT extracted here: the raw line's log copy
+    /// already includes it verbatim, and the latch below is
+    /// session-wide on purpose (see its own comment for why a
+    /// per-channel latch would be a different, larger feature).
     Stats { peak: Option<f64> },
     /// Not valid JSON, valid JSON with an unrecognized/missing "type", or
     /// a known "type" missing the fields that shape requires — never a
@@ -508,6 +535,7 @@ fn parse_osspeech_line(line: &str) -> ParsedOsSpeechLine {
                 start_ms,
                 end_ms,
                 text,
+                channel: raw.channel,
             },
             _ => ParsedOsSpeechLine::Unrecognized,
         },
@@ -963,12 +991,50 @@ impl OsSpeechState {
 
 // ---- start_os_speech / stop_os_speech ----
 
+/// Dual-capture wire values `start_os_speech`'s `source` param accepts —
+/// mirrors the helper's own `--source mic|system|dual` argparse choices
+/// (see `build_transcribe_args`). Same plain-allowlist idiom as
+/// `server.rs`'s own `validate_model`/`ALLOWED_MODELS`.
+const ALLOWED_SOURCES: [&str; 3] = ["mic", "system", "dual"];
+
+fn validate_source(source: &str) -> Result<(), String> {
+    if ALLOWED_SOURCES.contains(&source) {
+        Ok(())
+    } else {
+        Err(format!("'{source}' is not a supported capture source (must be one of {ALLOWED_SOURCES:?})"))
+    }
+}
+
+/// Builds the full `--transcribe` argv — pure (no I/O, no `AppHandle`),
+/// split out of `start_os_speech` purely so this ordering/gating logic is
+/// unit-testable without spinning up real Tauri/shell machinery (the same
+/// separation this file already applies to NDJSON parsing). `--source` is
+/// appended ONLY when `source` differs from the wire default (`"system"`)
+/// — legacy callers (a pre-dual-capture JS bundle, or any caller that
+/// simply omits the param) must keep producing byte-identical argv to the
+/// pre-dual-capture build.
+fn build_transcribe_args(own_pid: String, locale: String, contextual_json: Option<String>, source: &str) -> Vec<String> {
+    // §2.1/A5: `--exclude-pid` is required in transcribe mode too (same
+    // self-exclusion semantics as capture).
+    let mut args = vec!["--transcribe".to_string(), "--exclude-pid".to_string(), own_pid, "--locale".to_string(), locale];
+    if let Some(json) = contextual_json {
+        args.push("--contextual-json".to_string());
+        args.push(json);
+    }
+    if source != "system" {
+        args.push("--source".to_string());
+        args.push(source.to_string());
+    }
+    args
+}
+
 #[tauri::command]
 pub fn start_os_speech(
     app: tauri::AppHandle,
     state: tauri::State<'_, OsSpeechState>,
     locale: String,
     contextual_json: Option<String>,
+    source: Option<String>,
 ) -> Result<(), String> {
     // Runtime re-check (D6: "UI gating is not a boundary") — even if the
     // option was somehow shown/enabled below the floor, the spawn itself
@@ -976,6 +1042,13 @@ pub fn start_os_speech(
     if !is_macos_26_or_later(macos_version()) {
         return Err(UNSUPPORTED_REASON.to_string());
     }
+
+    // Dual-capture: default "system" — byte-identical argv/behavior to
+    // every pre-dual-capture caller that omits this param entirely (see
+    // build_transcribe_args). Validated before any state is claimed/
+    // preempted below, so a bad value fails fast with no side effects.
+    let source = source.as_deref().unwrap_or("system");
+    validate_source(source)?;
 
     // A session start preempts an in-flight preinstall rather than being
     // rejected by it (see PREINSTALL_BUSY_MESSAGE's doc comment — the
@@ -991,14 +1064,7 @@ pub fn start_os_speech(
 
     let generation = state.try_begin()?;
     let own_pid = std::process::id().to_string();
-
-    // §2.1/A5: `--exclude-pid` is required in transcribe mode too (same
-    // self-exclusion semantics as capture).
-    let mut args = vec!["--transcribe".to_string(), "--exclude-pid".to_string(), own_pid, "--locale".to_string(), locale];
-    if let Some(json) = contextual_json {
-        args.push("--contextual-json".to_string());
-        args.push(json);
-    }
+    let args = build_transcribe_args(own_pid, locale, contextual_json, source);
 
     let spawn_result = app
         .shell()
@@ -1168,6 +1234,13 @@ struct OsSpeechTranscriptEvent {
     start_ms: u64,
     end_ms: u64,
     text: String,
+    /// Dual-capture: forwarded verbatim from the wire's own `channel`
+    /// field (`ParsedOsSpeechLine::Transcript::channel`) — `None` (a
+    /// legacy/default-system run) must reach JS as an absent key, not
+    /// `null`, same "skip_serializing_if" convention `OsSpeechStatusEvent`
+    /// already uses below.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    channel: Option<String>,
 }
 
 /// §2.5 R2 — PINNED CROSS-LANE CONTRACT: every `osspeech://status` payload
@@ -1368,7 +1441,12 @@ fn looks_transcript_shaped(raw_line: &str) -> bool {
 /// garbage — is still logged verbatim, unchanged from before this fix.
 fn log_line_for<'a>(raw_line: &'a str, parsed: &ParsedOsSpeechLine) -> std::borrow::Cow<'a, str> {
     match parsed {
-        ParsedOsSpeechLine::Transcript { final_, seq, start_ms, end_ms, text } => {
+        // channel: _ — deliberately not logged (same idiom the Locale arm
+        // below uses for a field it doesn't need); the metadata-only line
+        // this produces is already an exact-format contract (see this
+        // fn's own tests), and dual-capture's channel tag isn't meeting
+        // content, so there's no redaction reason to add it here.
+        ParsedOsSpeechLine::Transcript { final_, seq, start_ms, end_ms, text, channel: _ } => {
             std::borrow::Cow::Owned(format!("transcript final={final_} seq={seq} startMs={start_ms} endMs={end_ms} len={}", text.len()))
         }
         ParsedOsSpeechLine::Unrecognized if looks_transcript_shaped(raw_line) => {
@@ -1409,7 +1487,7 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                         emit_uv_log(&app, "stderr", format!("[osspeech] {log_line}"));
                         session_log.append(&log_line);
                         match parsed {
-                            ParsedOsSpeechLine::Transcript { final_, seq, start_ms, end_ms, text } => {
+                            ParsedOsSpeechLine::Transcript { final_, seq, start_ms, end_ms, text, channel } => {
                                 if app.state::<OsSpeechState>().is_paused() {
                                     // Shouldn't normally happen (the
                                     // helper stops advancing analyzer
@@ -1428,6 +1506,7 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                                         start_ms,
                                         end_ms,
                                         text,
+                                        channel,
                                     },
                                 );
                             }
@@ -1793,6 +1872,7 @@ mod tests {
                 start_ms: 3200,
                 end_ms: 4100,
                 text: "jargon slayer".to_string(),
+                channel: None,
             }
         );
     }
@@ -1808,6 +1888,41 @@ mod tests {
                 start_ms: 0,
                 end_ms: 4920,
                 text: "Jargon slayer is a tool.".to_string(),
+                channel: None,
+            }
+        );
+    }
+
+    // ---- dual-capture: channel field round-trip (transcript + stats) ----
+
+    #[test]
+    fn parses_a_transcript_line_with_a_channel_field() {
+        let line = r#"{"channel":"system","endMs":5100,"final":true,"seq":6,"startMs":900,"text":"hello there","type":"transcript"}"#;
+        assert_eq!(
+            parse_osspeech_line(line),
+            ParsedOsSpeechLine::Transcript {
+                final_: true,
+                seq: 6,
+                start_ms: 900,
+                end_ms: 5100,
+                text: "hello there".to_string(),
+                channel: Some("system".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_a_transcript_line_with_a_mic_channel_field() {
+        let line = r#"{"type":"transcript","channel":"mic","final":false,"seq":7,"startMs":1000,"endMs":2000,"text":"mic side"}"#;
+        assert_eq!(
+            parse_osspeech_line(line),
+            ParsedOsSpeechLine::Transcript {
+                final_: false,
+                seq: 7,
+                start_ms: 1000,
+                end_ms: 2000,
+                text: "mic side".to_string(),
+                channel: Some("mic".to_string()),
             }
         );
     }
@@ -1951,6 +2066,27 @@ mod tests {
         assert_eq!(parse_osspeech_line(line), ParsedOsSpeechLine::Unrecognized);
     }
 
+    #[test]
+    fn a_stats_line_with_a_channel_field_still_classifies_as_stats() {
+        // Dual-capture wire fact: stats records may now carry an optional
+        // `channel` field too — `Stats` never extracts it (see its own
+        // doc comment: the raw line's log copy already has it verbatim),
+        // but the extra field must not break classification, and must
+        // not disturb the silent-session `peak` the variant DOES carry.
+        let line = r#"{"type":"stats","channel":"mic","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0}"#;
+        assert_eq!(parse_osspeech_line(line), ParsedOsSpeechLine::Stats { peak: None });
+    }
+
+    #[test]
+    fn a_stats_line_with_a_channel_field_is_still_logged_verbatim() {
+        // Stats has no dedicated webview event (log lane only) — its
+        // "channel round-trip" is exactly this: the raw line, channel
+        // field and all, reaches the log unchanged.
+        let raw = r#"{"type":"stats","channel":"mic","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0}"#;
+        let parsed = parse_osspeech_line(raw);
+        assert_eq!(log_line_for(raw, &parsed), raw);
+    }
+
     // ---- R1: transcript text must never reach either log lane ----
 
     #[test]
@@ -2063,6 +2199,14 @@ mod tests {
         // retryable asset-failure copy for what's really a
         // noModel/cannotAllocate/…Allocated-style asset problem.
         assert_eq!(error_record_kind("asset-unavailable"), Some(OsSpeechStatusKind::AssetFailed));
+    }
+
+    #[test]
+    fn error_record_kind_maps_mic_permission_denied_to_the_existing_permission_denied_kind() {
+        // Dual-capture's mic-channel TCC denial (AudioCapError
+        // .micPermissionDenied) reuses the SAME kind system-audio's own
+        // "permission-denied" already maps to — no 14th kind minted.
+        assert_eq!(error_record_kind("mic-permission-denied"), Some(OsSpeechStatusKind::PermissionDenied));
     }
 
     #[test]
@@ -2466,5 +2610,77 @@ mod tests {
         let state = OsSpeechState::default();
         state.store_probe(unsupported_capabilities("boom"));
         assert_eq!(state.cached_probe(), Some(unsupported_capabilities("boom")));
+    }
+
+    // ---- dual-capture: source validation ----
+
+    #[test]
+    fn accepts_every_valid_source() {
+        for source in ALLOWED_SOURCES {
+            assert!(validate_source(source).is_ok());
+        }
+    }
+
+    #[test]
+    fn rejects_an_unsupported_source() {
+        for source in ["Mic", "SYSTEM", "microphone", "speaker", "both", ""] {
+            assert!(validate_source(source).is_err(), "{source} should be rejected");
+        }
+    }
+
+    // ---- dual-capture: --transcribe argv construction ----
+
+    #[test]
+    fn build_transcribe_args_omits_the_source_flag_for_the_default_system_value() {
+        // Legacy-invocation guarantee: byte-identical argv to before
+        // dual-capture existed.
+        let args = build_transcribe_args("123".to_string(), "en_US".to_string(), None, "system");
+        assert_eq!(args, vec!["--transcribe", "--exclude-pid", "123", "--locale", "en_US"]);
+    }
+
+    #[test]
+    fn build_transcribe_args_appends_the_source_flag_for_mic() {
+        let args = build_transcribe_args("123".to_string(), "en_US".to_string(), None, "mic");
+        assert_eq!(args, vec!["--transcribe", "--exclude-pid", "123", "--locale", "en_US", "--source", "mic"]);
+    }
+
+    #[test]
+    fn build_transcribe_args_appends_the_source_flag_for_dual() {
+        let args = build_transcribe_args("123".to_string(), "en_US".to_string(), None, "dual");
+        assert_eq!(args, vec!["--transcribe", "--exclude-pid", "123", "--locale", "en_US", "--source", "dual"]);
+    }
+
+    #[test]
+    fn build_transcribe_args_places_source_after_contextual_json() {
+        let args = build_transcribe_args("123".to_string(), "en_US".to_string(), Some("{}".to_string()), "dual");
+        assert_eq!(
+            args,
+            vec!["--transcribe", "--exclude-pid", "123", "--locale", "en_US", "--contextual-json", "{}", "--source", "dual"]
+        );
+    }
+
+    // ---- dual-capture: channel field on the emitted transcript event ----
+
+    fn sample_transcript_event(channel: Option<String>) -> OsSpeechTranscriptEvent {
+        OsSpeechTranscriptEvent {
+            final_: true,
+            seq: 1,
+            start_ms: 0,
+            end_ms: 100,
+            text: "hi".to_string(),
+            channel,
+        }
+    }
+
+    #[test]
+    fn transcript_event_omits_channel_from_the_wire_when_none() {
+        let json = serde_json::to_value(sample_transcript_event(None)).unwrap();
+        assert!(json.get("channel").is_none(), "None must serialize as an absent key, not null: {json}");
+    }
+
+    #[test]
+    fn transcript_event_carries_channel_on_the_wire_when_some() {
+        let json = serde_json::to_value(sample_transcript_event(Some("mic".to_string()))).unwrap();
+        assert_eq!(json.get("channel").and_then(|v| v.as_str()), Some("mic"));
     }
 }

@@ -77,8 +77,14 @@ public final class MicCapture {
         // "ask for permission" call.
         let authStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         guard authStatus != .denied, authStatus != .restricted else {
+            // This message IS the user-facing copy: the Rust side maps
+            // mic-permission-denied onto the closed PermissionDenied
+            // kind and forwards this wire `message` verbatim to JS (its
+            // own error kinds never carry Rust-side literals), so the
+            // polish must live here at the source. Diagnostic detail
+            // (the raw authStatus) rides behind the copy for logs.
             throw AudioCapError.micPermissionDenied(
-                "AVCaptureDevice.authorizationStatus(for: .audio) is \(authStatus) — 麦克风权限未授予"
+                "麦克风权限被拒绝：请在 系统设置 → 隐私与安全性 → 麦克风 中允许 JargonSlayer，然后重新开始转录（authorizationStatus=\(authStatus.rawValue)）"
             )
         }
 
