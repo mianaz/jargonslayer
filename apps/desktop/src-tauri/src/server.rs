@@ -999,23 +999,43 @@ mod tests {
     }
 
     // ---- sidecar port-guard: probe_port_free ----
-    // Both cases use an OS-assigned ephemeral port, never the real
-    // 8765/8766 — those may legitimately be busy on a dev machine with
-    // the app running, and a test must not depend on that.
+    // Neither case touches the real 8765/8766 — those may legitimately
+    // be busy on a dev machine with the app running, and a test must
+    // not depend on that.
+
+    /// Ports for the free-port case below, deliberately BELOW the OS
+    /// ephemeral range (macOS 49152+ per `net.inet.ip.portrange.first`,
+    /// Linux/CI 32768+): nothing on the machine is ever *auto-assigned*
+    /// one of these, so only a deliberate bind can take one. The range
+    /// is walked rather than fixed so a second `cargo test` of this
+    /// crate running alongside this one can't collide.
+    const TEST_PORTS: std::ops::Range<u16> = 18765..18785;
 
     #[test]
     fn probe_port_free_passes_on_a_free_port() {
-        // drop-then-probe has an inherent race — any process on the
-        // machine can grab the freed port inside the window (observed
-        // once on this very test) — so pass if ANY of a few fresh
-        // ephemeral ports probes free.
-        let ok = (0..5).any(|_| {
-            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-            let port = listener.local_addr().unwrap().port();
-            drop(listener);
-            probe_port_free(port, "ws").is_ok()
-        });
-        assert!(ok);
+        // Probes DIRECTLY — deliberately no bind-a-port-then-drop-it-then-
+        // probe-it setup step. That setup was this test's old shape and it
+        // raced ITSELF, not another process: macOS keeps a just-closed
+        // listener's PCB around for a moment, so re-binding the same port
+        // immediately can get EADDRINUSE from the test's own dead listener.
+        // Diagnosed by capturing, at a failure, an empty `netstat` for the
+        // port AND an immediate retry-bind succeeding — nothing ever held
+        // it. Parallel test load widens the window, which is why it only
+        // ever failed as part of the suite (never alone, never under
+        // --test-threads=1): 2 failures in 25 suite runs as originally
+        // written, and 28 in 30 once the setup bind used a fixed port
+        // rather than a fresh ephemeral one. Retrying can't fix it — every
+        // attempt re-runs the same close-then-rebind.
+        //
+        // probe_port_free IS a bind, so the first port that probes free
+        // proves the Ok branch with no setup bind to race against.
+        let probed = TEST_PORTS
+            .clone()
+            .find(|p| probe_port_free(*p, "ws").is_ok());
+        assert!(
+            probed.is_some(),
+            "no port in {TEST_PORTS:?} probed free — a machine problem, not a probe_port_free regression"
+        );
     }
 
     #[test]
