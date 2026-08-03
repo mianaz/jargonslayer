@@ -163,7 +163,12 @@ const ENGINE_OPTIONS: {
         {
           value: "osspeech" as const,
           label: ENGINE_CAPABILITIES.osspeech.label,
-          hint: "本机会议声音，免安装免下载，需 macOS 26+",
+          // Dual capture v1 (docs/design-explorations/dual-capture-2026-
+          // 08.md): this card no longer only names 本机会议声音 (system-
+          // audio) — osspeech now also does mic and mic+system, source
+          // picked afterward via 音源/设置, same posture the desktop
+          // ENGINE_CARDS osspeech card copy (SettingsDialog.tsx) uses.
+          hint: "麦克风/系统声音/麦克风+系统，免安装免下载，需 macOS 26+",
         },
         {
           value: "whisper" as const,
@@ -191,6 +196,11 @@ const ENGINE_OPTIONS: {
 
 function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
   const engine = useApp((s) => s.settings.engine);
+  // Dual capture v1: read alongside `engine` so a re-pick of 系统识别
+  // while it's ALREADY the current engine (e.g. revisiting this step)
+  // can pass its own PRE-click mode through to modeForPersistedEngine's
+  // persistence exception below — see that call site's own comment.
+  const mode = useApp((s) => s.settings.mode);
   // ITEM 2 fix: the D7 webspeech on-device runtime overlay
   // (resolveEngineRetentionClass) reads this exactly like Header/
   // StatusLine do — almost always null here (this overlay only shows
@@ -238,9 +248,21 @@ function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
                 // engine->mode back-derivation store hydration already
                 // uses; rawEngine/legalEngine are both the freshly
                 // picked value here (nothing to back-derive FROM).
+                //
+                // Dual capture v1: the 4th arg is osspeech's own
+                // persistence exception — passed ONLY when `engine` was
+                // ALREADY osspeech (see modeForPersistedEngine's own doc
+                // for why: DEFAULT_SETTINGS.mode is "mic", which must
+                // NOT leak into a fresh install's very first osspeech
+                // pick here).
                 updateSettings({
                   engine: opt.value,
-                  mode: modeForPersistedEngine(opt.value, opt.value, PLATFORM),
+                  mode: modeForPersistedEngine(
+                    opt.value,
+                    opt.value,
+                    PLATFORM,
+                    engine === "osspeech" ? mode : undefined,
+                  ),
                 });
               }}
               className={`rounded-none border p-3 text-left text-sm transition-colors ${

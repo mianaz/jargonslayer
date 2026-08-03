@@ -294,7 +294,15 @@ const ALL_ENGINE_CARDS: {
           // S13 lead fix (Lane D report flag #1): the card is shared by
           // both Tauri shells — the OS-version tail must name the right
           // platform (IS_IOS is a build-time const, so this folds).
-          hint: `无需下载模型、无需 Python，音频不离开本机；不支持说话人分离，需要 ${IS_IOS ? "iOS" : "macOS"} 26 或更高版本`,
+          //
+          // Dual capture v1 (docs/design-explorations/dual-capture-2026-
+          // 08.md): desktop-only source clause, same "由「音源」决定"
+          // phrasing the 本地模型 card above already uses for its own
+          // three-source axis — iOS osspeech stays mic-only v1
+          // (unaffected), so its copy is untouched.
+          hint: IS_IOS
+            ? "无需下载模型、无需 Python，音频不离开本机；不支持说话人分离，需要 iOS 26 或更高版本"
+            : "无需下载模型、无需 Python，音频不离开本机；听麦克风、系统声音还是麦克风+系统由「音源」决定，不支持说话人分离，需要 macOS 26 或更高版本",
         },
       ]
     : []),
@@ -3382,7 +3390,21 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                         engine: gateValue,
                         ...(keepMode
                           ? null
-                          : { mode: modeForPersistedEngine(gateValue, gateValue, MODE_PLATFORM) }),
+                          : {
+                              // Dual capture v1: the draft's PRE-click
+                              // mode is passed as the persisted-source
+                              // hint ONLY when draft.engine was ALREADY
+                              // osspeech (modeForPersistedEngine's own
+                              // doc, store.ts, has the full rationale —
+                              // an unrelated engine's leftover mode must
+                              // never leak into a fresh osspeech pick).
+                              mode: modeForPersistedEngine(
+                                gateValue,
+                                gateValue,
+                                MODE_PLATFORM,
+                                draft.engine === "osspeech" ? draft.mode : undefined,
+                              ),
+                            }),
                       });
                     }}
                     title={

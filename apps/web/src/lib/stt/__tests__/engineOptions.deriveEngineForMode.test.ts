@@ -82,24 +82,43 @@ describe("deriveEngineForMode", () => {
     });
   });
 
-  // v0.7.4 field bug: desktop osspeech is the CoreAudio system-OUTPUT
-  // tap — the audiocap helper has no mic branch (main.swift
-  // runTranscribe; modeForPersistedEngine maps desktop osspeech ->
-  // "system-audio" for the same reason) — so the old osspeech-if-floor
+  // v0.7.4 field bug: desktop osspeech USED TO BE the CoreAudio
+  // system-OUTPUT tap only — the audiocap helper had no mic branch
+  // (main.swift runTranscribe) — so the old osspeech-if-floor
   // derivation here ran the output tap under a 麦克风 label and
-  // captured all-zero audio. Desktop mic is whisper regardless of the
-  // osspeech floor; a keyed cloud pick is respected, same rule as the
+  // captured all-zero audio. Desktop mic was whisper regardless of the
+  // osspeech floor; a keyed cloud pick was respected, same rule as the
   // web branch below.
-  describe("mic — desktop: whisper — NEVER osspeech (system-output tap, not a mic); keyed cloud pick respected", () => {
-    it("floor met -> STILL whisper (osspeech would record the output mix, not the mic)", async () => {
+  //
+  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md)
+  // amends this SURGICALLY: osspeech now has a real AEC mic producer,
+  // so a mic-tile click RETAINS osspeech when it's ALREADY the current
+  // engine (same "deliberate pick survives a mic-tile click" posture
+  // whisper/soniox/deepgram already get below) — every other
+  // engine/mode combination (fresh/demo default, a DIFFERENT prior
+  // engine, floor state) stays byte-identical to the pre-dual-capture
+  // rule.
+  describe("mic — desktop: whisper by default — osspeech RETAINED only when already the current engine (dual capture v1); keyed cloud pick respected", () => {
+    it("fresh/demo default -> whisper, regardless of the osspeech floor", async () => {
       await setOsSpeechFloor(true);
       expect(deriveEngineForMode("mic", DESKTOP, settings())).toBe("whisper");
+    });
+
+    it("engine ALREADY osspeech -> RETAINED (dual capture v1: osspeech now has a real mic branch)", async () => {
+      await setOsSpeechFloor(true);
       expect(deriveEngineForMode("mic", DESKTOP, settings({ engine: "osspeech" }))).toBe(
-        "whisper",
+        "osspeech",
       );
     });
 
-    it("floor NOT met -> whisper", async () => {
+    it("engine ALREADY osspeech, floor NOT (yet) met -> still retained here (deriveEngineForMode never re-probes; the sanitize pass/option gate is what actually locks a below-floor pick, not this branch)", async () => {
+      await setOsSpeechFloor(false);
+      expect(deriveEngineForMode("mic", DESKTOP, settings({ engine: "osspeech" }))).toBe(
+        "osspeech",
+      );
+    });
+
+    it("floor NOT met, fresh default -> whisper", async () => {
       await setOsSpeechFloor(false);
       expect(deriveEngineForMode("mic", DESKTOP, settings())).toBe("whisper");
     });
@@ -110,6 +129,28 @@ describe("deriveEngineForMode", () => {
         deriveEngineForMode("mic", DESKTOP, settings({ engine: "soniox", sonioxKey: "sk-x" })),
       ).toBe("soniox");
       expect(deriveEngineForMode("mic", DESKTOP, settings({ engine: "soniox" }))).toBe("whisper");
+    });
+  });
+
+  // Dual capture v1: 麦克风+系统 is osspeech-exclusive — no fallback
+  // engine exists for it (unlike "system-audio", which degrades to
+  // appaudio below the osspeech floor).
+  describe("dual — osspeech-exclusive: desktop always osspeech; unreachable off-desktop degrades sanely", () => {
+    it("desktop -> osspeech, regardless of the current engine or the floor", async () => {
+      await setOsSpeechFloor(true);
+      expect(deriveEngineForMode("dual", DESKTOP, settings())).toBe("osspeech");
+      expect(deriveEngineForMode("dual", DESKTOP, settings({ engine: "whisper" }))).toBe(
+        "osspeech",
+      );
+      await setOsSpeechFloor(false);
+      expect(deriveEngineForMode("dual", DESKTOP, settings({ engine: "whisper" }))).toBe(
+        "osspeech",
+      );
+    });
+
+    it("unreachable via the real tile set (isModeLegalForPlatform pins desktop-only) — never crashes, degrades sanely", () => {
+      expect(deriveEngineForMode("dual", IOS, settings())).toBe("osspeech");
+      expect(deriveEngineForMode("dual", WEB, settings())).toBe("webspeech");
     });
   });
 

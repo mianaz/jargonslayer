@@ -28,6 +28,14 @@ vi.mock("../../desktop/tauriApi", () => ({
 
 vi.mock("../../store", () => ({
   useApp: { getState: () => ({ customEntries: [] }) },
+  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+  // osSpeech.ts now imports these two stable-speaker-id constants
+  // unconditionally (see its own header comment) — dual capture itself
+  // is desktop-only and never reaches iOS's channel-less transcript
+  // payloads, so no test here exercises them, but a real value (not
+  // undefined) keeps this mock an honest stand-in for the real module.
+  CH_MIC_SPEAKER: "CH_MIC",
+  CH_SYS_SPEAKER: "CH_SYS",
 }));
 
 vi.mock("../../desktop/jobsBridge", () => ({

@@ -133,7 +133,22 @@ export interface STTEvents {
   onInterim: (text: string, speaker?: string) => void;
   onFinal: (
     text: string,
-    opts?: { speaker?: string; startedAt?: number; sttSeg?: number },
+    opts?: {
+      speaker?: string;
+      startedAt?: number;
+      sttSeg?: number;
+      // Dual capture v1 (desktop osspeech mic+system, 2026-08-02): a
+      // stable speaker id known SYNCHRONOUSLY at finalize time (unlike
+      // sttSeg's later, async speaker_update back-label) — osSpeech.ts's
+      // channel-tagged transcript events are the one producer today
+      // (CH_MIC/CH_SYS, store.ts's CH_MIC_SPEAKER/CH_SYS_SPEAKER). The
+      // store resolves the DISPLAY `speaker` through the same
+      // speakerAliases map realtime diarization's speaker_update uses
+      // (see store.ts's addFinal), seeding a default alias the first
+      // time a given id is seen this session — renameable exactly like
+      // a sidecar speaker. Absent = today's behavior, unchanged.
+      sttSpeaker?: string;
+    },
   ) => void;
   onStatus: (status: STTStatus, detail?: string) => void;
   // realtime speaker diarization (beta) — both optional, no-op unless
@@ -557,7 +572,17 @@ export interface Settings {
   // tests) — runtime-validated (an untrusted/garbage persisted string is
   // treated as absent, not blindly trusted) and NEVER derived as "url"
   // (a returning user is never silently dropped into the URL-ingest tab).
-  mode: "system-audio" | "tab" | "mic" | "import" | "url";
+  //
+  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+  // "dual" (麦克风+系统) is a THIRD desktop-only source, legal only for
+  // the "osspeech" engine (isModeLegalForPlatform, store.ts). Unlike
+  // every other engine (mode always back-derives from engine, A3's
+  // ruling), desktop osspeech is a scoped exception: the user's source
+  // choice among {mic, system-audio, dual} PERSISTS across an engine
+  // round-trip (modeForPersistedEngine's osspeech branch, store.ts) —
+  // "dual" itself always derives engine "osspeech" (deriveEngineForMode,
+  // engineOptions.ts), never the other way around.
+  mode: "system-audio" | "tab" | "mic" | "dual" | "import" | "url";
   micId?: string;
   language: string; // BCP-47, for Web Speech API
   whisperUrl: string; // local sidecar websocket

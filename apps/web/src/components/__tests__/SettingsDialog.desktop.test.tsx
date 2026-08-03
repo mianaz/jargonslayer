@@ -869,6 +869,15 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
     return card as HTMLButtonElement;
   }
 
+  // Dual capture v1's own persistence-exception tests below (draft
+  // engine/mode pairing) need the 保存 button — mirrors the ambient
+  // (web) SettingsDialog.test.tsx's own identically-named local helper.
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
   // S11 fix-round J5: the 识别语言 <select> has no data-testid of its
   // own — found the same way findOsSpeechCard/findNavButton above locate
   // their own targets (by rendered text), via its preceding <label>'s
@@ -977,6 +986,53 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
     });
     expect(container!.textContent).toContain("该引擎不支持说话人分离");
     expect(container!.textContent).not.toContain("需先配置 HF Token");
+  });
+
+  // ---------------------------------------------------------------
+  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md)
+  // — the 转录引擎 系统识别 card's own persistence-exception pairing.
+  // ---------------------------------------------------------------
+
+  it("系统识别 card: re-picking it while it's ALREADY the current engine keeps the existing mode (mic) on 保存 — dual capture v1 persistence exception", async () => {
+    mockUseOsSpeechCaps.mockReturnValue({ supported: true, reason: null, locales: [], installedLocales: [] });
+    useApp.setState({
+      settings: { ...engineSeedSettings(), engine: "osspeech", mode: "mic" },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+
+    await act(async () => {
+      findOsSpeechCard().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.engine).toBe("osspeech");
+    expect(useApp.getState().settings.mode).toBe("mic");
+  });
+
+  it("系统识别 card: picking it from a DIFFERENT prior engine defaults mode to system-audio — a whisper session's own mode:mic never leaks in", async () => {
+    mockUseOsSpeechCaps.mockReturnValue({ supported: true, reason: null, locales: [], installedLocales: [] });
+    useApp.setState({
+      settings: { ...engineSeedSettings(), engine: "whisper", mode: "mic" },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+
+    await act(async () => {
+      findOsSpeechCard().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.engine).toBe("osspeech");
+    expect(useApp.getState().settings.mode).toBe("system-audio");
   });
 });
 

@@ -88,15 +88,24 @@ const AUDIO_SOURCE_PLACEHOLDER = "音源";
 const SYSTEM_AUDIO_CAVEAT = "只捕获对方的系统/App 声音，不包含你的麦克风";
 
 interface AudioSourceOption {
-  value: "mic" | "system-audio" | "tab";
+  value: "mic" | "system-audio" | "dual" | "tab";
   label: string;
   caveat?: string;
 }
 
+// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+// "dual" (麦克风+系统) joins the desktop-only "system-audio" entry —
+// picking it always resolves to osspeech (deriveEngineForMode's own
+// "dual" branch, engineOptions.ts; isModeLegalForPlatform pins the
+// legality identically), same as how picking "system-audio"/"mic" here
+// can already switch the engine underneath a different current pick.
 const AUDIO_SOURCE_OPTIONS: readonly AudioSourceOption[] = [
   { value: "mic", label: "麦克风" },
   ...(IS_DESKTOP
-    ? ([{ value: "system-audio", label: "系统/App 音频（仅对方，不含麦克风）", caveat: SYSTEM_AUDIO_CAVEAT }] as const)
+    ? ([
+        { value: "system-audio", label: "系统/App 音频（仅对方，不含麦克风）", caveat: SYSTEM_AUDIO_CAVEAT },
+        { value: "dual", label: "麦克风+系统" },
+      ] as const)
     : []),
   ...(!IS_DESKTOP && !IS_IOS ? ([{ value: "tab", label: "浏览器标签页" }] as const) : []),
 ] as const;
@@ -252,7 +261,18 @@ function EngineDropdown() {
         ) as (typeof ENGINE_OPTIONS)[number]["value"];
         updateSettings({
           engine: next,
-          mode: modeForPersistedEngine(next, next, MODE_PLATFORM),
+          // Dual capture v1: pass the PRE-click mode as the persisted-
+          // source hint ONLY when the engine was ALREADY osspeech (see
+          // modeForPersistedEngine's own doc, store.ts, for why this
+          // gate matters — a mic/dual pick from a DIFFERENT prior engine
+          // must still default to system-audio, never leak in an
+          // unrelated mode value).
+          mode: modeForPersistedEngine(
+            next,
+            next,
+            MODE_PLATFORM,
+            engine === "osspeech" ? settings.mode : undefined,
+          ),
         });
       }}
       className={`h-full max-w-[7.5rem] shrink-0 border-x border-edge bg-panel2 px-2 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem] sm:px-2 ${iosTextClass}`}

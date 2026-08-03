@@ -30,6 +30,16 @@ vi.mock("../../desktop/tauriApi", () => ({
   getListen: () => Promise.resolve(currentListen),
 }));
 
+// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+// this ambient file is osSpeech.ts's DESKTOP-flavored default coverage —
+// osSpeech.ios.test.ts is the dedicated IS_IOS:true sibling (see that
+// file's own header comment) — so IS_DESKTOP is pinned true here too,
+// same "ambient = desktop, dedicated .ios file = iOS" split. Needed for
+// start()'s own `source` gate (osSpeech.ts), which is desktop-only
+// (iOS's start_os_speech Rust command has no `source` param at all);
+// nothing else in this file's ~56 pre-existing tests reads IS_DESKTOP.
+vi.mock("../../platform/desktop", () => ({ IS_DESKTOP: true }));
+
 interface FakeAssetTracker {
   handle: ReturnType<typeof vi.fn>;
   settle: ReturnType<typeof vi.fn>;
@@ -45,11 +55,22 @@ vi.mock("../../desktop/jobsBridge", () => ({
 
 import { OsSpeechEngine } from "../osSpeech";
 import { createEngine } from "../index";
+import { CH_MIC_SPEAKER, CH_SYS_SPEAKER } from "../../store";
 
 // Mirrors osSpeech.ts's own (unexported) STOP_ENDED_TIMEOUT_MS.
 const STOP_ENDED_TIMEOUT_MS = 4000;
 
-const OSSPEECH_SETTINGS = { ...DEFAULT_SETTINGS, engine: "osspeech" as const };
+// mode:"system-audio" (dual capture v1's own default, docs/design-
+// explorations/dual-capture-2026-08.md) — NOT DEFAULT_SETTINGS.mode's
+// own "mic" default, which would now spuriously add a `source: "mic"`
+// arg to every start_os_speech call in this file (see the "source
+// pass-through on start" describe block below for the dedicated
+// mic/dual/system-audio coverage).
+const OSSPEECH_SETTINGS = {
+  ...DEFAULT_SETTINGS,
+  engine: "osspeech" as const,
+  mode: "system-audio" as const,
+};
 
 function noopEvents(): STTEvents {
   return {
@@ -282,6 +303,103 @@ describe("OsSpeechEngine", () => {
 
       expect(onInterim).not.toHaveBeenCalled();
       expect(onFinal).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md)
+  // ---------------------------------------------------------------
+
+  describe("dual capture v1: source pass-through on start", () => {
+    it("mode:mic -> start_os_speech args include source:\"mic\"", async () => {
+      const { calls } = wireFakes();
+      const engine = new OsSpeechEngine();
+
+      await engine.start(noopEvents(), { ...OSSPEECH_SETTINGS, mode: "mic" });
+
+      const startCall = calls.find((c) => c.cmd === "start_os_speech");
+      expect(startCall?.args?.source).toBe("mic");
+    });
+
+    it("mode:dual -> start_os_speech args include source:\"dual\"", async () => {
+      const { calls } = wireFakes();
+      const engine = new OsSpeechEngine();
+
+      await engine.start(noopEvents(), { ...OSSPEECH_SETTINGS, mode: "dual" });
+
+      const startCall = calls.find((c) => c.cmd === "start_os_speech");
+      expect(startCall?.args?.source).toBe("dual");
+    });
+
+    it("mode:system-audio -> `source` key is OMITTED entirely (byte-identical argv to every pre-dual-capture caller)", async () => {
+      const { calls } = wireFakes();
+      const engine = new OsSpeechEngine();
+
+      await engine.start(noopEvents(), { ...OSSPEECH_SETTINGS, mode: "system-audio" });
+
+      const startCall = calls.find((c) => c.cmd === "start_os_speech");
+      expect(startCall?.args).not.toHaveProperty("source");
+    });
+  });
+
+  describe("dual capture v1: channel -> sttSpeaker mapping", () => {
+    it("channel:\"mic\" maps to onFinal(text, { sttSpeaker: CH_MIC_SPEAKER })", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      const onFinal = vi.fn();
+      await engine.start({ ...noopEvents(), onFinal } as unknown as STTEvents, OSSPEECH_SETTINGS);
+
+      emit("osspeech://transcript", {
+        final: true,
+        seq: 1,
+        startMs: 0,
+        endMs: 500,
+        text: "my side",
+        channel: "mic",
+      });
+
+      expect(onFinal).toHaveBeenCalledWith("my side", { sttSpeaker: CH_MIC_SPEAKER });
+    });
+
+    it("channel:\"system\" maps to onFinal(text, { sttSpeaker: CH_SYS_SPEAKER })", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      const onFinal = vi.fn();
+      await engine.start({ ...noopEvents(), onFinal } as unknown as STTEvents, OSSPEECH_SETTINGS);
+
+      emit("osspeech://transcript", {
+        final: true,
+        seq: 2,
+        startMs: 0,
+        endMs: 500,
+        text: "their side",
+        channel: "system",
+      });
+
+      expect(onFinal).toHaveBeenCalledWith("their side", { sttSpeaker: CH_SYS_SPEAKER });
+    });
+
+    // Legacy/single-source no-channel case (`channel` absent) already
+    // pinned above: "final:true maps to onFinal(text) with NO second
+    // (opts) argument at all" — a channel-tagged event must never
+    // regress that byte-identical call shape.
+
+    it("interim (final:false) events carry no speaker mapping regardless of channel — onInterim's own signature has no speaker param for osspeech", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      const onInterim = vi.fn();
+      await engine.start({ ...noopEvents(), onInterim } as unknown as STTEvents, OSSPEECH_SETTINGS);
+
+      emit("osspeech://transcript", {
+        final: false,
+        seq: 3,
+        startMs: 0,
+        endMs: 100,
+        text: "partial",
+        channel: "mic",
+      });
+
+      expect(onInterim).toHaveBeenCalledWith("partial");
     });
   });
 

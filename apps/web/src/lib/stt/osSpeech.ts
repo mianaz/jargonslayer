@@ -17,13 +17,24 @@
 // already established — this file imports zero Tauri itself.
 //
 // Wire contract (PINNED — §2.4/§2.5/§2.6 of the blueprint):
-//   invoke("start_os_speech", { locale, contextualJson })
+//   invoke("start_os_speech", { locale, contextualJson, source? })
 //   invoke("stop_os_speech")                 — idempotent
 //   invoke("pause_os_speech")/("resume_os_speech") — idempotent, no-arg
-//   event "osspeech://transcript" -> { final, seq, startMs, endMs, text }
+//   event "osspeech://transcript" -> { final, seq, startMs, endMs, text,
+//     channel? }
 //   event "osspeech://status" -> { kind, message?, progress?,
 //     resolvedLocale?, supportedLocales? }, kind one of the CLOSED set
 //     below (OsSpeechStatusKind).
+//
+// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md,
+// Rust side: apps/desktop/src-tauri/src/osspeech.rs): `source` is
+// "mic"|"system"|"dual" — omitted (or "system") is byte-identical to
+// every pre-dual-capture caller, the Rust command's own default.
+// `channel` ("mic"|"system") rides ONLY a transcript whose session
+// started with an explicit `source` — absent (never null) on a
+// legacy/single-source ("system", the default) session. See start()/
+// handleTranscript below for how this engine maps settings.mode <->
+// source/channel.
 //
 // Generation guard (JS side, identical idiom to appAudio.ts's own header
 // comment): every listen() callback registered by a given start() call
@@ -40,8 +51,16 @@ import { getInvoke, type UnlistenFn } from "../desktop/tauriApi";
 import { trackOsSpeechAsset, type OsSpeechAssetTracker } from "../desktop/jobsBridge";
 import { diagLog } from "../diag/log";
 import { IS_IOS } from "../platform/ios";
+import { IS_DESKTOP } from "../platform/desktop";
 import { listenOsSpeechStatus, listenOsSpeechTranscript } from "./osSpeechTransport";
 import { projectForOsSpeechContextualJson } from "./lexicon";
+// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+// the two channel-tagged stable speaker ids — store.ts owns the
+// speakerAliases/seedChannelAlias machinery these feed, so the literals
+// live there and this file imports rather than hand-typing a second
+// copy. No import cycle: jobsBridge.ts above already pulls in store.ts
+// transitively (useApp), and store.ts itself never imports this file.
+import { CH_MIC_SPEAKER, CH_SYS_SPEAKER } from "../store";
 
 export type OsSpeechStatusKind =
   | "starting"
@@ -93,6 +112,10 @@ export interface OsSpeechTranscriptPayload {
   startMs: number;
   endMs: number;
   text: string;
+  // Dual capture v1: forwarded verbatim from Rust's own optional
+  // `channel` field — absent (not null) on a legacy/single-source
+  // ("system") session, see this file's header comment.
+  channel?: "mic" | "system";
 }
 
 // §2.5 TERMINAL kinds — the helper is gone (or never going to start)
@@ -260,7 +283,26 @@ export class OsSpeechEngine implements STTEngine {
       // (e.g. a test) that omits the optional 3rd param entirely.
       const contextualJson = projectForOsSpeechContextualJson(lexicon ?? { terms: [] });
 
-      await invoke("start_os_speech", { locale: settings.language, contextualJson });
+      // Dual capture v1 is desktop-only (design contract: "Web/iOS
+      // osspeech behavior unchanged, iOS stays mic-only") — iOS's own
+      // start_os_speech Rust command (osspeech_ios.rs) has NO `source`
+      // parameter at all, unlike desktop's (osspeech.rs), so this MUST
+      // gate on IS_DESKTOP, not merely on mode. Without that gate, iOS
+      // osspeech (whose mode is ALWAYS "mic" — modeForPersistedEngine's
+      // own iOS branch never derives anything else) would send a
+      // `source` key every single start(), an argument that command
+      // doesn't declare. `source` is spread in ONLY for desktop
+      // mic/dual — fully OMITTED for every other mode (system-audio) or
+      // platform (iOS), byte-identical to every pre-dual-capture
+      // caller's argv (build_transcribe_args, osspeech.rs, defaults to
+      // "system" when the param is absent).
+      const source =
+        IS_DESKTOP && (settings.mode === "mic" || settings.mode === "dual") ? settings.mode : undefined;
+      await invoke("start_os_speech", {
+        locale: settings.language,
+        contextualJson,
+        ...(source ? { source } : {}),
+      });
       helperStarted = true;
       this.running = true;
     } catch {
@@ -298,7 +340,20 @@ export class OsSpeechEngine implements STTEngine {
       // semantic by passing none either, rather than inventing an
       // epoch-ms value (sessionStartEpoch + payload.startMs) nothing
       // downstream of the appaudio/wsTransport family actually reads.
-      events.onFinal(payload.text);
+      //
+      // Dual capture v1: `channel` (present only on a session actually
+      // started with a `source`) maps to the matching stable sttSpeaker
+      // id — store.ts's addFinal resolves the DISPLAY name from it. The
+      // 2nd arg is OMITTED entirely (not passed as `undefined`) for a
+      // channel-less payload, so a legacy/single-source session's finals
+      // stay byte-identical to before this feature (no phantom speaker).
+      if (payload.channel) {
+        events.onFinal(payload.text, {
+          sttSpeaker: payload.channel === "mic" ? CH_MIC_SPEAKER : CH_SYS_SPEAKER,
+        });
+      } else {
+        events.onFinal(payload.text);
+      }
     } else {
       events.onInterim(payload.text);
     }

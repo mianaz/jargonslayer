@@ -489,6 +489,17 @@ export function deriveEngineForMode(
       : PREVIEW_TIER || providerKeyPresent
         ? "tabaudio-cloud"
         : "tabaudio";
+  } else if (mode === "dual") {
+    // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+    // 麦克风+系统 is osspeech-exclusive — no other desktop engine can
+    // capture both channels at once (unlike "system-audio" above, there
+    // is no appaudio-style fallback to degrade to below the macOS-26
+    // floor). isModeLegalForPlatform pins this mode desktop-only, so the
+    // iOS/web arms below are unreachable via the real tile set, same
+    // "degrade to a working default rather than a platform-nonsensical
+    // one" posture the system-audio branch above already takes for its
+    // own unreachable arms.
+    candidate = isDesktop ? "osspeech" : isIos ? "osspeech" : "webspeech";
   } else {
     // mode === "mic"
     if (isIos) {
@@ -538,20 +549,30 @@ export function deriveEngineForMode(
               settings.engine === "elevenlabs"
               ? !!settings.elevenLabsKey
               : false;
-      // v0.7.4 field bug (silence under a 麦克风 label): desktop mic
-      // NEVER derives osspeech. Desktop osspeech is the CoreAudio
-      // system-OUTPUT process tap — the audiocap helper has no
-      // input-device branch at all (main.swift runTranscribe), which is
-      // exactly why modeForPersistedEngine (store.ts) maps desktop
-      // osspeech -> "system-audio". The old `osspeechFloorMet ?
-      // "osspeech" : "whisper"` here ran the output tap while the UI
-      // claimed mic capture, producing all-zero audio (peak=0, finals=0).
-      // whisper is desktop's only local mic engine; a keyed cloud pick
-      // is respected under the same rule as the web branch above.
+      // v0.7.4 field bug (silence under a 麦克风 label): desktop mic used
+      // to NEVER derive osspeech, full stop — desktop osspeech was
+      // ONLY the CoreAudio system-OUTPUT process tap (no mic branch at
+      // all), so the old `osspeechFloorMet ? "osspeech" : "whisper"`
+      // here ran the output tap while the UI claimed mic capture,
+      // producing all-zero audio (peak=0, finals=0).
+      //
+      // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md)
+      // amends that rule SURGICALLY: osspeech now has a real
+      // AEC-processed mic producer, so a mic-tile click while osspeech
+      // is ALREADY the current engine keeps it (retention, same
+      // "deliberate choice must survive a mic-tile click" posture
+      // whisper/soniox/deepgram already get below) rather than force-
+      // resetting to whisper. Every OTHER engine/mode combination is
+      // byte-identical to the pre-dual-capture rule: whisper is desktop's
+      // only local mic engine for anyone NOT already on osspeech, and a
+      // keyed cloud pick is respected under the same rule as the web
+      // branch above.
       candidate = isDesktop
-        ? cloudKeyFor
-          ? settings.engine
-          : "whisper"
+        ? settings.engine === "osspeech"
+          ? "osspeech"
+          : cloudKeyFor
+            ? settings.engine
+            : "whisper"
         : isSidecarFamily(settings.engine)
           ? "whisper" // recognizer stickiness: tabaudio -> whisper on a mic flip, never webspeech
           : cloudKeyFor

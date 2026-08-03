@@ -37,13 +37,17 @@ import PixelDragon from "@/components/PixelDragon";
 import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 import type { HubTab } from "./ImportHub";
 
-type CaptureMode = "system-audio" | "tab" | "mic";
+// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+// "dual" (麦克风+系统) joins the three real capture tiles — desktop-only,
+// osspeech-exclusive (see pickCapture's own dual tile push below).
+type CaptureMode = "system-audio" | "tab" | "mic" | "dual";
 type ModeTileKey = CaptureMode | "import" | "url";
 
 const CAPTURE_MODE_LABEL: Record<CaptureMode, string> = {
   "system-audio": "本机会议声音",
   tab: "浏览器标签页",
   mic: "麦克风",
+  dual: "麦克风+系统",
 };
 
 interface ModeTile {
@@ -77,10 +81,21 @@ export interface ModeTileVisibility {
  *  function was built to close) left to guard against by hiding the
  *  tile. The url tile stays preview-only-absent below (`!isPreview`) —
  *  ImportHub's url tab is genuinely sidecar-dependent, untouched by this
- *  blueprint. */
+ *  blueprint.
+ *
+ *  Dual capture v1: "dual" is pushed alongside "system-audio" — both
+ *  desktop-only, both osspeech's own tile pair (see pickCapture below;
+ *  isModeLegalForPlatform, store.ts, pins the same desktop-only
+ *  legality). Not floor-gated here (same posture "system-audio" already
+ *  has — a below-floor pick still resolves to a working, if degraded,
+ *  engine via deriveEngineForMode's own sanitize pass / the option's own
+ *  disabled state elsewhere; this tile has no non-osspeech fallback, so
+ *  a below-floor pick surfaces the SAME floor-locked posture the engine
+ *  picker already shows for osspeech itself). */
 export function visibleModeTileKeys(v: ModeTileVisibility): ModeTileKey[] {
   const keys: ModeTileKey[] = [];
   if (v.isDesktop) keys.push("system-audio");
+  if (v.isDesktop) keys.push("dual");
   if (!v.isDesktop && !v.isIos) keys.push("tab");
   keys.push("mic");
   keys.push("import");
@@ -151,6 +166,14 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
       onClick: () => pickCapture("system-audio"),
     });
   }
+  if (visibleTiles.has("dual")) {
+    tiles.push({
+      key: "dual",
+      label: "麦克风+系统",
+      selected: settings.mode === "dual",
+      onClick: () => pickCapture("dual"),
+    });
+  }
   if (visibleTiles.has("tab")) {
     tiles.push({
       key: "tab",
@@ -188,7 +211,10 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
   }
 
   const captureMode: CaptureMode | null =
-    settings.mode === "system-audio" || settings.mode === "tab" || settings.mode === "mic"
+    settings.mode === "system-audio" ||
+    settings.mode === "tab" ||
+    settings.mode === "mic" ||
+    settings.mode === "dual"
       ? settings.mode
       : null;
   const engineLabel = captureMode ? engineLabelFor(settings.engine, settings) : null;

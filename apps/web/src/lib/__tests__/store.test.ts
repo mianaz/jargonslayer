@@ -9,6 +9,8 @@ import {
   assignSpeakerFollowingInSegments,
   assignSpeakerToSegments,
   autoMeetingTitle,
+  CH_MIC_SPEAKER,
+  CH_SYS_SPEAKER,
   currentSessionSnapshot,
   deriveRosterFromSegments,
   elapsedActiveMs,
@@ -21,6 +23,7 @@ import {
   renameSpeakerInSegments,
   resetPostStopSaveStateForTests,
   scheduleSessionSave,
+  seedChannelAlias,
   shouldApplySpeakerUpdate,
   SPEAKER_ROSTER_CAP,
   unlockSpeakerInSegments,
@@ -706,6 +709,98 @@ describe("addFinal — v0.5 Wave-1 Feature 1 live latch", () => {
     const second = useApp.getState().addFinal("two");
     expect(second.speaker).toBeUndefined();
     expect(second.speakerLocked).toBeUndefined();
+  });
+});
+
+// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md) —
+// seedChannelAlias is the pure helper store.ts's addFinal wraps (same
+// "pure helper tested standalone, thin store action tested for
+// integration" split as applySpeakerUpdateToSegments/aliasesAfterRename
+// above).
+describe("seedChannelAlias — dual capture v1 default alias seeding", () => {
+  it("seeds 我 for CH_MIC_SPEAKER on first call", () => {
+    expect(seedChannelAlias({}, CH_MIC_SPEAKER)).toEqual({ [CH_MIC_SPEAKER]: "我" });
+  });
+
+  it("seeds 对方 for CH_SYS_SPEAKER on first call", () => {
+    expect(seedChannelAlias({}, CH_SYS_SPEAKER)).toEqual({ [CH_SYS_SPEAKER]: "对方" });
+  });
+
+  it("is a no-op (same reference) once ANY alias already exists for that id — a default seed never overwrites a later user rename", () => {
+    const aliases = { [CH_MIC_SPEAKER]: "Alice" }; // already renamed away from the default
+    expect(seedChannelAlias(aliases, CH_MIC_SPEAKER)).toBe(aliases);
+  });
+
+  it("is a no-op (same reference) for an unrelated stable id (e.g. a sidecar diarization SPEAKER_1) — the two mechanisms never cross-seed", () => {
+    const aliases = {};
+    expect(seedChannelAlias(aliases, "SPEAKER_1")).toBe(aliases);
+  });
+
+  it("preserves existing aliases for OTHER stable ids untouched", () => {
+    const aliases = { SPEAKER_1: "Bob" };
+    expect(seedChannelAlias(aliases, CH_SYS_SPEAKER)).toEqual({ SPEAKER_1: "Bob", [CH_SYS_SPEAKER]: "对方" });
+  });
+});
+
+describe("addFinal — dual capture v1 channel -> speaker mapping", () => {
+  beforeEach(() => {
+    useApp.setState({
+      segments: [],
+      activeSpeaker: null,
+      speakerAliases: {},
+      settings: { ...DEFAULT_SETTINGS, autoDetect: false },
+    });
+  });
+
+  it("a channel-tagged final (sttSpeaker: CH_MIC_SPEAKER) with no prior alias resolves to 我, seeds the alias, and stamps sttSpeaker", () => {
+    const seg = useApp.getState().addFinal("my line", { sttSpeaker: CH_MIC_SPEAKER });
+    expect(seg.speaker).toBe("我");
+    expect(seg.sttSpeaker).toBe(CH_MIC_SPEAKER);
+    expect(useApp.getState().speakerAliases).toEqual({ [CH_MIC_SPEAKER]: "我" });
+  });
+
+  it("a channel-tagged final (sttSpeaker: CH_SYS_SPEAKER) resolves to 对方", () => {
+    const seg = useApp.getState().addFinal("their line", { sttSpeaker: CH_SYS_SPEAKER });
+    expect(seg.speaker).toBe("对方");
+    expect(useApp.getState().speakerAliases).toEqual({ [CH_SYS_SPEAKER]: "对方" });
+  });
+
+  it("seeding is once-per-session (idempotent): a second channel-tagged final for the SAME id doesn't touch the already-seeded alias", () => {
+    useApp.getState().addFinal("first", { sttSpeaker: CH_MIC_SPEAKER });
+    const aliasesAfterFirst = useApp.getState().speakerAliases;
+    useApp.getState().addFinal("second", { sttSpeaker: CH_MIC_SPEAKER });
+    expect(useApp.getState().speakerAliases).toEqual(aliasesAfterFirst);
+  });
+
+  // The differentiator from a one-off rename (renameSpeakerInSegments,
+  // which only rewrites segments CURRENTLY displaying `from`): a
+  // channel-tagged final resolves through the SAME alias map on every
+  // call, so a rename sticks for every LATER final too — "renameable
+  // exactly like a sidecar speaker" (design contract, dual-capture-
+  // 2026-08.md).
+  it("a rename (renameSpeaker) sticks for a LATER channel-tagged final too, not just past segments", () => {
+    useApp.getState().addFinal("before rename", { sttSpeaker: CH_MIC_SPEAKER });
+    useApp.getState().renameSpeaker("我", "Alice");
+    const after = useApp.getState().addFinal("after rename", { sttSpeaker: CH_MIC_SPEAKER });
+    expect(after.speaker).toBe("Alice");
+    expect(useApp.getState().segments.map((s) => s.speaker)).toEqual(["Alice", "Alice"]);
+  });
+
+  it("a channel-tagged final is NEVER latch-eligible, even with an active roster latch set — channel resolution always wins", () => {
+    useApp.getState().setActiveSpeaker("Bob");
+    const seg = useApp.getState().addFinal("hello", { sttSpeaker: CH_MIC_SPEAKER });
+    expect(seg.speaker).toBe("我"); // not "Bob"
+    expect(seg.speakerLocked).toBeUndefined(); // not latch-locked
+  });
+
+  // Legacy/single-source sessions (osspeech without dual capture, or any
+  // other engine) never pass sttSpeaker at all — today's behavior stays
+  // byte-identical: no speaker, no alias growth (no phantom speakers).
+  it("a final with NO sttSpeaker gets no speaker set and grows no alias (legacy case, unchanged)", () => {
+    const seg = useApp.getState().addFinal("plain transcript");
+    expect(seg.speaker).toBeUndefined();
+    expect(seg.sttSpeaker).toBeUndefined();
+    expect(useApp.getState().speakerAliases).toEqual({});
   });
 });
 
@@ -3889,6 +3984,52 @@ describe("modeForPersistedEngine — full migration matrix (every STTEngineKind 
   });
 });
 
+// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md) —
+// the scoped exception to "mode always back-derives from engine": for
+// desktop osspeech, a TRUSTWORTHY prior source (the 4th param, passed by
+// a caller ONLY when the engine was ALREADY osspeech — see every real
+// call site: StatusLine's EngineDropdown, SettingsDialog's ENGINE_CARDS,
+// TutorialOverlay's EnginePickerStep, migrateSettings below) persists
+// instead of resetting to the "system-audio" default.
+describe("modeForPersistedEngine — dual capture v1 osspeech persistence exception (desktop only)", () => {
+  it("no 4th arg at all -> system-audio (the pre-dual-capture default, byte-identical to the MATRIX row above)", () => {
+    expect(modeForPersistedEngine("osspeech", "osspeech", "desktop")).toBe("system-audio");
+  });
+
+  it.each(["mic", "system-audio", "dual"] as const)(
+    "persisted mode '%s' -> persists unchanged",
+    (persisted) => {
+      expect(modeForPersistedEngine("osspeech", "osspeech", "desktop", persisted)).toBe(persisted);
+    },
+  );
+
+  it("a persisted mode OUTSIDE the legal osspeech set (e.g. 'tab', a leftover from some other context) falls back to system-audio, not blindly trusted", () => {
+    expect(modeForPersistedEngine("osspeech", "osspeech", "desktop", "tab")).toBe("system-audio");
+  });
+
+  it("import/url never leak through as a 'persisted osspeech mode' either — same fallback", () => {
+    expect(modeForPersistedEngine("osspeech", "osspeech", "desktop", "import")).toBe("system-audio");
+    expect(modeForPersistedEngine("osspeech", "osspeech", "desktop", "url")).toBe("system-audio");
+  });
+
+  // The landmine this exception must NOT reintroduce: DEFAULT_SETTINGS.
+  // mode is "mic" — a fresh install's untouched default. A caller must
+  // gate the 4th arg on "engine was ALREADY osspeech" (every real call
+  // site does — see this describe block's own header comment); this
+  // function itself has no way to tell a genuine prior osspeech pick
+  // apart from an unrelated engine's leftover "mic" default, so it
+  // trusts whatever the caller hands it. Pinned here as documentation of
+  // the CONTRACT, not a bug in this function.
+  it("the 4th arg is trusted verbatim when a caller passes it — first mic/dual pick is the CALLER's responsibility to gate on the pre-click engine (see StatusLine/SettingsDialog/TutorialOverlay call sites)", () => {
+    expect(modeForPersistedEngine("osspeech", "osspeech", "desktop", "mic")).toBe("mic");
+  });
+
+  it("iOS stays hard-pinned mic-only, unaffected by the 4th arg (osspeech's own iOS branch never reads it)", () => {
+    expect(modeForPersistedEngine("osspeech", "osspeech", "ios", "dual")).toBe("mic");
+    expect(modeForPersistedEngine("osspeech", "osspeech", "ios", "system-audio")).toBe("mic");
+  });
+});
+
 // Finding 4 fix (pre-merge review): isModeLegalForPlatform is the pure
 // predicate migrateSettings now ALSO consults (in addition to
 // isValidMode) before trusting a persisted `mode` string outright —
@@ -3897,12 +4038,15 @@ describe("modeForPersistedEngine — full migration matrix (every STTEngineKind 
 // matrix immediately above, for the identical reason (this test env's
 // IS_DESKTOP/IS_IOS are fixed web consts).
 describe("isModeLegalForPlatform — platform-legality matrix (Finding 4)", () => {
-  const MODES: Settings["mode"][] = ["system-audio", "tab", "mic", "import", "url"];
+  const MODES: Settings["mode"][] = ["system-audio", "tab", "mic", "dual", "import", "url"];
   // [mode, legal on web, legal on desktop, legal on ios]
   const MATRIX: [Settings["mode"], boolean, boolean, boolean][] = [
     ["system-audio", false, true, false],
     ["tab", true, false, false],
     ["mic", true, true, true],
+    // Dual capture v1: desktop-only, same as "system-audio" — the only
+    // engine either ever pairs with (osspeech) never spans web/iOS.
+    ["dual", false, true, false],
     ["import", true, true, true],
     ["url", true, true, true],
   ];
@@ -3993,6 +4137,27 @@ describe("migrateSettings — mode back-derivation end-to-end (§5 A3, real web 
   it("import/browser-whisper derive mode from the RAW engine, unaffected by other folds", () => {
     expect(migrateSettings({ engine: "import" } as Partial<Settings>).mode).toBe("import");
     expect(migrateSettings({ engine: "browser-whisper" } as Partial<Settings>).mode).toBe("import");
+  });
+
+  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+  // this ambient test env is WEB (IS_DESKTOP/IS_IOS both false import-
+  // time consts), where applyPlatformEngineDefaults already coerces a
+  // saved osspeech away to tabaudio BEFORE the mode mapper ever sees it
+  // — so a saved {engine:"osspeech", mode:"mic"/"dual"} must derive mode
+  // from the coerced (tabaudio) engine like any other engine, never leak
+  // the desktop-only persistence exception here. The real desktop-
+  // platform coverage for the exception itself lives in
+  // "modeForPersistedEngine — dual capture v1 osspeech persistence
+  // exception" above (exercised directly, explicit platform arg — same
+  // reason this file's own header comment gives for every other
+  // platform-specific mode test).
+  it("a saved osspeech + mic/dual mode restored on WEB is unaffected by the desktop-only persistence exception — derives from the platform-coerced engine (tabaudio) instead", () => {
+    expect(migrateSettings({ engine: "osspeech", mode: "mic" } as Partial<Settings>).mode).toBe(
+      "tab",
+    );
+    expect(migrateSettings({ engine: "osspeech", mode: "dual" } as Partial<Settings>).mode).toBe(
+      "tab",
+    );
   });
 });
 

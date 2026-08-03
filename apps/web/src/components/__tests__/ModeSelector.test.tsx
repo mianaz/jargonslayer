@@ -194,15 +194,17 @@ describe("visibleModeTileKeys — tab tile visible on preview unconditionally (D
     expect(keys).toEqual(["tab", "mic", "import"]);
   });
 
-  it("desktop: system-audio present, tab never present regardless of tier (desktop never had a tab tile)", () => {
+  it("desktop: system-audio + dual present (dual capture v1), tab never present regardless of tier (desktop never had a tab tile)", () => {
     expect(visibleModeTileKeys({ isDesktop: true, isIos: false, isPreview: false })).toEqual([
       "system-audio",
+      "dual",
       "mic",
       "import",
       "url",
     ]);
     expect(visibleModeTileKeys({ isDesktop: true, isIos: false, isPreview: true })).toEqual([
       "system-audio",
+      "dual",
       "mic",
       "import",
     ]);

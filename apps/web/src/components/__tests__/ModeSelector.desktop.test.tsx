@@ -106,14 +106,28 @@ describe("ModeSelector — desktop build", () => {
     return el as HTMLButtonElement;
   }
 
-  it("shows system-audio/mic/import/url — no tab tile (D7: WKWebView has no tab-share picker)", () => {
+  it("shows system-audio/dual/mic/import/url — no tab tile (D7: WKWebView has no tab-share picker)", () => {
     resetStore();
     render();
     expect(container!.querySelector('[data-testid="mode-tile-tab"]')).toBeNull();
     expect(container!.querySelector('[data-testid="mode-tile-system-audio"]')).not.toBeNull();
+    // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+    // 麦克风+系统 joins the desktop tile set.
+    expect(container!.querySelector('[data-testid="mode-tile-dual"]')).not.toBeNull();
     expect(container!.querySelector('[data-testid="mode-tile-mic"]')).not.toBeNull();
     expect(container!.querySelector('[data-testid="mode-tile-import"]')).not.toBeNull();
     expect(container!.querySelector('[data-testid="mode-tile-url"]')).not.toBeNull();
+  });
+
+  it("麦克风+系统: picking the dual tile writes mode:dual, engine:osspeech (osspeech-exclusive, no floor gate on this pure derivation)", async () => {
+    await setOsSpeechFloor(true);
+    resetStore();
+    render();
+    act(() => {
+      tile("dual").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(useApp.getState().settings.mode).toBe("dual");
+    expect(useApp.getState().settings.engine).toBe("osspeech");
   });
 
   it("states that system/App audio captures the other party only, not the user's microphone", () => {

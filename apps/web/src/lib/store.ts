@@ -299,6 +299,43 @@ export function aliasesAfterRename(
 }
 
 // ---------------------------------------------------------------
+// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md) —
+// osSpeech.ts's channel-tagged transcript events resolve straight to a
+// DISPLAY speaker at addFinal time (no later speaker_update — the
+// channel is known synchronously on the SAME final), but ride the exact
+// same stable-id/alias/rename-wins machinery as realtime sidecar
+// diarization above, so a rename sticks for every later channel-tagged
+// final too, not just past segments. CH_MIC_SPEAKER/CH_SYS_SPEAKER are
+// exported so osSpeech.ts (the one producer) shares these two literals
+// rather than hand-typing them a second time.
+// ---------------------------------------------------------------
+
+export const CH_MIC_SPEAKER = "CH_MIC";
+export const CH_SYS_SPEAKER = "CH_SYS";
+
+const DEFAULT_CHANNEL_ALIAS: Record<string, string> = {
+  [CH_MIC_SPEAKER]: "我",
+  [CH_SYS_SPEAKER]: "对方",
+};
+
+/** Seeds the default 我/对方 alias for a channel stable id THE FIRST TIME
+ *  it's seen this session (aliases resets to {} per meeting — see
+ *  beginMeeting/loadSession/newMeeting) — a no-op once ANY entry
+ *  (default or user-renamed) already exists for it, so a later rename
+ *  (renameSpeaker) is never clobbered back to the default. Returns the
+ *  SAME `aliases` reference when nothing changes (an unknown stable id,
+ *  or one already seeded/renamed) so a caller can cheaply skip a store
+ *  write. */
+export function seedChannelAlias(
+  aliases: Record<string, string>,
+  sttSpeaker: string,
+): Record<string, string> {
+  const defaultAlias = DEFAULT_CHANNEL_ALIAS[sttSpeaker];
+  if (!defaultAlias || aliases[sttSpeaker] !== undefined) return aliases;
+  return { ...aliases, [sttSpeaker]: defaultAlias };
+}
+
+// ---------------------------------------------------------------
 // v0.5 Wave-1 Feature 1 (owner amendment — unbounded roster, default
 // unassigned, multi-select, retroactive-following, live latch; docs/
 // design-explorations/v05-wave1-blueprint.md §1 Feature 1 + §5 A2) —
@@ -674,7 +711,11 @@ interface AppState {
   resumeMeeting: () => void;
   addFinal: (
     text: string,
-    opts?: { speaker?: string; startedAt?: number; sttSeg?: number },
+    // `sttSpeaker` (dual capture v1): see STTEvents.onFinal's own doc
+    // (types.ts) for the wire contract — this store action is where it
+    // actually resolves to a DISPLAY `speaker` (seedChannelAlias +
+    // speakerAliases lookup, see the implementation below).
+    opts?: { speaker?: string; startedAt?: number; sttSeg?: number; sttSpeaker?: string },
   ) => TranscriptSegment;
   setInterim: (interim: InterimState | null) => void;
   // realtime speaker diarization (beta): back-labels already-sent
@@ -1201,7 +1242,14 @@ export function applyOpenRouterModelDefaults(settings: Settings): Settings {
  *  below has one genuinely three-way branch (osspeech). */
 export type ModePlatform = "web" | "desktop" | "ios";
 
-const VALID_MODES = new Set<Settings["mode"]>(["system-audio", "tab", "mic", "import", "url"]);
+const VALID_MODES = new Set<Settings["mode"]>([
+  "system-audio",
+  "tab",
+  "mic",
+  "dual",
+  "import",
+  "url",
+]);
 
 /** §5 A3: "persisted mode strings runtime-validated" — an untrusted/
  *  garbage/future-unknown value is treated as absent (triggers
@@ -1231,13 +1279,33 @@ function isValidMode(x: unknown): x is Settings["mode"] {
  *
  *  Mapping (§5 A3, verbatim): import/browser-whisper(raw)->import;
  *  tabaudio/tabaudio-cloud->tab; webspeech/whisper/soniox/deepgram->mic;
- *  appaudio->system-audio(desktop); osspeech->mic on iOS/system-audio on
- *  desktop; demo->platform's legal default capture mode; unknown-
- *  >platform default; NEVER url. */
+ *  appaudio->system-audio(desktop); osspeech->{persisted source or
+ *  system-audio} on desktop (dual capture v1 exception, below)/mic on
+ *  iOS; demo->platform's legal default capture mode; unknown->platform
+ *  default; NEVER url.
+ *
+ *  `persistedOsSpeechMode` (dual capture v1, docs/design-explorations/
+ *  dual-capture-2026-08.md) — SCOPED EXCEPTION to the rest of this
+ *  function's "mode always back-derives from engine" rule, desktop
+ *  osspeech only: when the engine was ALREADY osspeech before this call
+ *  (a caller passes its own pre-write `settings.mode`/`draft.mode` here
+ *  ONLY in that case — see StatusLine/SettingsDialog/TutorialOverlay's
+ *  own call sites), the user's existing source choice among {mic,
+ *  system-audio, dual} persists instead of resetting to system-audio.
+ *  Omitted/any other value (including DEFAULT_SETTINGS' own mode:"mic"
+ *  leaking in from a fresh install, or an unrelated engine's leftover
+ *  mode) falls to the "system-audio" default — never auto-upgrades
+ *  anyone into mic/dual capture; that first pick must be an explicit
+ *  user action (it trips the mic TCC prompt). migrateSettings passes
+ *  `legacy.mode` here gated the identical way, so an existing install
+ *  already pinned to system-audio (29f876b) stays pinned, while a
+ *  genuine post-feature {engine:"osspeech", mode:"dual"} save round-trips
+ *  unchanged on the next hydrate. */
 export function modeForPersistedEngine(
   rawEngine: STTEngineKind | undefined,
   legalEngine: STTEngineKind,
   platform: ModePlatform,
+  persistedOsSpeechMode?: Settings["mode"],
 ): Settings["mode"] {
   if (rawEngine === "import" || rawEngine === "browser-whisper") return "import";
   switch (legalEngine) {
@@ -1254,9 +1322,17 @@ export function modeForPersistedEngine(
       return "system-audio";
     case "osspeech":
       // osspeech spans both platforms with a different mode meaning on
-      // each: iOS's only engine (mic-only v1) vs desktop's system-audio
-      // CoreAudio-tap pairing (see appaudio's own branch above).
-      return platform === "desktop" ? "system-audio" : "mic";
+      // each: iOS stays hard-pinned mic-only v1 (unaffected by the dual
+      // capture exception below); desktop's default is the system-audio
+      // CoreAudio-tap pairing (see appaudio's own branch above), UNLESS
+      // a trustworthy prior osspeech source was passed in (see this
+      // function's own doc comment for what "trustworthy" means here).
+      if (platform !== "desktop") return "mic";
+      return persistedOsSpeechMode === "mic" ||
+        persistedOsSpeechMode === "system-audio" ||
+        persistedOsSpeechMode === "dual"
+        ? persistedOsSpeechMode
+        : "system-audio";
     case "demo":
     default:
       // demo (scripted preview, not a real capture mode) and any
@@ -1268,8 +1344,8 @@ export function modeForPersistedEngine(
 }
 
 /** Finding 4 fix (pre-merge review): isValidMode above only proves a
- *  persisted `mode` STRING is one of the 5 enum values — not that it's
- *  legal on THIS platform. A web backup's mode:"tab" restored on
+ *  persisted `mode` STRING is one of the enum values (VALID_MODES) —
+ *  not that it's legal on THIS platform. A web backup's mode:"tab" restored on
  *  desktop (or "system-audio" restored on web/iOS) is syntactically
  *  valid but names a capture intent this platform can never satisfy.
  *  "mic" is legal everywhere (DEFAULT_SETTINGS' own comment); "import"/
@@ -1277,10 +1353,14 @@ export function modeForPersistedEngine(
  *  they're never tied to a capture engine's platform restrictions in
  *  the first place (same modes modeForPersistedEngine above NEVER
  *  derives except "import", but a persisted "url" surviving here is
- *  still legitimate: A3's own "locked is FINE to keep" ruling). */
+ *  still legitimate: A3's own "locked is FINE to keep" ruling).
+ *
+ *  Dual capture v1: "dual" (麦克风+系统) is desktop-only, same as
+ *  "system-audio" — osspeech is the only engine either ever pairs with,
+ *  and osspeech's own iOS branch stays mic-only v1 (unaffected). */
 export function isModeLegalForPlatform(mode: Settings["mode"], platform: ModePlatform): boolean {
   if (mode === "tab") return platform === "web";
-  if (mode === "system-audio") return platform === "desktop";
+  if (mode === "system-audio" || mode === "dual") return platform === "desktop";
   return true;
 }
 
@@ -1396,13 +1476,29 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   // platform-coerced above), so isModeLegalForPlatform is no longer
   // consulted here. Only the import-family modes remain standalone user
   // intent worth keeping verbatim (never tied to a capture engine).
+  //
+  // Dual capture v1: the one scoped exception to "always back-derive" —
+  // modeForPersistedEngine's osspeech branch. `legacy.mode` is passed
+  // ONLY when `legacy.engine` was ALSO osspeech (a value this saved blob
+  // can only have if the last live save actually paired {engine:
+  // "osspeech", mode:X} itself — see that function's own doc comment for
+  // why this gate matters: DEFAULT_SETTINGS.mode is "mic", which would
+  // otherwise leak into a fresh install's very first osspeech pick).
+  // Pre-existing installs already pinned to mode:"system-audio" by
+  // 29f876b round-trip unchanged (the persisted value IS in the legal
+  // set, so it "persists" as itself).
   const platform: ModePlatform = IS_IOS ? "ios" : IS_DESKTOP ? "desktop" : "web";
   if (isValidMode(legacy.mode) && (legacy.mode === "import" || legacy.mode === "url")) {
     return openRouterSettings;
   }
   return {
     ...openRouterSettings,
-    mode: modeForPersistedEngine(legacy.engine, openRouterSettings.engine, platform),
+    mode: modeForPersistedEngine(
+      legacy.engine,
+      openRouterSettings.engine,
+      platform,
+      legacy.engine === "osspeech" ? legacy.mode : undefined,
+    ),
   };
 }
 
@@ -2447,8 +2543,23 @@ export const useApp = create<AppState>((set, get) => ({
     }),
 
   addFinal: (text, opts) => {
-    const { segments, settings, activeSpeaker } = get();
+    const { segments, settings, activeSpeaker, speakerAliases } = get();
     const now = Date.now();
+    // Dual capture v1: a channel-tagged final (opts.sttSpeaker, e.g.
+    // "CH_MIC"/"CH_SYS") resolves its DISPLAY speaker through the SAME
+    // alias map realtime sidecar diarization's speaker_update uses
+    // (applySpeakerUpdateToSegments) — seeding the default 我/对方 alias
+    // the first time this session sees that stable id (seedChannelAlias
+    // is a no-op past the first call, or for any OTHER stable id), so a
+    // later rename (renameSpeaker) sticks for every subsequent
+    // channel-tagged final too, not just past segments. A final with no
+    // sttSpeaker at all (every other engine, and legacy/single-source
+    // osspeech sessions) is untouched — aliases unchanged, resolvedSpeaker
+    // falls through to opts.speaker exactly as before this feature.
+    const aliases =
+      opts?.sttSpeaker !== undefined ? seedChannelAlias(speakerAliases, opts.sttSpeaker) : speakerAliases;
+    const resolvedSpeaker =
+      opts?.sttSpeaker !== undefined ? aliases[opts.sttSpeaker] ?? opts.sttSpeaker : opts?.speaker;
     // v0.5 Wave-1 Feature 1 (live latch): applies ONLY to a final that
     // arrives with no speaker of its own (demo/deepgram/soniox can
     // report one directly at finalize time; wsTransport's realtime
@@ -2456,20 +2567,23 @@ export const useApp = create<AppState>((set, get) => ({
     // its finals always arrive speaker-less here) — stamps the latched
     // roster name and marks it manually locked, same "manual wins"
     // semantics as a per-segment assignment (see applySpeakerUpdateToSegments'
-    // A2 guard above).
-    const latched = opts?.speaker === undefined && activeSpeaker !== null;
+    // A2 guard above). A channel-tagged final always resolves a speaker
+    // of its own (never latch-eligible), same rule demo/deepgram/soniox
+    // already follow.
+    const latched = resolvedSpeaker === undefined && activeSpeaker !== null;
     const seg: TranscriptSegment = {
       id: newId(),
       index: segments.length,
       startedAt: opts?.startedAt ?? now,
       endedAt: now,
-      speaker: opts?.speaker ?? (activeSpeaker ?? undefined),
+      speaker: resolvedSpeaker ?? (activeSpeaker ?? undefined),
       speakerLocked: latched ? true : undefined,
       text: text.trim(),
       engine: settings.engine,
       sttSeg: opts?.sttSeg,
+      sttSpeaker: opts?.sttSpeaker,
     };
-    set({ segments: [...segments, seg] });
+    set({ segments: [...segments, seg], speakerAliases: aliases });
     // Personal glossary matches ride on the segment funnel so every
     // engine and every detect mode benefits; counted exactly once
     // per occurrence here (other sources never bump custom cards).
