@@ -695,7 +695,11 @@ function HamburgerMenu({
             >
               <Translate size={16} weight="regular" />
               补全翻译
-              <span className="ml-auto text-[10px] tabular-nums text-lab-orange">
+              {/* F11 fix round (law sweep): text-[10px] is illegal on an
+                  interactive element (this whole row is role="menuitem")
+                  — text-xs matches the byte-identical count badge on
+                  this button's own iOS-menu sibling just below. */}
+              <span className="ml-auto text-xs tabular-nums text-lab-orange">
                 {toolbar.untranslatedCount}
               </span>
             </button>

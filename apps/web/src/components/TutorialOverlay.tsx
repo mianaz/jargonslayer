@@ -100,6 +100,20 @@ const STEP_COUNT = 3;
 // runs. Resolved once at module load (mirrors IS_DESKTOP/IS_IOS above).
 const TAB_CARD_ENGINE: Exclude<STTEngineKind, "demo"> = PREVIEW_TIER ? "tabaudio-cloud" : "tabaudio";
 
+// F1 fix round (BLOCKER): step 0 used to claim "全程本地" unconditionally
+// — true only on desktop, where every default engine (osspeech,
+// whisper) actually IS local. Step 2 (this same overlay) offers cloud
+// engines on every platform, and web's own default (webspeech) is
+// browser-cloud — the old copy was simply false there. Capability-
+// phrased on web/iOS instead of a claim that doesn't hold; desktop
+// keeps the stronger line since it's genuinely true by default there.
+// Resolved once at module load, mirroring IS_DESKTOP/IS_IOS/PLATFORM
+// above.
+const TUTORIAL_HEADLINE = IS_DESKTOP ? "你的双语会议引擎，全程本地" : "你的双语会议引擎";
+const TUTORIAL_SUPPORT = IS_DESKTOP
+  ? "私有 · 全本地 · 双语。听英文、看中文解释，会议内容留在你的设备。"
+  : "听英文、看中文解释。选本地引擎时，音频和内容不出设备。";
+
 // Per-card onboarding copy for the iOS matrix — Record over the shared
 // IOS_ENGINE_KINDS so adding an engine there without copy here fails
 // `tsc` (Opus F3's completeness discipline, same shape as
@@ -359,10 +373,10 @@ export default function TutorialOverlay({
                 </span>
               </div>
               <div className="mt-4 text-base font-medium leading-[26px] text-fg">
-                你的双语会议引擎，全程本地
+                {TUTORIAL_HEADLINE}
               </div>
               <div className="mt-3 text-sm leading-[26px] text-mut">
-                私有 · 全本地 · 双语。听英文、看中文解释，会议内容留在你的设备。
+                {TUTORIAL_SUPPORT}
               </div>
               <div className="mt-2 text-xs leading-[1.7] text-mut">行话来了，也能一条条屠掉。</div>
               <DemoAction onStartDemo={handleStartDemo} />

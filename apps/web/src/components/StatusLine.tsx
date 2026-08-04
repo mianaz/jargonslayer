@@ -19,7 +19,6 @@ import { IS_IOS } from "@/lib/platform/ios";
 import { useLatencyStats } from "@/lib/stt/latencyStats";
 import {
   ENGINE_OPTIONS,
-  POSTURE_LABEL,
   RETENTION_COPY,
   deriveEngineForMode,
   engineOptionGate,
@@ -32,7 +31,6 @@ import {
   ENGINE_CAPABILITIES,
   ENGINE_FAMILY_LABEL,
   ENGINE_FAMILY_ORDER,
-  derivePosture,
   resolveTabAudioCloudProvider,
   type RetentionClass,
 } from "@/lib/stt/engineCapabilities";
@@ -45,6 +43,8 @@ import TaskTray from "@/components/TaskTray";
 import AiStatusPanel, { deriveHealthStatus, type AiHealthStatus } from "@/components/AiStatusPanel";
 import { useLlmTelemetry } from "@/lib/llm/telemetry";
 import { resolveTaskCreds } from "@/lib/llm/taskConfig";
+import { useDirectTransport } from "@/lib/llm/client";
+import { useOverlayA11y } from "@/lib/a11y";
 import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 
 // Exported (tech-debt ledger #4, 2026-07-17): StatusLine.test.tsx
@@ -149,7 +149,14 @@ function AudioSourceDropdown() {
           engine: deriveEngineForMode(nextMode, { isDesktop: IS_DESKTOP, isIos: IS_IOS }, settings),
         });
       }}
-      className="h-full max-w-[7.5rem] shrink-0 border-l border-edge bg-panel2 px-2 font-mono text-fg disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem]"
+      // F5 fix round (HIGH): below sm this is the NARROWER of the two
+      // selects (7rem vs 引擎's 8.5rem, EngineDropdown below) — its own
+      // option labels (麦克风/系统/麦克风+系统/浏览器标签页) are shorter
+      // than the engine picker's third-party names, so it needs less of
+      // the row's tight budget. Native <select> clips its own displayed
+      // (selected) text once boxed this narrow — no extra truncate class
+      // needed. ≥sm unchanged.
+      className="h-full max-w-[7rem] shrink-0 border-l border-edge bg-panel2 px-2 font-mono text-fg disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem]"
     >
       {!selected && (
         <option value="" disabled>
@@ -166,7 +173,7 @@ function AudioSourceDropdown() {
 }
 
 // FINDING 12 fix (LOW): short NAME half for the cramped bottom bar (the
-// select is max-w-[7.5rem] below sm — "Soniox 云端识别 · 未配置" truncates
+// select is max-w-[8.5rem] below sm — "Soniox 云端识别 · 未配置" truncates
 // on iOS) — a display-only override local to this component, never a
 // change to the shared ENGINE_OPTIONS array (SettingsDialog's own
 // ENGINE_CARDS, the actual source of `label`, keeps the full name).
@@ -297,7 +304,11 @@ function EngineDropdown() {
           ),
         });
       }}
-      className={`h-full max-w-[7.5rem] shrink-0 border-x border-edge bg-panel2 px-2 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem] sm:px-2 ${iosTextClass}`}
+      // F5 fix round (HIGH): below sm this is the WIDER of the two
+      // selects (8.5rem vs 音源's 7rem, AudioSourceDropdown above) — its
+      // third-party option labels (Soniox/Deepgram/ElevenLabs · 未配置)
+      // need more of the row's tight budget. ≥sm unchanged.
+      className={`h-full max-w-[8.5rem] shrink-0 border-x border-edge bg-panel2 px-2 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem] sm:px-2 ${iosTextClass}`}
     >
       {unmapped && (
         <option value="" disabled>
@@ -428,21 +439,30 @@ function AiStatusChip() {
   const detectStat = useLlmTelemetry((s) => s.detect);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  // F4 fix round (HIGH): routed through useOverlayA11y for stack-aware
+  // Escape (this popover can itself nest inside StatusLine's <sm
+  // OverflowChip popover — see that component's own doc) + Tab-trap +
+  // focus-restore-to-trigger. modal:false — role=dialog stays, but this
+  // is a non-modal popover, and a nested aria-modal here would be the
+  // wrong ARIA shape once it's stacked under the overflow popover's own
+  // aria-modal.
+  const dialogProps = useOverlayA11y({
+    open,
+    onClose: () => setOpen(false),
+    containerRef: popoverRef,
+    modal: false,
+  });
 
   useEffect(() => {
     if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
     const handleMouseDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
-    document.addEventListener("keydown", handleKey);
     document.addEventListener("mousedown", handleMouseDown);
     return () => {
-      document.removeEventListener("keydown", handleKey);
       document.removeEventListener("mousedown", handleMouseDown);
     };
   }, [open]);
@@ -450,19 +470,44 @@ function AiStatusChip() {
   const resolved = resolveTaskCreds(settings, "detect");
   const model = shortModelName(resolved.model);
   const health = deriveHealthStatus(detectStat);
-  const glyph = AI_STATUS_CHIP_GLYPH[health];
+  // F2 fix round (HIGH): 未配置 used to key on resolved.apiKey ALONE —
+  // but on the Next.js transport path the SERVER may hold its own
+  // funded key (preview tier's shared trial key, or a full-tier
+  // server-side key) and subscription-direct works keyless too, so a
+  // missing CLIENT key doesn't mean the call can't succeed there.
+  // useDirectTransport (client.ts) is the exact gate every *Api call
+  // site already uses to decide direct-vs-/api/* for this same
+  // resolved cred — 未配置 is honest only when THIS call would actually
+  // skip /api/* (desktop, or preview tier with a key — which can't
+  // co-occur with "no key"). When the Next path would serve instead,
+  // show the model name; its own health glyph (below) tells the truth
+  // about whether it's actually succeeding.
+  const direct = useDirectTransport(resolved);
+  const unconfigured = detectMode === "llm" && direct && !resolved.apiKey;
   // TRUTH: what's actually running, not what's merely configured —
   // dictionary/off never call the model above regardless of what's
-  // configured; llm with no resolved key doesn't either.
+  // configured; llm with no resolved key (and no server fallback to
+  // catch it) doesn't either.
   const runningLabel =
     detectMode === "off"
       ? DETECT_MODE_LABEL.off
       : detectMode === "dictionary"
         ? AI_STATUS_CHIP_DICT_LABEL
-        : resolved.apiKey
-          ? model
-          : AI_STATUS_CHIP_UNCONFIGURED_LABEL;
-  const unconfigured = detectMode === "llm" && !resolved.apiKey;
+        : unconfigured
+          ? AI_STATUS_CHIP_UNCONFIGURED_LABEL
+          : model;
+  // F10 fix round (MEDIUM): the ✓/✗ telemetry glyph used to render
+  // regardless of runningLabel — an OLD failure recorded while llm mode
+  // was active stayed "✗" even after switching to 词典 mode (which never
+  // calls the model at all), reading as "dictionary is failing" when
+  // nothing dictionary-related ever ran. A glyph is only ever earned
+  // while a real model name is shown.
+  const showingModel = detectMode === "llm" && !unconfigured;
+  const glyph = showingModel ? AI_STATUS_CHIP_GLYPH[health] : undefined;
+  // Compact (phone-width) variant additionally drops the neutral "…"
+  // glyph (reads as a truncation artifact there, not a status — see the
+  // span below); ok "✓"/fail "✗" still show, both unambiguous at a glance.
+  const compactGlyph = glyph && health !== "neutral" ? glyph : undefined;
 
   return (
     <div ref={rootRef} className="relative flex h-full items-center">
@@ -476,21 +521,18 @@ function AiStatusChip() {
         className={`flex h-full items-center whitespace-nowrap px-2 hover:bg-panel3 hover:text-fg sm:px-3 ${unconfigured ? "text-warn-soft" : ""}`}
       >
         <span className="hidden sm:inline">
-          {AI_STATUS_CHIP_DOMAIN_LABEL} · {runningLabel} {glyph}
+          {AI_STATUS_CHIP_DOMAIN_LABEL} · {runningLabel}
+          {glyph ? ` ${glyph}` : ""}
         </span>
-        {/* Compact (phone-width) variant: the neutral "…" glyph read as
-            a truncation artifact rather than a status — dropped here
-            (ok "✓"/fail "✗" still show, both unambiguous at a glance).
-            The desktop-full span above keeps "…" unchanged. */}
+        {/* Compact (phone-width) variant — see compactGlyph above. */}
         <span className="sm:hidden">
-          {health === "neutral"
-            ? AI_STATUS_CHIP_DOMAIN_LABEL
-            : `${AI_STATUS_CHIP_DOMAIN_LABEL} ${glyph}`}
+          {compactGlyph ? `${AI_STATUS_CHIP_DOMAIN_LABEL} ${compactGlyph}` : AI_STATUS_CHIP_DOMAIN_LABEL}
         </span>
       </button>
       {open && (
         <div
-          role="dialog"
+          ref={popoverRef}
+          {...dialogProps}
           data-testid="statusline-ai-status-popover"
           // S14.1 field fix (item 4): the ORIGINAL absolute/left-0/w-72
           // anchors the popover to THIS chip's own left edge — fine on
@@ -652,15 +694,17 @@ function TranslateStatusChip() {
 // TASK 2 (privacy visible at every breakpoint): the color-coded privacy
 // SENTENCE below (privacyCopy.hint) is `hidden sm:inline` — this app's
 // one privacy promise must never fully disappear below that width. This
-// compact chip is its <sm replacement: collapses the SAME retentionClass
-// the sentence and Header's EnginePostureChip both already resolve
-// (resolveEngineRetentionClass) down to derivePosture's binary
-// local/cloud (engineCapabilities.ts) + POSTURE_LABEL (engineOptions.ts)
-// — no new local/cloud classification invented here, reuses both. No
-// tap-to-expand popover: aria-label + title already carry the full
-// sentence for both mouse hover and screen readers, and a second popover
-// mechanism for one static line has no real payoff over the sentence
-// itself being back at sm+.
+// compact chip is its <sm replacement, reading the SAME RETENTION_COPY
+// table (lib/stt/engineOptions.ts) the sentence right next to it already
+// does. F7 fix round (MEDIUM): this used to collapse to the binary
+// local/cloud posture (derivePosture + POSTURE_LABEL) — a cloud-STORED
+// engine (ElevenLabs, 可能留存) then read identically to a cloud-
+// TRANSIENT one on phones, losing its stronger warning exactly where a
+// BYOK phone user is most likely to be looking. No tap-to-expand
+// popover: aria-label + title already carry the full sentence for both
+// mouse hover and screen readers, and a second popover mechanism for
+// one static line has no real payoff over the sentence itself being
+// back at sm+.
 function PrivacyPostureChip({
   retentionClass,
   sentence,
@@ -668,17 +712,19 @@ function PrivacyPostureChip({
   retentionClass: RetentionClass;
   sentence: string;
 }) {
-  const posture = derivePosture(retentionClass);
+  const copy = RETENTION_COPY[retentionClass];
   return (
     <span
       data-testid="statusline-privacy-chip"
       aria-label={sentence}
       title={sentence}
-      className={`flex h-full w-9 shrink-0 items-center justify-center whitespace-nowrap font-bold sm:hidden ${
-        posture === "local" ? "text-lab-green" : "text-warn-soft"
-      }`}
+      // F5 budget (below sm): no more fixed w-9 — 云端·可能留存 (7 CJK-
+      // width glyphs) can't fit a 36px box. Content-sized with a
+      // slimmer px-0.5 instead; see the row-width budget comment above
+      // StatusLine's own return for the worst-case pixel accounting.
+      className={`flex h-full shrink-0 items-center justify-center whitespace-nowrap px-0.5 font-bold sm:hidden ${copy.textClass}`}
     >
-      {POSTURE_LABEL[posture]}
+      {copy.label}
     </span>
   );
 }
@@ -697,21 +743,30 @@ function OverflowChip() {
   const segments = useApp((s) => s.segments);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  // F4 fix round (HIGH): routed through useOverlayA11y — containerRef on
+  // the popover panel itself, onClose closes it, and focus returns to
+  // this ⋯ trigger via the hook's own restore-on-close (it's whatever
+  // was document.activeElement right before `open` flips true, i.e. the
+  // trigger the user just clicked). Modal (default): this is the
+  // OUTERMOST overlay when open below sm, so aria-modal is correct here
+  // — AiStatusChip's own NESTED popover is the one that opts out (modal:
+  // false) once stacked inside this one.
+  const dialogProps = useOverlayA11y({
+    open,
+    onClose: () => setOpen(false),
+    containerRef: popoverRef,
+  });
 
   useEffect(() => {
     if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
     const handleMouseDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
-    document.addEventListener("keydown", handleKey);
     document.addEventListener("mousedown", handleMouseDown);
     return () => {
-      document.removeEventListener("keydown", handleKey);
       document.removeEventListener("mousedown", handleMouseDown);
     };
   }, [open]);
@@ -732,7 +787,8 @@ function OverflowChip() {
       </button>
       {open && (
         <div
-          role="dialog"
+          ref={popoverRef}
+          {...dialogProps}
           data-testid="statusline-overflow-popover"
           className="scroll-thin fixed inset-x-2 bottom-[calc(2rem+env(safe-area-inset-bottom))] z-30 flex max-h-[60vh] flex-col gap-2 overflow-y-auto border border-edge bg-panel2 glassable p-3 shadow-lg"
         >
@@ -831,6 +887,32 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
 
   const count = cards.length + terms.length;
 
+  // F5 fix round (HIGH): below-sm row-width budget. With an active
+  // TaskTray + long engine labels this row used to exceed 375px (the
+  // page's own overflow-hidden root then just clips whatever falls off
+  // the right edge — TaskTray, the last/ml-auto element, is the first
+  // casualty). Worst-case sum of every element visible below sm, at
+  // text-xs/font-mono (≈7px per ASCII glyph — SF Mono's ~0.6em advance;
+  // ≈12px per CJK glyph — full-width East Asian glyphs render at a full
+  // 1em, not the ASCII ratio):
+  //   mode block   "--LIVE--" (8 ascii) + px-2×2         ≈  72px
+  //   ⋯ trigger    w-9 fixed                              =  36px
+  //   |            1 glyph, no padding                    ≈   7px
+  //   privacy chip "云端·可能留存" (7 CJK, F7) + px-0.5×2  ≈  90px
+  //   音源 select  max-w-[7rem] hard cap                  = 112px
+  //   引擎 select  max-w-[8.5rem] hard cap                = 136px
+  //   延迟 chip    "延迟 ~15s" (listening only) + px-2×2   ≈  80px
+  //   TaskTray     icon+gap+2-digit count + px-2×2        ≈  48px
+  // idle/paused/stopped/connecting (no 延迟 chip): ≈501px.
+  // listening + sustained lag (延迟 chip shown):   ≈581px.
+  // The two hard-capped selects alone already claim 248px — this fix's
+  // real, bounded lever — down from an unbounded worst case before any
+  // cap existed. Neither total clears a literal 320px floor (eight
+  // required elements, two of them multi-rem selects, simply can't fit
+  // that narrow at once), so 320px stays the aspirational target these
+  // two cap values were sized against; TaskTray staying the LAST element
+  // (not shrink-0) means it degrades by losing its own padding first,
+  // not by vanishing off-screen the way it could pre-fix.
   return (
     <div
       data-testid="statusline"

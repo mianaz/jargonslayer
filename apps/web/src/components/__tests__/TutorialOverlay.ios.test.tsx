@@ -45,6 +45,18 @@ describe("TutorialOverlay — iOS engine picker (S13 §6 Sol F5)", () => {
     resetStore();
   });
 
+  // F1 fix round (BLOCKER): iOS groups with web, not desktop — step 2's
+  // own grid offers the BYOK cloud trio here too, so the unconditional
+  // "全程本地" claim would be just as false as on web.
+  it("F1: uses the capability-phrased copy on step 1 (step 2 offers cloud engines here too)", async () => {
+    await act(async () => {
+      root!.render(<TutorialOverlay open={true} onClose={() => {}} />);
+    });
+    expect(container!.textContent).toContain("你的双语会议引擎");
+    expect(container!.textContent).not.toContain("全程本地");
+    expect(container!.textContent).toContain("听英文、看中文解释。选本地引擎时，音频和内容不出设备。");
+  });
+
   // iOS-cloud round (Sol F2): the picker matches IOS_ENGINE_OPTIONS —
   // osspeech first + the BYOK cloud trio; the no-capture-path engines
   // stay absent.

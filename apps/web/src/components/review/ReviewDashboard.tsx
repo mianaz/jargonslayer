@@ -150,15 +150,20 @@ function StatsStrip() {
 // leads the page — due-count + a way to jump straight into the queue —
 // ahead of the stat grid and word cloud below. No pre-existing "start
 // review" control lived inside this component to relabel/rewire, so
-// this is new. It stays self-contained (no prop/callback threaded from
-// app/review/page.tsx, which owns the 到期复习/翻卡浏览 mode switch):
-// DueReview.tsx (this file's own sibling) carries id="due-queue" on
-// both of its top-level returns, so the scroll below resolves whenever
-// the due-review deck is mounted — the page's default mode on every
-// fresh load. If the user has switched to 翻卡浏览 the id isn't in the
-// DOM and this is a harmless no-op; the 到期复习 tab sits right above
-// that deck either way.
-function ReviewLead() {
+// this is new.
+//
+// F8 fix round (MEDIUM): the CTA used to be a bare getElementById(
+// "due-queue") scroll — DueReview.tsx (this file's own sibling) carries
+// that id on both of its top-level returns, but DueReview only mounts
+// while app/review/page.tsx's own mode state is "due"; on 翻卡浏览 the id
+// isn't in the DOM at all, so the scroll silently no-op'd (the CTA went
+// inert). onStartReview, when the caller supplies it, takes over
+// instead — page.tsx's own handler flips its mode state to "due" first
+// and THEN scrolls once DueReview has actually remounted. Optional: a
+// bare `<ReviewDashboard>` render (e.g. this file's own tests) falls
+// back to the original scroll, so this component stays usable
+// standalone with no caller wiring required.
+function ReviewLead({ onStartReview }: { onStartReview?: () => void }) {
   const { dueToday } = useDashboardStats();
 
   return (
@@ -173,10 +178,12 @@ function ReviewLead() {
       <button
         type="button"
         data-testid="start-review-cta"
-        onClick={() =>
-          document
-            .getElementById("due-queue")
-            ?.scrollIntoView({ behavior: "smooth", block: "start" })
+        onClick={
+          onStartReview ??
+          (() =>
+            document
+              .getElementById("due-queue")
+              ?.scrollIntoView({ behavior: "smooth", block: "start" }))
         }
         className="btn-terminal shrink-0 rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85"
       >
@@ -347,9 +354,12 @@ function KnownTermsSection() {
 export default function ReviewDashboard({
   cache,
   loading,
+  onStartReview,
 }: {
   cache: Record<string, MeetingSession>;
   loading: boolean;
+  /** F8 fix round: see ReviewLead's own doc comment above. */
+  onStartReview?: () => void;
 }) {
   const sessions = useApp((s) => s.sessions);
   const words = useWordFrequency(cache);
@@ -372,7 +382,7 @@ export default function ReviewDashboard({
            (glossary saves lazily enroll too — see store.ts's
            addCustomEntry), so the lead + strip both stay visible here
            like KnownTermsSection already does. */}
-        <ReviewLead />
+        <ReviewLead onStartReview={onStartReview} />
         <StatsStrip />
         <EmptyState />
         <KnownTermsSection />
@@ -382,7 +392,7 @@ export default function ReviewDashboard({
 
   return (
     <div className="space-y-6">
-      <ReviewLead />
+      <ReviewLead onStartReview={onStartReview} />
       <StatsStrip />
       <KnownTermsSection />
       <WordCloud

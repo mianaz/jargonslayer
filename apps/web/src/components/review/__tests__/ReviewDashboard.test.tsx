@@ -7,7 +7,7 @@
 // see DueReview.render.test.tsx's comment).
 
 import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import ReviewDashboard from "../ReviewDashboard";
 import { useApp } from "@/lib/store";
@@ -57,6 +57,9 @@ describe("ReviewDashboard — IA reorder + skeleton/stat-numeral primitives (UI 
       sessions: [sessionMeta()],
       learnset: { "expression:circle back": dueRecord() },
     });
+    // jsdom has no scrollIntoView on elements — stubbed here (same
+    // convention as CardStrip.test.tsx) for the F8 fallback-scroll test.
+    Element.prototype.scrollIntoView = vi.fn();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -85,6 +88,48 @@ describe("ReviewDashboard — IA reorder + skeleton/stat-numeral primitives (UI 
     expect(
       cta!.compareDocumentPosition(stats!) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  // F8 fix round (MEDIUM): the CTA used to be a bare getElementById(
+  // "due-queue") scroll — inert once the caller (app/review/page.tsx)
+  // had switched away from the 到期复习 tab, since DueReview (the only
+  // element carrying that id) unmounts there. onStartReview, when
+  // supplied, now takes over entirely.
+  it("F8: calls onStartReview when supplied, instead of the fallback scroll", async () => {
+    const onStartReview = vi.fn();
+    await act(async () => {
+      root!.render(<ReviewDashboard cache={{}} loading={false} onStartReview={onStartReview} />);
+    });
+
+    const cta = container!.querySelector('[data-testid="start-review-cta"]') as HTMLButtonElement;
+    await act(async () => {
+      cta.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onStartReview).toHaveBeenCalledTimes(1);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  // Without a caller-supplied onStartReview (e.g. this file's OWN bare
+  // render calls above), the CTA stays usable standalone — falls back
+  // to the original #due-queue scroll rather than becoming a dead
+  // button.
+  it("F8: without onStartReview, falls back to scrolling the #due-queue element directly", async () => {
+    const dueQueue = document.createElement("div");
+    dueQueue.id = "due-queue";
+    document.body.appendChild(dueQueue);
+
+    await act(async () => {
+      root!.render(<ReviewDashboard cache={{}} loading={false} />);
+    });
+
+    const cta = container!.querySelector('[data-testid="start-review-cta"]') as HTMLButtonElement;
+    await act(async () => {
+      cta.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(dueQueue.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    dueQueue.remove();
   });
 
   it("shows today's due count on the leading block via .stat-numeral", async () => {

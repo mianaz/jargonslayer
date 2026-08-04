@@ -1145,12 +1145,11 @@ function StyleTag({ uid, reduced }: { uid: string; reduced: boolean }) {
 
 // ───────────────────────────────────────────────────────────────────
 // BitCameo — a static preview render for use OUTSIDE the status line
-// (empty states, costume pickers, etc. — see CardsPanel.tsx's idle
-// empty-state cameo). Same Px data, scaled to a given height; no store
-// subscriptions and no JS timers. The only motion is a gentle CSS
-// sway/zzz loop, gated off entirely via a plain `@media
-// (prefers-reduced-motion: reduce)` rule — no matchMedia hook needed
-// for a component this static.
+// (empty states, costume pickers, etc.). Same Px data, scaled to a
+// given height; no store subscriptions and no JS timers. The only
+// motion is a gentle CSS sway/zzz loop, gated off entirely via a plain
+// `@media (prefers-reduced-motion: reduce)` rule — no matchMedia hook
+// needed for a component this static.
 // ───────────────────────────────────────────────────────────────────
 
 export function BitCameo({

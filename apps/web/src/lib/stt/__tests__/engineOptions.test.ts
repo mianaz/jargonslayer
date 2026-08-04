@@ -127,6 +127,20 @@ describe("resolveEngineRetentionClass — D7 runtime resolution", () => {
     );
   });
 
+  // F6 fix round (HIGH): a KNOWN engine merely absent from THIS BUILD's
+  // platform-filtered ENGINE_OPTIONS (osspeech is desktop-only there —
+  // ALL_ENGINE_OPTIONS only adds it `...(IS_DESKTOP ? ...)`) must still
+  // resolve its REAL retention off the platform-independent
+  // ENGINE_CAPABILITIES map — a persisted cross-platform value (e.g.
+  // settings synced from a desktop install) used to read as the amber
+  // cloud-transient fallback for what is actually a local engine.
+  // Mutation-checked intent: reverting the fix (resolving the fallback
+  // off ENGINE_OPTIONS again) makes this fail.
+  it("a KNOWN engine merely absent from THIS platform's ENGINE_OPTIONS (osspeech on the ambient web build) resolves its real retentionClass off ENGINE_CAPABILITIES, not the cloud-transient fallback", () => {
+    expect(ENGINE_OPTIONS.some((o) => o.value === "osspeech")).toBe(false); // sanity: confirms the platform filter excludes it here
+    expect(resolveEngineRetentionClass("osspeech", null)).toBe("local");
+  });
+
   it("a local static engine (whisper) ignores sttEngineMode entirely", () => {
     expect(resolveEngineRetentionClass("whisper", "on-device")).toBe("local");
     expect(resolveEngineRetentionClass("whisper", null)).toBe("local");

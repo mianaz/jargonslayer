@@ -808,8 +808,6 @@ function selectionLookupRequest(container: HTMLElement): LookupRequest | null {
 }
 
 export interface TranscriptPanelProps {
-  // Kept temporarily for the parent call site outside this lane's file
-  // ownership; the canonical ModeSelector now owns the idle demo path.
   // Mobile toolbar migration: on a narrow layout the toolbar row's own
   // 选择/AI 校正/补全翻译 buttons hand off to Header.tsx's ≡-menu toolbar rows
   // instead (see this file's own toolbarVisible below) — the row itself

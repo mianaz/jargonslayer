@@ -15,20 +15,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import type { CustomEntry, ExpressionCard, TermCard } from "@jargonslayer/core/types";
-
-// BitCameo (v0.5.1 Bit sprint) is a sibling lane's named export on
-// PixelDragon.tsx, possibly not landed yet on disk — stubbed here so
-// this suite is self-contained either way (per the task spec).
-vi.mock("@/components/PixelDragon", () => ({
-  BitCameo: (props: { pose?: string; costume?: string | null }) => (
-    <div
-      data-testid="bit-cameo-stub"
-      data-pose={props.pose}
-      data-costume={props.costume ?? ""}
-    />
-  ),
-}));
-
 import CardsPanel from "../CardsPanel";
 
 function makeCard(overrides: Partial<ExpressionCard> = {}): ExpressionCard {

@@ -1085,7 +1085,12 @@ describe("SettingsDialog (desktop) — 转录引擎 本地模型 card hint copy 
 
     const card = findButtonContaining("本地模型");
     expect(card.textContent).toContain("Whisper/Parakeet");
-    expect(card.textContent).toContain("系统音频仅捕获对方声音、不含你的麦克风");
+    // Pre-existing drift fix (unrelated to this round's 12 findings):
+    // this assertion had gone stale against the card's own current copy
+    // (SettingsDialog.tsx's ENGINE_CARDS "whisper" hint) — already
+    // "不录你自己的声音" at HEAD before this fix round touched anything
+    // here, confirmed via `git show HEAD`.
+    expect(card.textContent).toContain("系统音频仅捕获对方声音，不录你自己的声音");
   });
 });
 

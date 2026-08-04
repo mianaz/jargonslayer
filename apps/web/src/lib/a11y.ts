@@ -47,11 +47,44 @@ function getFocusableElements(container: HTMLElement): HTMLElement[] {
 }
 
 const OVERLAY_DIALOG_PROPS = { role: "dialog" as const, "aria-modal": true as const };
+// F4 fix round: non-modal popovers (e.g. AiStatusPanel's own popover,
+// which can itself nest inside StatusLine's <sm overflow popover) still
+// want the full Escape/Tab-trap/focus-restore contract but must NOT
+// claim aria-modal=true — a modal dialog stacked inside another dialog
+// is the wrong ARIA shape (aria-modal belongs on the outermost one).
+const NON_MODAL_DIALOG_PROPS = { role: "dialog" as const };
+
+// F3 fix round (HIGH): module-level overlay stack. Every mounted
+// useOverlayA11y instance pushes its own token here while open and pops
+// it on close/unmount — each instance still registers its own document
+// keydown listener (so it's ready to become top-of-stack the instant
+// the one above it closes), but the handler no-ops unless its token is
+// the LAST one pushed. Before this, Escape closed EVERY open overlay at
+// once (each installed an unconditional document listener) — a nested
+// overlay (e.g. ImportHub opened from HistoryDrawer) closed both
+// stacked dialogs on one Escape press instead of just the top one.
+let overlayStack: symbol[] = [];
+
+function pushOverlay(token: symbol): void {
+  overlayStack = [...overlayStack, token];
+}
+
+function popOverlay(token: symbol): void {
+  overlayStack = overlayStack.filter((t) => t !== token);
+}
+
+function isTopOverlay(token: symbol): boolean {
+  return overlayStack[overlayStack.length - 1] === token;
+}
 
 export interface UseOverlayA11yOptions {
   open: boolean;
   onClose: () => void;
   containerRef: React.RefObject<HTMLElement | null>;
+  /** F4: false for a non-modal popover nested under another overlay —
+   *  drops aria-modal from the returned props (role=dialog stays).
+   *  Defaults to true, matching every pre-F4 caller. */
+  modal?: boolean;
 }
 
 /**
@@ -59,13 +92,23 @@ export interface UseOverlayA11yOptions {
  * aria-modal, document Escape → onClose, Tab trap within containerRef,
  * initial focus on the first focusable inside (not the container —
  * see BottomSheet.tsx FIX 7), focus restore on close. SSR-safe.
+ *
+ * F3: Escape/Tab only act for the TOP-of-stack overlay instance — see
+ * the module-level stack above. F4: pass `modal: false` to drop
+ * aria-modal for a non-modal nested popover.
  */
 export function useOverlayA11y({
   open,
   onClose,
   containerRef,
-}: UseOverlayA11yOptions): { role: "dialog"; "aria-modal": true } {
+  modal = true,
+}: UseOverlayA11yOptions): { role: "dialog"; "aria-modal"?: true } {
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  // Stable per-instance token — created once (Symbol() only evaluates
+  // the first time tokenRef.current is still null) and reused for the
+  // lifetime of this hook call, so push/pop always agree on identity.
+  const tokenRef = useRef<symbol | null>(null);
+  if (tokenRef.current === null) tokenRef.current = Symbol("overlay");
 
   useLayoutEffect(() => {
     if (!open || typeof document === "undefined") return;
@@ -82,6 +125,20 @@ export function useOverlayA11y({
     }
   }, [open, containerRef]);
 
+  // F3: push this instance's token while open, pop on close/unmount.
+  // Runs in mount/commit order, so an overlay opened WHILE another is
+  // already open always lands on top — exactly the sequential-open
+  // scenario (ImportHub opened from an already-open HistoryDrawer) F3
+  // fixes.
+  useEffect(() => {
+    if (!open || typeof document === "undefined") return;
+    const token = tokenRef.current!;
+    pushOverlay(token);
+    return () => {
+      popOverlay(token);
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
 
@@ -89,6 +146,10 @@ export function useOverlayA11y({
       // IME guard: Escape during zh composition cancels the composition,
       // never the overlay (would silently discard a settings draft).
       if (e.isComposing || e.keyCode === 229) return;
+      // F3: only the top-of-stack overlay reacts to Escape/Tab — a
+      // stacked overlay underneath stays inert until the one above it
+      // closes and pops.
+      if (!isTopOverlay(tokenRef.current!)) return;
       if (e.key === "Escape") {
         onClose();
         return;
@@ -99,7 +160,18 @@ export function useOverlayA11y({
       if (!container) return;
 
       const focusables = getFocusableElements(container);
-      if (focusables.length === 0) return;
+      if (focusables.length === 0) {
+        // F12: nothing focusable inside — trap Tab on the container
+        // itself instead of letting it walk out to the page behind the
+        // overlay. Only set tabIndex when the container doesn't already
+        // carry one (never clobber a deliberate author choice).
+        e.preventDefault();
+        if (!container.hasAttribute("tabindex")) {
+          container.tabIndex = -1;
+        }
+        container.focus();
+        return;
+      }
 
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
@@ -135,7 +207,7 @@ export function useOverlayA11y({
     };
   }, [open]);
 
-  return OVERLAY_DIALOG_PROPS;
+  return modal ? OVERLAY_DIALOG_PROPS : NON_MODAL_DIALOG_PROPS;
 }
 
 const CARD_ANNOUNCE_MIN_GAP_MS = 2000;

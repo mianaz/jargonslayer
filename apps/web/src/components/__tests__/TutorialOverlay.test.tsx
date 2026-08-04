@@ -72,7 +72,12 @@ describe("TutorialOverlay — web build, ambient test env", () => {
       root!.render(<TutorialOverlay open={true} onClose={() => {}} />);
     });
     expect(container!.textContent).toContain("[1/3]");
-    expect(container!.textContent).toContain("你的双语会议引擎，全程本地");
+    // F1 fix round (BLOCKER): web's step-1 copy is capability-phrased —
+    // "全程本地" was only true on desktop, and step 2 (this same overlay)
+    // offers cloud engines here too.
+    expect(container!.textContent).toContain("你的双语会议引擎");
+    expect(container!.textContent).not.toContain("全程本地");
+    expect(container!.textContent).toContain("听英文、看中文解释。选本地引擎时，音频和内容不出设备。");
 
     await act(async () => {
       Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === "下一步")!

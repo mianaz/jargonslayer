@@ -13,9 +13,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "@/lib/store";
 
 const EMPTY_CACHE = {};
+// F8 fix round: ReviewDashboard stub captures onStartReview so the test
+// can invoke it exactly the way the real CTA would.
+let capturedOnStartReview: (() => void) | undefined;
 vi.mock("@/components/review/ReviewDashboard", () => ({
   __esModule: true,
-  default: () => null,
+  default: ({ onStartReview }: { onStartReview?: () => void }) => {
+    capturedOnStartReview = onStartReview;
+    return null;
+  },
   useSessionCache: () => ({ cache: EMPTY_CACHE, loading: false }),
 }));
 vi.mock("@/components/review/PracticeDeck", () => ({
@@ -24,13 +30,16 @@ vi.mock("@/components/review/PracticeDeck", () => ({
 }));
 // DueReview stub captures the onQueueEmptied prop so the test can
 // invoke it exactly the way the real component would on a queue-
-// emptying grade.
+// emptying grade. F8 fix round: also renders id="due-queue" (the real
+// DueReview carries that id on both of its own top-level returns — see
+// its own comment) so a test can prove onStartReview's scroll target
+// actually exists once this stub remounts.
 let capturedOnQueueEmptied: (() => void) | undefined;
 vi.mock("@/components/review/DueReview", () => ({
   __esModule: true,
   default: ({ onQueueEmptied }: { onQueueEmptied?: () => void }) => {
     capturedOnQueueEmptied = onQueueEmptied;
-    return null;
+    return <div id="due-queue" data-testid="due-review-stub" />;
   },
 }));
 vi.mock("@/components/Toast", () => ({
@@ -69,6 +78,7 @@ describe("/review page — Bit celebration wiring (v0.5.1 Bit sprint)", () => {
     stubMatchMedia(false);
     useApp.setState({ hydrated: true, bitCelebrateNonce: 0 });
     capturedOnQueueEmptied = undefined;
+    capturedOnStartReview = undefined;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -126,6 +136,53 @@ describe("/review page — Bit celebration wiring (v0.5.1 Bit sprint)", () => {
       capturedOnQueueEmptied!();
     });
     expect(container!.querySelector(".bit-hop")).not.toBeNull();
+  });
+
+  // F8 fix round (MEDIUM): the 开始复习 CTA used to be a bare
+  // getElementById("due-queue") scroll — inert once the user had
+  // switched to 翻卡浏览, since DueReview (the only element carrying that
+  // id) unmounts there. This page now owns the fix: onStartReview flips
+  // `mode` back to "due" FIRST (so DueReview actually remounts), THEN
+  // scrolls on the next animation frame. The rAF callback is captured
+  // and invoked directly here instead of waiting on a real frame, for a
+  // deterministic test.
+  it("F8: onStartReview flips the mode tab back to 到期复习 and scrolls #due-queue once it remounts", async () => {
+    const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 0);
+    Element.prototype.scrollIntoView = vi.fn();
+
+    await act(async () => {
+      root!.render(<ReviewPage />);
+    });
+
+    const browseTab = Array.from(container!.querySelectorAll("button")).find(
+      (b) => b.textContent === "翻卡浏览",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      browseTab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // 翻卡浏览 active: DueReview (id="due-queue") is unmounted.
+    expect(container!.querySelector("#due-queue")).toBeNull();
+    expect(browseTab.className).toContain("bg-panel3");
+
+    expect(capturedOnStartReview).toBeTypeOf("function");
+    await act(async () => {
+      capturedOnStartReview!();
+    });
+
+    // Mode flipped back to 到期复习 — DueReview stub (id="due-queue") is
+    // mounted again, and the tab's own active styling follows it.
+    expect(browseTab.className).not.toContain("bg-panel3");
+    const dueQueue = container!.querySelector("#due-queue");
+    expect(dueQueue).not.toBeNull();
+    expect(rafSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rafSpy.mock.calls[0][0](0);
+    });
+
+    expect(dueQueue!.scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+
+    rafSpy.mockRestore();
   });
 
   // TestFlight feedback (我的词典并入学习中心): GlossaryPanel moved off

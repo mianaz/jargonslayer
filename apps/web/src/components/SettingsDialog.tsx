@@ -5500,7 +5500,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     OpenRouter
                     <AccountConnectionChip connected={!!draft.apiKeyOpenrouter} />
                   </div>
-                  <div className="mt-0.5 text-xs leading-[1.6] text-mut2">
+                  <div className="mt-0.5 text-xs leading-[1.6] text-mut">
                     OAuth 授权后自动生成 Key；连接状态与下方 OpenRouter Key 使用同一份数据
                   </div>
                 </div>
@@ -5539,7 +5539,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                         ChatGPT 订阅
                         <AccountConnectionChip connected={agentHealthState?.codex_logged_in === true} />
                       </div>
-                      <div className="mt-0.5 text-xs leading-[1.6] text-mut2">
+                      <div className="mt-0.5 text-xs leading-[1.6] text-mut">
                         使用本机 Codex 登录态；不是 OpenAI API Key
                       </div>
                     </div>
@@ -5560,7 +5560,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                         Claude 订阅
                         <AccountConnectionChip connected={agentHealthState?.claude_logged_in === true} />
                       </div>
-                      <div className="mt-0.5 text-xs leading-[1.6] text-mut2">
+                      <div className="mt-0.5 text-xs leading-[1.6] text-mut">
                         使用本机 Claude Code 登录态；不是 Anthropic API Key
                       </div>
                     </div>
@@ -5857,7 +5857,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     active
                   />
                 </div>
-                <div className="mt-1 text-xs leading-[1.6] text-mut2">
+                <div className="mt-1 text-xs leading-[1.6] text-mut">
                   一键复制并打开；选择 vault 文件夹后还可自动写入
                 </div>
               </div>
@@ -5866,7 +5866,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <span>Notion</span>
                   <ConnectorStatusChip label="快速导出可用" active />
                 </div>
-                <div className="mt-1 text-xs leading-[1.6] text-mut2">
+                <div className="mt-1 text-xs leading-[1.6] text-mut">
                   当前复制富文本并打开 Notion；直接写入需配置安全的 OAuth 服务端
                 </div>
               </div>
@@ -5875,7 +5875,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <span>Apple 备忘录</span>
                   <ConnectorStatusChip label="无需连接" active />
                 </div>
-                <div className="mt-1 text-xs leading-[1.6] text-mut2">
+                <div className="mt-1 text-xs leading-[1.6] text-mut">
                   通过系统分享菜单发送 Markdown 文件
                 </div>
               </div>

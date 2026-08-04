@@ -14,9 +14,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { useLatencyStats } from "../../lib/stt/latencyStats";
-import { ENGINE_OPTIONS } from "../../lib/stt/engineOptions";
+import { ENGINE_OPTIONS, RETENTION_COPY } from "../../lib/stt/engineOptions";
 import { ENGINE_CAPABILITIES } from "../../lib/stt/engineCapabilities";
 import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
+import { setClientTransportOverride } from "../../lib/llm/llmTransport";
 import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 import StatusLine, {
   AI_STATUS_CHIP_DICT_LABEL,
@@ -424,6 +425,30 @@ describe("StatusLine — on-device privacy posture", () => {
     expect(privacySegment().textContent).toContain("云端 · 处理后不留存");
     expect(privacySegment().className).toContain("text-warn-soft");
     expect(privacySegment().className).not.toContain("text-lab-green");
+  });
+
+  // F6 fix round (HIGH): osspeech is desktop-only in THIS build's
+  // (ambient web) ENGINE_OPTIONS, but it's still a KNOWN, real engine —
+  // a persisted cross-platform value (e.g. settings synced from a
+  // desktop install) must resolve its REAL (local) retention off
+  // ENGINE_CAPABILITIES, not fall through to the generic
+  // cloud-transient "unrecognized engine" default the test above pins.
+  it("F6: a stray osspeech engine on web still renders the local/green posture (KNOWN engine, just platform-filtered out of the picker)", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: {
+        ...s.settings,
+        engine: "osspeech" as unknown as typeof s.settings.engine,
+      },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(privacySegment().textContent).toContain("本地处理 · 音频不出设备");
+    expect(privacySegment().className).toContain("text-lab-green");
+    expect(privacySegment().className).not.toContain("text-warn-soft");
   });
 
   // Lead adjudication on F2's flagged side effect: "demo" is the
@@ -1020,6 +1045,26 @@ describe("StatusLine — engine dropdown", () => {
     expect(placeholder!.textContent).toBe(ENGINE_CAPABILITIES.osspeech.label);
     expect(placeholder!.textContent).not.toBe(LOCAL_SIDECAR_LABEL);
   });
+
+  // F5 fix round (HIGH): below-sm row-width budget — see the comment
+  // above StatusLine's own return for the worst-case pixel accounting
+  // these two specific values were chosen against. ≥sm stays unchanged
+  // (sm:max-w-[12rem] on both, untouched by this fix).
+  it("F5: below sm the two selects carry their asymmetric width caps (音源 7rem, 引擎 8.5rem), unchanged at sm+", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const audioSource = container!.querySelector(
+      '[data-testid="statusline-audio-source-select"]',
+    ) as HTMLSelectElement;
+    expect(audioSource.className).toContain("max-w-[7rem]");
+    expect(audioSource.className).toContain("sm:max-w-[12rem]");
+    expect(select().className).toContain("max-w-[8.5rem]");
+    expect(select().className).toContain("sm:max-w-[12rem]");
+  });
 });
 
 // ---------------------------------------------------------------
@@ -1047,6 +1092,7 @@ describe("StatusLine — AI 状态 chip", () => {
     }
     useApp.setState((s) => ({ detectMode: "llm", settings: { ...DEFAULT_SETTINGS } }));
     resetLlmTelemetry();
+    setClientTransportOverride(null);
     vi.unstubAllGlobals();
   });
 
@@ -1113,7 +1159,42 @@ describe("StatusLine — AI 状态 chip", () => {
     expect(chip().className).not.toContain("text-warn-soft");
   });
 
-  it("TASK 1: llm mode with NO configured key shows 未配置 in warn-soft, never a model name it can't actually call", async () => {
+  // F2 fix round (HIGH): 未配置 used to key on resolved.apiKey ALONE —
+  // but on the Next.js transport path (the ambient test env here: full-
+  // tier web, no client-transport override) the SERVER may hold its own
+  // funded key, so a missing CLIENT key doesn't prove the call fails.
+  // Mutation-checked intent: reverting AiStatusChip back to
+  // `resolved.apiKey ? model : UNCONFIGURED_LABEL` makes this fail (it
+  // would show 未配置 here instead of the model name).
+  it("F2: llm mode with no CLIENT key, but the Next.js path would serve (full-tier web, server may be funded) — shows the model name, not 未配置", async () => {
+    useApp.setState((s) => ({
+      detectMode: "llm",
+      settings: { ...s.settings, detectModel: "deepseek/deepseek-v4-flash", apiKeyOpenrouter: "" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain(shortModelName("deepseek/deepseek-v4-flash"));
+    expect(chip().textContent).not.toContain(AI_STATUS_CHIP_UNCONFIGURED_LABEL);
+    expect(chip().className).not.toContain("text-warn-soft");
+    // Clicking still opens the existing explain popover (unaffected by
+    // the label truth fix).
+    await act(async () => {
+      chip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.querySelector('[data-testid="statusline-ai-status-popover"]')).not.toBeNull();
+  });
+
+  // F2: the ONE case a missing client key genuinely dooms the request —
+  // desktop (llmTransport.ts's client-transport flag on), which has no
+  // /api/* server to fall back to at all. setClientTransportOverride is
+  // the same test-only override useDirectTransport's own test suite
+  // uses (useDirectTransport.test.ts) to simulate this without a real
+  // Tauri build.
+  it("F2: llm mode with no client key AND the direct client transport (desktop) — still shows 未配置, this request truly can't succeed", async () => {
+    setClientTransportOverride(true);
     useApp.setState((s) => ({
       detectMode: "llm",
       settings: { ...s.settings, detectModel: "deepseek/deepseek-v4-flash", apiKeyOpenrouter: "" },
@@ -1126,12 +1207,6 @@ describe("StatusLine — AI 状态 chip", () => {
     expect(chip().textContent).toContain(AI_STATUS_CHIP_UNCONFIGURED_LABEL);
     expect(chip().textContent).not.toContain("deepseek-v4-flash");
     expect(chip().className).toContain("text-warn-soft");
-    // Clicking still opens the existing explain popover (unaffected by
-    // the label truth fix).
-    await act(async () => {
-      chip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(container!.querySelector('[data-testid="statusline-ai-status-popover"]')).not.toBeNull();
   });
 
   it("TASK 1: detectMode 'off' shows 关闭, matching the non-interactive detect-mode label beside it", async () => {
@@ -1156,6 +1231,25 @@ describe("StatusLine — AI 状态 chip", () => {
     });
 
     expect(chip().textContent).toContain(AI_STATUS_CHIP_GLYPH.ok);
+  });
+
+  // F10 fix round (MEDIUM): the ✓/✗ telemetry glyph used to render
+  // regardless of runningLabel — a failure recorded while llm mode was
+  // active stayed "✗" even after switching to 词典 mode, which never
+  // calls the model at all (misread as "dictionary mode is failing").
+  // Mutation-checked intent: reverting the glyph gate back to "always
+  // AI_STATUS_CHIP_GLYPH[health]" makes this fail (chip would still
+  // show 词典 ✗).
+  it("F10: switching to dictionary mode after a recorded llm failure drops the ✗ glyph — 词典 renders bare", async () => {
+    recordLlmCall("detect", { kind: "upstream" });
+    useApp.setState({ detectMode: "dictionary" });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain(AI_STATUS_CHIP_DICT_LABEL);
+    expect(chip().textContent).not.toContain(AI_STATUS_CHIP_GLYPH.fail);
   });
 
   it("clicking the chip opens the popover hosting the 4-row AiStatusPanel; clicking again closes it", async () => {
@@ -1574,31 +1668,42 @@ describe("StatusLine — privacy posture chip (task 2: never fully hidden)", () 
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(chip().textContent).toBe("本地");
+    expect(chip().textContent).toBe(RETENTION_COPY.local.label);
     expect(chip().className).toContain("text-lab-green");
     expect(chip().getAttribute("aria-label")).toBe("本地处理 · 音频不出设备");
     expect(chip().title).toBe("本地处理 · 音频不出设备");
   });
 
-  it("shows 云端 in warn-soft for a cloud-transient engine (soniox)", async () => {
+  // F7 fix round (MEDIUM): this used to collapse to the binary 云端
+  // posture — now renders the full tri-state RETENTION_COPY label, same
+  // table the wider sentence right next to it (hidden below sm) reads.
+  it("F7: shows the tri-state 云端·不留存 label (not the collapsed 云端) for a cloud-transient engine (soniox)", async () => {
     useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "soniox" } }));
     renderStatusLine();
     await act(async () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(chip().textContent).toBe("云端");
+    expect(chip().textContent).toBe(RETENTION_COPY["cloud-transient"].label);
     expect(chip().className).toContain("text-warn-soft");
   });
 
-  it("shows 云端 in warn-soft for a cloud-stored engine too (elevenlabs) — both cloud subclasses collapse to the same binary posture", async () => {
+  // F7 fix round (MEDIUM): the bug this fixes — ElevenLabs (cloud-
+  // stored, 可能留存) used to collapse to the SAME "云端" text a
+  // cloud-transient engine shows, losing its stronger warning exactly
+  // where a BYOK phone user is most likely to be looking. Mutation-
+  // checked intent: reverting PrivacyPostureChip back to
+  // POSTURE_LABEL[derivePosture(...)] makes this fail (textContent
+  // would read the collapsed "云端" instead).
+  it("F7: shows the distinct 云端·可能留存 label for a cloud-stored engine (elevenlabs) — no longer collapsed with cloud-transient", async () => {
     useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "elevenlabs" } }));
     renderStatusLine();
     await act(async () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(chip().textContent).toBe("云端");
+    expect(chip().textContent).toBe(RETENTION_COPY["cloud-stored"].label);
+    expect(chip().textContent).not.toBe(RETENTION_COPY["cloud-transient"].label);
     expect(chip().className).toContain("text-warn-soft");
   });
 });
@@ -1719,6 +1824,52 @@ describe("StatusLine — D2 fold: overflow chip (task 4)", () => {
 
     await act(async () => {
       overflowChip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.querySelector('[data-testid="statusline-overflow-popover"]')).toBeNull();
+  });
+
+  // F4 fix round (HIGH): before this, both popovers installed their own
+  // unconditional document Escape listener — one Escape press closed
+  // BOTH the overflow popover AND the nested AI-status popover at once.
+  // Now stack-aware (a11y.ts's module-level overlay stack): the first
+  // Escape closes only the top-of-stack (nested) AI panel, the second
+  // closes the overflow popover underneath it. The nested panel also
+  // drops aria-modal (F4: role=dialog stays, non-modal once stacked).
+  it("F4: Escape closes only the nested AI-status popover first, then the overflow popover on a second Escape", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "demo" }],
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    await act(async () => {
+      overflowChip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const popover = container!.querySelector('[data-testid="statusline-overflow-popover"]');
+    expect(popover).not.toBeNull();
+
+    const aiChipInsidePopover = popover!.querySelector(
+      '[data-testid="statusline-ai-status-chip"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      aiChipInsidePopover.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const aiPopover = container!.querySelector('[data-testid="statusline-ai-status-popover"]');
+    expect(aiPopover).not.toBeNull();
+    expect(aiPopover!.getAttribute("role")).toBe("dialog");
+    expect(aiPopover!.hasAttribute("aria-modal")).toBe(false);
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(container!.querySelector('[data-testid="statusline-ai-status-popover"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="statusline-overflow-popover"]')).not.toBeNull();
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     expect(container!.querySelector('[data-testid="statusline-overflow-popover"]')).toBeNull();
   });

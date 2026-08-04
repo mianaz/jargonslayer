@@ -90,7 +90,7 @@ export function SecretKeyRow({
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <label className="text-xs text-mut">{label}</label>
-          <div className="text-xs leading-[1.6] text-mut2">{purpose}</div>
+          <div className="text-xs leading-[1.6] text-mut">{purpose}</div>
         </div>
         <KeyStatusChip status={status} />
       </div>

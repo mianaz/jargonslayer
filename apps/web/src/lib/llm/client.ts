@@ -178,8 +178,14 @@ export function taskHeaders(settings: Settings, domain: LlmTaskDomain): Record<s
  *  resolveTaskCreds result, so a taskLlm split-config user gets each
  *  domain routed independently. Full-tier web (PREVIEW_TIER false) is
  *  unaffected either way: a configured key there still rides /api/*,
- *  exactly as before this existed. */
-function useDirectTransport(creds: Pick<ResolvedTaskCreds, "apiKey">): boolean {
+ *  exactly as before this existed.
+ *
+ *  Exported (F2 fix round): StatusLine's AiStatusChip reuses this SAME
+ *  gate to decide when a missing client key genuinely dooms a request
+ *  (desktop, or preview-tier-with-a-key — the latter can't co-occur
+ *  with "no key") versus when the Next.js route might still serve it
+ *  off a server-managed key — see that call site's own doc. */
+export function useDirectTransport(creds: Pick<ResolvedTaskCreds, "apiKey">): boolean {
   return useClientTransport() || (PREVIEW_TIER && !!creds.apiKey);
 }
 
