@@ -21,9 +21,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "JargonSlayer · 英文会议实时理解助手",
+  title: "JargonSlayer · 私有、全本地双语会议引擎",
   description:
-    "英文会议实时转录，即时解释商务俚语、隐喻和专有名词，帮你听懂每一句。",
+    "系统声音和麦克风双路收音，自动标注「我」「对方」。本地识别、本地翻译，双语字幕实时滚动，一键存进 Obsidian 或 Notion。",
   manifest: withBase("/manifest.webmanifest"),
   appleWebApp: {
     capable: true,

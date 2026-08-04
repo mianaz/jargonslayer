@@ -79,7 +79,7 @@ describe("TutorialOverlay — desktop engine picker (Miana 2026-08-01 taxonomy f
       root!.render(<TutorialOverlay open={true} onClose={() => {}} />);
     });
     expect(container!.textContent).toContain("你的双语会议引擎，全程本地");
-    expect(container!.textContent).toContain("私有 · 全本地 · 双语。听英文、看中文解释，会议内容留在你的设备。");
+    expect(container!.textContent).toContain("私有 · 全本地 · 双语。系统声音和麦克风都能收，自动分「我」「对方」。");
   });
 
   it("offers osspeech + 本地模型 only — no webspeech/浏览器识别/系统 App 音频 card", async () => {

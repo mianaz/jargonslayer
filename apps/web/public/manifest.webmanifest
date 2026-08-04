@@ -1,7 +1,7 @@
 {
-  "name": "JargonSlayer · 英文会议实时理解助手",
+  "name": "JargonSlayer · 私有、全本地双语会议引擎",
   "short_name": "JargonSlayer",
-  "description": "实时转录英文会议，即时解释商务俚语、隐喻和专有名词，为非母语者设计。",
+  "description": "系统声音和麦克风双路收音，自动标注「我」「对方」；本地识别、本地翻译，为非母语者设计。",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0a0a0a",

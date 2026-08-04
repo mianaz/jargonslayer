@@ -1141,7 +1141,7 @@ export default function Header({
                 JargonSlayer
               </span>
               <span className="hidden text-[11px] text-mut md:inline">
-                英文会议实时理解
+                私有、全本地双语会议引擎
               </span>
             </div>
           </div>

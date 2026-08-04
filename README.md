@@ -7,9 +7,9 @@
 
 # JargonSlayer
 
-**Real-time English-meeting comprehension assistant · your meeting, as a running process**
+**Private, fully local bilingual meeting engine for your Mac.**
 
-*英文会议实时理解助手 · 把会议变成一个正在运行的进程*
+*私有、全本地的 Mac 双语会议引擎*
 
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/mianaz/jargonslayer/ci.yml?branch=main&style=flat-square&label=CI&labelColor=121212)](https://github.com/mianaz/jargonslayer/actions/workflows/ci.yml)
@@ -25,7 +25,7 @@
 
 ---
 
-It sits beside your English meetings and turns **business slang, idioms, metaphors, indirect phrasing, and jargon** into short Chinese cards in real time. When the meeting ends, one click produces a **bilingual summary, a full transcript translation, and study cards**. Local-first: with the desktop app and local Whisper, audio is processed entirely on your machine.
+JargonSlayer captures both sides of an English meeting at once — system audio and microphone, echo-cancelled and auto-tagged 我/对方. Local Whisper, Apple's on-device speech recognition, and on-device translation keep it fully local: nothing leaves your Mac. A live bilingual transcript scrolls as people talk, and one click exports the bilingual summary to Obsidian or Notion when the meeting ends. Jargon still gets a short Chinese card, now live assist rather than the headline.
 
 > The product UI is Simplified Chinese — it is built for non-native English speakers (Chinese-speaking professionals and researchers first).
 
@@ -38,10 +38,12 @@ It sits beside your English meetings and turns **business slang, idioms, metapho
 
 ## Features
 
-- **Real-time jargon cards** — slang, idioms, metaphors, acronyms → short Chinese explanations as they are spoken; dictionary mode is default (1,000+ entries, fully local, no key needed), with an optional AI mode (Beta, bring your own key) one toggle apart.
-- **Multiple transcription engines** — local Whisper (fully on-device), system/app audio (desktop), tab audio (web), browser recognition; the status bar always shows where your audio goes.
-- **Speaker diarization** — who-said-what labels, live and for imported recordings (pyannote, optional one-click install).
-- **Meeting reports** — bilingual minutes, full transcript translation, exports to Anki / Markdown / JSON, webhooks.
+- **Dual capture** — system audio and microphone recorded together, echo-cancelled (AEC) so your mic doesn't also pick up what's playing from your speakers; no virtual audio device (desktop, macOS 14.4+).
+- **Fully local** — local Whisper, Apple's on-device speech recognition, and on-device translation; zero bytes leave your Mac.
+- **Bilingual live transcript** — English audio, Chinese translation, side by side as people talk.
+- **我/对方 speaker attribution** — dual capture tags your mic and the meeting audio as 我 (you) and 对方 (them) automatically; pyannote diarization (optional one-click install) breaks out individual speakers live or from an imported recording.
+- **Export to your vault** — one click sends a bilingual summary and full transcript translation to Obsidian or Notion; also Anki, Markdown, JSON, and webhooks.
+- **Jargon cards (live assist)** — slang, idioms, metaphors, acronyms → short Chinese explanations as they're spoken; dictionary mode is default (1,000+ entries, fully local, no key needed), with an optional AI mode (Beta, bring your own key) one toggle apart.
 - **Learning center** — personal glossary, flip-card review with spaced repetition, a word cloud, and known-word suppression, all in one place.
 - **Imports** — audio/video files and URLs, transcribed locally in the browser or by the sidecar.
 - **Bit** 🐉 — the pixel dragon perched on the status line. Click it. Click it three times fast.
