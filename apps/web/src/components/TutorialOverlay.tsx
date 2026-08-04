@@ -111,7 +111,7 @@ const TAB_CARD_ENGINE: Exclude<STTEngineKind, "demo"> = PREVIEW_TIER ? "tabaudio
 // above.
 const TUTORIAL_HEADLINE = IS_DESKTOP ? "你的双语会议引擎，全程本地" : "你的双语会议引擎";
 const TUTORIAL_SUPPORT = IS_DESKTOP
-  ? "私有 · 全本地 · 双语。听英文、看中文解释，会议内容留在你的设备。"
+  ? "私有 · 全本地 · 双语。系统声音和麦克风都能收，自动分「我」「对方」。"
   : "听英文、看中文解释。选本地引擎时，音频和内容不出设备。";
 
 // Per-card onboarding copy for the iOS matrix — Record over the shared
@@ -378,7 +378,7 @@ export default function TutorialOverlay({
               <div className="mt-3 text-sm leading-[26px] text-mut">
                 {TUTORIAL_SUPPORT}
               </div>
-              <div className="mt-2 text-xs leading-[1.7] text-mut">行话来了，也能一条条屠掉。</div>
+              <div className="mt-2 text-xs leading-[1.7] text-mut">黑话出现时，也会弹一张中文卡片做实时辅助。</div>
               <DemoAction onStartDemo={handleStartDemo} />
             </div>
           )}

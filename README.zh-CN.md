@@ -7,9 +7,9 @@
 
 # JargonSlayer
 
-**英文会议实时理解助手 · 把会议变成一个正在运行的进程**
+**私有、全本地的 Mac 双语会议引擎**
 
-*Real-time English-meeting comprehension assistant · your meeting, as a running process*
+*Private, fully local bilingual meeting engine for your Mac.*
 
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/mianaz/jargonslayer/ci.yml?branch=main&style=flat-square&label=CI&labelColor=121212)](https://github.com/mianaz/jargonslayer/actions/workflows/ci.yml)
@@ -25,7 +25,7 @@
 
 ---
 
-开着它上英文会议，**商务黑话、习语、隐喻、拐弯抹角的措辞、行业术语**会被实时拆解成简短的中文释义卡片。会后一键生成**双语摘要、全文译文和学习卡片**。本地优先：桌面端搭配本地 Whisper，音频在本地处理，不出你的电脑。
+JargonSlayer 同时收录系统音频和麦克风两路声音，回声消除后自动标注为「我」和「对方」。本地 Whisper、系统识别、系统翻译三路引擎全部离线运行，音频和文字都不出这台 Mac。中英双语的实时字幕逐句滚动，会议结束一键把双语纪要存进 Obsidian 或 Notion。遇到黑话，一张中文卡片顺手弹出，是实时辅助。
 
 > 产品界面为简体中文——面向母语非英语的中文使用者（职场人士和科研人员优先）。
 
@@ -38,10 +38,12 @@
 
 ## 功能
 
-- **实时术语卡片** — 黑话、习语、隐喻、缩写，说出口的瞬间就变成简短中文释义；默认走词典模式（1000+ 条，纯本地、无需 Key），可选 AI 模式（Beta，需自备 Key），一键切换。
-- **多转录引擎** — 本地 Whisper（全程在设备上运行）、系统/App 音频（桌面端）、标签页音频（Web 端）、浏览器语音识别；状态栏始终显示音频去向。
-- **说话人分离** — 谁说了什么，实时标注，导入录音后也能标注（pyannote，可选一键安装）。
-- **会议报告** — 双语会议纪要、全文翻译、导出到 Anki / Markdown / JSON、Webhook 推送。
+- **双路捕获** — 系统声音和麦克风一起收，回声消除（AEC）避免麦克风又录到喇叭放出来的会议声音；无需虚拟音频设备（桌面端，macOS 14.4+）。
+- **全本地** — 本地 Whisper、系统识别、系统翻译，音频和文字都不出这台 Mac。
+- **中英双语实时字幕** — 英文原声和中文译文逐句同屏滚动。
+- **我/对方 说话人标注** — 麦克风和会议声音自动分成「我」「对方」两路；pyannote 说话人分离（可选一键安装）能在多人会议或导入的录音里进一步区分每个人。
+- **导出到你的知识库** — 一键把双语纪要和全文译文存进 Obsidian 或 Notion，也支持 Anki、Markdown、JSON 和 Webhook。
+- **术语卡片（实时辅助）** — 黑话、习语、隐喻、缩写，说出口的瞬间就变成简短中文释义；默认走词典模式（1000+ 条，纯本地、无需 Key），可选 AI 模式（Beta，需自备 Key），一键切换。
 - **学习中心** — 个人词典、翻转卡片、间隔重复、词云、已掌握词自动不再提示，整合在一处。
 - **导入** — 音视频文件和 URL，在浏览器端或 sidecar 本地转录。
 - **Bit** 🐉 — 趴在状态栏上的像素小龙。点它。快速连点三下试试。
