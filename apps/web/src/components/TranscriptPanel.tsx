@@ -811,7 +811,7 @@ export interface TranscriptPanelProps {
   // Kept temporarily for the parent call site outside this lane's file
   // ownership; the canonical ModeSelector now owns the idle demo path.
   // Mobile toolbar migration: on a narrow layout the toolbar row's own
-  // 选择/AI 校正/补全翻译 buttons hand off to Header.tsx's MobileToolbarButtons
+  // 选择/AI 校正/补全翻译 buttons hand off to Header.tsx's ≡-menu toolbar rows
   // instead (see this file's own toolbarVisible below) — the row itself
   // still renders whenever showLatch is true (当前说话人 latch must never
   // be lost). Optional, default false, so every bare `<TranscriptPanel />`
@@ -1363,7 +1363,7 @@ export default function TranscriptPanel({
   // Mobile toolbar migration: on a narrow layout the row itself only
   // ever exists to carry the latch (当前说话人 latch must never be lost)
   // — segments.length alone no longer earns the row a mobile mount,
-  // since its own buttons now live in Header.tsx's MobileToolbarButtons
+  // since its own buttons now live in Header.tsx's ≡ menu (useMobileToolbarState)
   // instead (rendered right below, wrapped in `!isMobileLayout`). Desktop
   // keeps the exact original gate.
   const toolbarVisible = isMobileLayout ? showLatch : showLatch || segments.length > 0;

@@ -79,7 +79,7 @@ export default function Home() {
   const [importHubOpen, setImportHubOpen] = useState(false);
   // Mobile toolbar migration: 选择/AI 校正 open-state lifted here so
   // Header's mobile 选择/AI 校正 buttons and TranscriptPanel's own desktop
-  // buttons can drive the SAME state — see Header.tsx's MobileToolbarButtons
+  // buttons can drive the SAME state — see Header.tsx's ≡-menu toolbar rows (useMobileToolbarState)
   // and TranscriptPanel.tsx's controlled/uncontrolled hybrid doc comments.
   const [selectMode, setSelectMode] = useState(false);
   const [correctionOpen, setCorrectionOpen] = useState(false);

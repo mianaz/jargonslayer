@@ -15,13 +15,17 @@ import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { useLatencyStats } from "../../lib/stt/latencyStats";
 import { ENGINE_OPTIONS } from "../../lib/stt/engineOptions";
+import { ENGINE_CAPABILITIES } from "../../lib/stt/engineCapabilities";
 import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
 import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 import StatusLine, {
+  AI_STATUS_CHIP_DICT_LABEL,
   AI_STATUS_CHIP_DOMAIN_LABEL,
   AI_STATUS_CHIP_GLYPH,
+  AI_STATUS_CHIP_UNCONFIGURED_LABEL,
   DETECT_MODE_LABEL,
   ENGINE_SELECT_PLACEHOLDER,
+  LOCAL_SIDECAR_LABEL,
   shortModelName,
   SIDECAR_DOWN_HINT_WEB,
 } from "../StatusLine";
@@ -987,6 +991,35 @@ describe("StatusLine — engine dropdown", () => {
     // — the OLD behavior left this at the stale "soniox" instead.
     expect(useApp.getState().settings.engine).toBe("tabaudio");
   });
+
+  // TASK 5 root cause (value/option mismatch): a persisted engine value
+  // this build's platform-filtered picker carries no <option> for at all
+  // (e.g. "osspeech" — desktop-only, surviving into a plain web session)
+  // used to fall through to a native <select>'s own "auto-select the
+  // first enabled option" default (本地模型) instead of showing nothing —
+  // silently misrepresenting an unrelated/unavailable engine as the
+  // local sidecar. Mutation-checked: reverting `unmapped`/`unmappedLabel`
+  // back to the old `engine === "demo" || engine === "import"` check
+  // makes this fail (select().value would read "local-sidecar" instead
+  // of "", and the placeholder text would read 本地模型 rather than
+  // 系统识别).
+  it("TASK 5: an engine value with no <option> in THIS build's picker shows that engine's OWN name as a disabled placeholder, not a misleading fallback to 本地模型", async () => {
+    useApp.setState((s) => ({
+      status: "idle",
+      settings: { ...s.settings, engine: "osspeech" as unknown as typeof s.settings.engine, mode: "mic" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(select().value).toBe("");
+    const placeholder = Array.from(select().querySelectorAll("option")).find((o) => o.value === "");
+    expect(placeholder).toBeDefined();
+    expect(placeholder!.disabled).toBe(true);
+    expect(placeholder!.textContent).toBe(ENGINE_CAPABILITIES.osspeech.label);
+    expect(placeholder!.textContent).not.toBe(LOCAL_SIDECAR_LABEL);
+  });
 });
 
 // ---------------------------------------------------------------
@@ -1012,7 +1045,7 @@ describe("StatusLine — AI 状态 chip", () => {
       container.remove();
       container = null;
     }
-    useApp.setState((s) => ({ settings: { ...DEFAULT_SETTINGS } }));
+    useApp.setState((s) => ({ detectMode: "llm", settings: { ...DEFAULT_SETTINGS } }));
     resetLlmTelemetry();
     vi.unstubAllGlobals();
   });
@@ -1041,9 +1074,10 @@ describe("StatusLine — AI 状态 chip", () => {
     return el as HTMLButtonElement;
   }
 
-  it("shows the fuller label — domain + model short-name + neutral glyph — before detect was ever called", async () => {
+  it("shows the fuller label — domain + model short-name + neutral glyph — before detect was ever called (llm mode, key configured)", async () => {
     useApp.setState((s) => ({
-      settings: { ...s.settings, detectModel: "deepseek/deepseek-v4-flash" },
+      detectMode: "llm",
+      settings: { ...s.settings, detectModel: "deepseek/deepseek-v4-flash", apiKeyOpenrouter: "sk-test" },
     }));
     renderStatusLine();
     await act(async () => {
@@ -1053,6 +1087,65 @@ describe("StatusLine — AI 状态 chip", () => {
     expect(chip().textContent).toContain(AI_STATUS_CHIP_DOMAIN_LABEL);
     expect(chip().textContent).toContain(shortModelName("deepseek/deepseek-v4-flash"));
     expect(chip().textContent).toContain(AI_STATUS_CHIP_GLYPH.neutral);
+    expect(chip().className).not.toContain("text-warn-soft");
+  });
+
+  // TASK 1 (TRUTH — the chip shows what's RUNNING, not what's merely
+  // configured): dictionary mode never calls the configured model at
+  // all, regardless of detectModel/apiKey — a stale "检测 · deepseek-v4-
+  // flash" label while nothing but the dictionary floor is running is
+  // exactly the bug this fixes. Mutation-checked: reverting AiStatusChip's
+  // runningLabel back to always reading `model` makes this fail (it would
+  // read "deepseek-v4-flash" instead of 词典).
+  it("TASK 1: dictionary mode shows 词典, never the configured model name — even with a key configured", async () => {
+    useApp.setState((s) => ({
+      detectMode: "dictionary",
+      settings: { ...s.settings, detectModel: "deepseek/deepseek-v4-flash", apiKeyOpenrouter: "sk-test" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain(AI_STATUS_CHIP_DOMAIN_LABEL);
+    expect(chip().textContent).toContain(AI_STATUS_CHIP_DICT_LABEL);
+    expect(chip().textContent).not.toContain("deepseek-v4-flash");
+    expect(chip().className).not.toContain("text-warn-soft");
+  });
+
+  it("TASK 1: llm mode with NO configured key shows 未配置 in warn-soft, never a model name it can't actually call", async () => {
+    useApp.setState((s) => ({
+      detectMode: "llm",
+      settings: { ...s.settings, detectModel: "deepseek/deepseek-v4-flash", apiKeyOpenrouter: "" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain(AI_STATUS_CHIP_UNCONFIGURED_LABEL);
+    expect(chip().textContent).not.toContain("deepseek-v4-flash");
+    expect(chip().className).toContain("text-warn-soft");
+    // Clicking still opens the existing explain popover (unaffected by
+    // the label truth fix).
+    await act(async () => {
+      chip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.querySelector('[data-testid="statusline-ai-status-popover"]')).not.toBeNull();
+  });
+
+  it("TASK 1: detectMode 'off' shows 关闭, matching the non-interactive detect-mode label beside it", async () => {
+    useApp.setState((s) => ({
+      detectMode: "off",
+      settings: { ...s.settings, detectModel: "deepseek/deepseek-v4-flash", apiKeyOpenrouter: "sk-test" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain(DETECT_MODE_LABEL.off);
+    expect(chip().textContent).not.toContain("deepseek-v4-flash");
   });
 
   it("switches to the ok glyph once detect has a recorded success this session", async () => {
@@ -1197,7 +1290,8 @@ describe("StatusLine — 翻译 status chip", () => {
     expect(chip().tagName).not.toBe("BUTTON");
     expect(chip().textContent).toContain("翻译");
     expect(chip().textContent).not.toContain("✓");
-    expect(chip().className).toContain("text-mut2");
+    // text-mut, not text-mut2: the law (DESIGN.md) forbids mut2 on zh words.
+    expect(chip().className).toContain("text-mut ");
   });
 
   it("tap-to-enable guard: en->en pair shows a toast and does not enable bilingualTranscript", async () => {
@@ -1313,6 +1407,320 @@ describe("StatusLine — 翻译 status chip", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
     expect(chip().textContent).toContain("翻译失败");
+  });
+});
+
+// ---------------------------------------------------------------
+// TASK 3 — mode block never truncates (root cause: this span was the
+// one leading status chip in the row without shrink-0; AudioSource
+// Dropdown/EngineDropdown already carry it defensively — see StatusLine
+// .tsx's own TASK 3 comment on the mode-block span). jsdom does no
+// layout, so the honest pin for the fix itself is the class (same
+// posture Header.ios.test.tsx's own w-full row pin already documents);
+// the short/full TOKEN CONTENT for every status is real DOM content and
+// is asserted directly.
+// ---------------------------------------------------------------
+
+describe("StatusLine — mode block (task 3: no mid-token clipping, role=status)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  function modeBlock(): HTMLElement {
+    const el = container!.querySelector('[role="status"]');
+    if (!el) throw new Error("mode block (role=status) not found");
+    return el as HTMLElement;
+  }
+
+  // Mutation-checked: reverting the `shrink-0` class (StatusLine.tsx's
+  // own TASK 3 fix) makes this fail.
+  it("carries shrink-0 — the root-cause fix — so it can never be squeezed by a crowded <sm row", async () => {
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(modeBlock().className.split(/\s+/)).toContain("shrink-0");
+  });
+
+  it("carries role=status (exactly one in the whole bar) so a screen reader announces status transitions", async () => {
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(container!.querySelectorAll('[role="status"]').length).toBe(1);
+  });
+
+  it.each([
+    ["listening", "--LIVE--", "-- LISTENING --"],
+    ["paused", "--PAUS--", "-- PAUSED --"],
+    ["stopped", "--STOP--", "-- STOPPED --"],
+    ["connecting", "--CONN--", "-- CONNECTING --"],
+    ["idle", "--IDLE--", "-- IDLE --"],
+  ] as const)(
+    "status %s renders the WHOLE short token (%s) below sm and the WHOLE full-form token (%s) at sm+ — never a truncated fragment of either",
+    async (status, short, full) => {
+      useApp.setState((s) => ({ status, settings: { ...s.settings, engine: "demo" } }));
+      renderStatusLine();
+      await act(async () => {
+        root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+      });
+
+      const [fullSpan, shortSpan] = Array.from(modeBlock().children) as HTMLElement[];
+      expect(fullSpan.textContent).toBe(full);
+      expect(shortSpan.textContent).toBe(short);
+    },
+  );
+});
+
+// ---------------------------------------------------------------
+// TASK 2 — privacy visible at every breakpoint. The full sentence
+// (privacyCopy.hint) stays `hidden sm:inline`, unchanged — this compact
+// chip is its <sm replacement, reusing the SAME retentionClass the
+// sentence and Header's EnginePostureChip both resolve, collapsed to
+// derivePosture's binary local/cloud.
+// ---------------------------------------------------------------
+
+describe("StatusLine — privacy posture chip (task 2: never fully hidden)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  function chip(): HTMLElement {
+    const el = container!.querySelector('[data-testid="statusline-privacy-chip"]');
+    if (!el) throw new Error("privacy chip not found");
+    return el as HTMLElement;
+  }
+
+  // Mutation-checked: reverting PrivacyPostureChip's className back to a
+  // bare `hidden sm:inline` (matching the sentence it replaces) instead
+  // of `sm:hidden` makes this fail — the chip would then be hidden at
+  // EVERY breakpoint (never shown below sm, exactly the bug task 2
+  // fixes), not just paired-complementary with the sentence.
+  it("carries sm:hidden (visible below sm, paired with the sentence's own hidden sm:inline) — never a bare `hidden`", async () => {
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const classes = chip().className.split(/\s+/);
+    expect(classes).toContain("sm:hidden");
+    expect(classes).not.toContain("hidden");
+  });
+
+  it("shows 本地 in lab-green for a local engine, full sentence as aria-label + title", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toBe("本地");
+    expect(chip().className).toContain("text-lab-green");
+    expect(chip().getAttribute("aria-label")).toBe("本地处理 · 音频不出设备");
+    expect(chip().title).toBe("本地处理 · 音频不出设备");
+  });
+
+  it("shows 云端 in warn-soft for a cloud-transient engine (soniox)", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "soniox" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toBe("云端");
+    expect(chip().className).toContain("text-warn-soft");
+  });
+
+  it("shows 云端 in warn-soft for a cloud-stored engine too (elevenlabs) — both cloud subclasses collapse to the same binary posture", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "elevenlabs" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toBe("云端");
+    expect(chip().className).toContain("text-warn-soft");
+  });
+});
+
+// ---------------------------------------------------------------
+// TASK 4 — D2 fold (<sm only; ≥sm stays exactly as before the fold).
+// DetectModeChip + AiStatusChip + TranslateStatusChip collapse into one
+// overflow chip below sm; the popover reuses the SAME three components,
+// not a forked copy.
+// ---------------------------------------------------------------
+
+describe("StatusLine — D2 fold: overflow chip (task 4)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({
+      status: "idle",
+      segments: [],
+      detectMode: "llm",
+      settings: { ...s.settings, engine: "demo" },
+    }));
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  function overflowChip(): HTMLButtonElement {
+    const el = container!.querySelector('[data-testid="statusline-overflow-chip"]');
+    if (!el) throw new Error("overflow chip not found");
+    return el as HTMLButtonElement;
+  }
+
+  function detectGroup(): HTMLElement {
+    const el = container!.querySelector('[data-testid="statusline-detect-group"]');
+    if (!el) throw new Error("detect group not found");
+    return el as HTMLElement;
+  }
+
+  // Mutation-checked: reverting OverflowChip's wrapping className from
+  // `sm:hidden` to `hidden sm:flex` (or removing it) makes the first
+  // assertion fail; reverting the detect-group's own `hidden sm:flex`
+  // back to no responsive classes makes the second fail.
+  it("fold visibility at <sm: overflow chip's own class shows it below sm (sm:hidden), the sm+ inline group's own class hides it below sm (hidden sm:flex) — individual chips never independently show below sm", async () => {
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(overflowChip()).not.toBeNull();
+    const overflowRootClasses = overflowChip().parentElement!.className.split(/\s+/);
+    expect(overflowRootClasses).toContain("sm:hidden");
+
+    const groupClasses = detectGroup().className.split(/\s+/);
+    expect(groupClasses).toContain("hidden");
+    expect(groupClasses).toContain("sm:flex");
+  });
+
+  it("≥sm group renders the exact same three chips as before the fold, byte-identical testids", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "demo" }],
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(detectGroup().querySelector('[data-testid="statusline-detect-toggle"]')).not.toBeNull();
+    expect(detectGroup().querySelector('[data-testid="statusline-ai-status-chip"]')).not.toBeNull();
+    expect(detectGroup().querySelector('[data-testid="statusline-translate-chip"]')).not.toBeNull();
+  });
+
+  it("tapping the overflow chip opens a popover stacking the same three chips (reused components, not forked copies); tapping again closes it", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "demo" }],
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(container!.querySelector('[data-testid="statusline-overflow-popover"]')).toBeNull();
+
+    await act(async () => {
+      overflowChip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const popover = container!.querySelector('[data-testid="statusline-overflow-popover"]');
+    expect(popover).not.toBeNull();
+    expect(popover!.querySelector('[data-testid="statusline-detect-toggle"]')).not.toBeNull();
+    expect(popover!.querySelector('[data-testid="statusline-ai-status-chip"]')).not.toBeNull();
+    expect(popover!.querySelector('[data-testid="statusline-translate-chip"]')).not.toBeNull();
+
+    await act(async () => {
+      overflowChip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.querySelector('[data-testid="statusline-overflow-popover"]')).toBeNull();
   });
 });
 

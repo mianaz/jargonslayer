@@ -10,7 +10,7 @@
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
-import Header from "../Header";
+import Header, { type HeaderProps } from "../Header";
 import { useApp } from "../../lib/store";
 import { DEFAULT_SETTINGS, MEETING_CONTEXT_MAX_CHARS } from "@jargonslayer/core/types";
 
@@ -396,6 +396,93 @@ describe("Header — header-detect-toggle (E2E batch item 2)", () => {
     );
     expect(badge).toBeDefined();
     expect(badge!.className).not.toMatch(/\bborder\b/);
+  });
+});
+
+// D2 fold (task 4): 选择/AI 校正/补全翻译 move into the ≡ menu as labeled
+// rows on the desktop/web dropdown too — mirrors the iOS BottomSheet
+// variant's own coverage in Header.ios.test.tsx (same gate/isMobileLayout,
+// same handlers/testids, just this host's own itemCls row style instead
+// of the sheet's iosItemCls).
+describe("HamburgerMenu — mobile toolbar rows (task 4 D2 fold)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", segments: [] });
+  });
+
+  async function renderAndOpenMenu(extraProps: Partial<HeaderProps> = {}): Promise<void> {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(
+        <Header
+          onStart={noop}
+          onPause={noop}
+          onResume={noop}
+          onStop={noop}
+          onDemo={noop}
+          onOpenHistory={noop}
+          onOpenSettings={noop}
+          onOpenHelp={noop}
+          onOpenImport={noop}
+          onOpenTaskCenter={noop}
+          {...extraProps}
+        />,
+      );
+    });
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="btn-menu"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  it("renders 选择 as a labeled row inside the dropdown when isMobileLayout is true and segments exist", async () => {
+    useApp.setState({
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "demo" }],
+    });
+    const onToggleSelectMode = vi.fn();
+    await renderAndOpenMenu({ isMobileLayout: true, selectMode: false, onToggleSelectMode });
+
+    const row = container!.querySelector('[data-testid="btn-select-mode"]');
+    expect(row).not.toBeNull();
+    expect(row!.textContent).toContain("选择");
+
+    await act(async () => {
+      row!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onToggleSelectMode).toHaveBeenCalledTimes(1);
+    // Closes the dropdown, same as every other item.
+    expect(container!.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("absent from the dropdown when isMobileLayout is false (default) — desktop, unchanged", async () => {
+    useApp.setState({
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "demo" }],
+    });
+    await renderAndOpenMenu();
+
+    expect(container!.querySelector('[data-testid="btn-select-mode"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-ai-correct"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-gap-fill"]')).toBeNull();
   });
 });
 
