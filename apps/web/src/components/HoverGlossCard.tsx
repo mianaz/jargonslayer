@@ -84,7 +84,7 @@ export default function HoverGlossCard({
             type="button"
             onClick={onClose}
             aria-label="关闭"
-            className="flex h-6 w-6 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
+            className="flex h-9 w-9 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
           >
             <X size={14} weight="regular" />
           </button>

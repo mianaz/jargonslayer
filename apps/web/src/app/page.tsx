@@ -34,6 +34,7 @@ import { checkUpdates as checkPackUpdates, listPackSources } from "@/lib/detect/
 import { warmSystemTranslateProbeForStartup } from "@/lib/translate/providers";
 import { nextHelpOpenForWizardTransition } from "./wizardHelpTransition";
 import { triggerDictPackAutoUpdate } from "./dictPackAutoUpdateTrigger";
+import { CardArrivalAnnouncer } from "@/lib/a11y";
 
 type RightTab = "cards" | "summary";
 
@@ -538,6 +539,7 @@ export default function Home() {
       />
       <LookupPopover />
       <Toast />
+      <CardArrivalAnnouncer />
       {/* v0.4 S3 chunk 6: first-run local sidecar provisioning wizard —
          renders nothing on an ordinary web build (see DesktopBootstrap.
          tsx's own header comment for why this is gated at BOTH this

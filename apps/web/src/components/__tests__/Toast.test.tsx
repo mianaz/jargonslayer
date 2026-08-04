@@ -41,6 +41,8 @@ describe("Toast — backward compat + diagnostics ref (item 3)", () => {
       root!.render(<Toast />);
     });
 
+    const region = container!.querySelector("[role='status']");
+    expect(region?.getAttribute("aria-live")).toBe("polite");
     expect(container!.textContent).toContain("已复制");
     expect(container!.querySelector("button")).toBeNull();
   });

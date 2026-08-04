@@ -19,12 +19,12 @@
 // mount + open-state moved up to page.tsx (onOpenImport prop below);
 // this drawer's own 导入 buttons just call it, same as before.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Trash, UploadSimple, X } from "@phosphor-icons/react";
 import { IS_IOS } from "@/lib/platform/ios";
 import { useApp } from "@/lib/store";
-import { handleButtonKeyDown } from "@/lib/a11y";
+import { handleButtonKeyDown, useOverlayA11y } from "@/lib/a11y";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@jargonslayer/core/types";
 import {
@@ -78,7 +78,11 @@ function activeImportRows(tasks: Record<string, TaskState>): TaskState[] {
 }
 
 export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDrawerProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const overlayA11y = useOverlayA11y({ open, onClose, containerRef: panelRef });
+
   const sessions = useApp((s) => s.sessions);
+  const hydrated = useApp((s) => s.hydrated);
   const loadSession = useApp((s) => s.loadSession);
   const deleteSession = useApp((s) => s.deleteSession);
 
@@ -167,6 +171,8 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
           375px phone viewport by 5px, bleeding every row past the left
           edge (Miana's v0.2.2 E2E finding #5). */}
       <div
+        ref={panelRef}
+        {...overlayA11y}
         className={`fixed inset-y-0 right-0 z-40 flex w-full max-w-[380px] translate-x-0 flex-col border-l border-edge bg-panel glassable-panel transition-transform ${
           // iOS-cloud round: full-bleed webview (viewportFit cover) — the
           // panel spans under the system status bar, so its own header
@@ -189,7 +195,7 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
               type="button"
               onClick={onClose}
               aria-label="关闭"
-              className="flex h-8 w-8 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
+              className="flex h-9 w-9 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
             >
               <X size={18} weight="regular" />
             </button>
@@ -270,7 +276,13 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
             </div>
           )}
 
-          {filtered.length === 0 ? (
+          {!hydrated ? (
+            <div className="space-y-2">
+              <div className="skeleton h-12 border-l-2 border-edge2 border-b border-b-edge bg-panel2 p-3" />
+              <div className="skeleton h-12 border-l-2 border-edge2 border-b border-b-edge bg-panel2 p-3" />
+              <div className="skeleton h-12 border-l-2 border-edge2 border-b border-b-edge bg-panel2 p-3" />
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
               <div className="text-sm font-medium text-fg">
                 {sessions.length === 0 ? "还没有会议记录" : "没有匹配的会议"}
@@ -317,7 +329,7 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
                           e.stopPropagation();
                           handleDeleteClick(meta.id);
                         }}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-warn-soft"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-warn-soft"
                       >
                         <Trash size={16} weight="regular" />
                       </button>
