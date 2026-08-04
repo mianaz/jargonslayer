@@ -722,6 +722,19 @@ export interface Settings {
   // SettingsDialog.tsx's 词典源 row + handleSave's own
   // toSave.packAutoUpdateCheckedAt).
   packAutoUpdateCheckedAt?: number;
+  // Field-fix #8 (update-check v1) — same shape as packAutoUpdateCheckedAt
+  // immediately above, one field down: epoch ms of the last COMPLETED
+  // quiet app-update check (GitHub releases, desktop only) — success or
+  // failure alike, so the 24h interval survives an app restart.
+  // Absent/undefined = never auto-checked yet, treated as immediately
+  // due. Written by app/page.tsx's own hydrated-gated mount effect via
+  // lib/desktop/updateCheck.ts's runAppUpdateAutoCheck.
+  appUpdateCheckedAt?: number;
+  // The release tag_name (e.g. "v0.4.2") whose update banner the user
+  // has already dismissed — dismissing remembers ONLY that version; a
+  // NEWER release found later shows the banner again regardless (see
+  // components/AppUpdateBanner.tsx's shouldShowUpdateBanner gate).
+  appUpdateDismissedVersion?: string;
   // Hugging Face token for the local Whisper sidecar's speaker
   // diarization (pyannote); "" = disabled. Never leaves the browser
   // except over localhost to the sidecar (see upload.ts).

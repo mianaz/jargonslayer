@@ -18,7 +18,17 @@ vi.mock("../tauriApi", () => ({
   getAppVersion: () => mockGetAppVersion(),
 }));
 
-import { checkAppUpdate, checkAppUpdateWith, compareVersions, useUpdateCheck } from "../updateCheck";
+import {
+  APP_UPDATE_CHECK_INTERVAL_MS,
+  checkAppUpdate,
+  checkAppUpdateWith,
+  compareVersions,
+  runAppUpdateAutoCheck,
+  shouldCheckForAppUpdate,
+  shouldShowUpdateBanner,
+  useUpdateCheck,
+  type RunAppUpdateAutoCheckDeps,
+} from "../updateCheck";
 
 function fakeFetchSequence(
   ...responses: Array<{ ok?: boolean; status?: number; etag?: string | null; body?: unknown }>
@@ -329,5 +339,158 @@ describe("checkAppUpdate — IS_DESKTOP-guarded real entry point", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(mockGetAppVersion).not.toHaveBeenCalled();
     expect(useUpdateCheck.getState().status).toBe("idle");
+  });
+});
+
+// ---------------------------------------------------------------
+// Field-fix #8 v2: shouldCheckForAppUpdate (pure gate) + runAppUpdate
+// AutoCheck (deps-injected orchestrator) — mirrors lib/detect/
+// packAutoUpdate.ts's own shouldCheckForPackUpdates/runPackAutoUpdate
+// tests almost line for line (see that file's own header comment for
+// why this is the precedent), minus the enabled/online/hasInstalledPacks
+// preconditions this simpler gate doesn't have.
+// ---------------------------------------------------------------
+
+describe("shouldCheckForAppUpdate", () => {
+  const now = 1_700_000_000_000;
+
+  it("a missing lastCheckedAt (never auto-checked before) counts as due", () => {
+    expect(shouldCheckForAppUpdate({ now })).toBe(true);
+  });
+
+  it("false while still within the 24h interval", () => {
+    expect(
+      shouldCheckForAppUpdate({ now, lastCheckedAt: now - APP_UPDATE_CHECK_INTERVAL_MS + 1000 }),
+    ).toBe(false);
+  });
+
+  it("true once the interval has fully elapsed (boundary: exactly at the interval)", () => {
+    expect(
+      shouldCheckForAppUpdate({ now, lastCheckedAt: now - APP_UPDATE_CHECK_INTERVAL_MS }),
+    ).toBe(true);
+  });
+
+  it("true well past the interval", () => {
+    expect(
+      shouldCheckForAppUpdate({ now, lastCheckedAt: now - APP_UPDATE_CHECK_INTERVAL_MS * 3 }),
+    ).toBe(true);
+  });
+
+  it("a lastCheckedAt in the future (clock skew) counts as due, never permanently not-due", () => {
+    expect(shouldCheckForAppUpdate({ now, lastCheckedAt: now + 60_000 })).toBe(true);
+    // Even a tiny skew (1ms ahead) — the naive `now - lastCheckedAt >=
+    // INTERVAL` would compute a negative number here (always < INTERVAL,
+    // i.e. never due) without the explicit future-timestamp check.
+    expect(shouldCheckForAppUpdate({ now, lastCheckedAt: now + 1 })).toBe(true);
+  });
+});
+
+describe("runAppUpdateAutoCheck", () => {
+  function baseDeps(overrides: Partial<RunAppUpdateAutoCheckDeps> = {}): RunAppUpdateAutoCheckDeps {
+    return {
+      now: 1_700_000_000_000,
+      isMeetingActive: () => false,
+      check: vi.fn(async () => {}),
+      recordCheckedAt: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it("calls the injected check() and records checkedAt on a due, non-meeting run", async () => {
+    const check = vi.fn(async () => {});
+    const recordCheckedAt = vi.fn();
+
+    const result = await runAppUpdateAutoCheck(baseDeps({ check, recordCheckedAt }));
+
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ checked: true });
+    expect(recordCheckedAt).toHaveBeenCalledWith(1_700_000_000_000);
+  });
+
+  it("never throws when check() rejects — still resolves checked:true", async () => {
+    const check = vi.fn(async () => {
+      throw new Error("network down");
+    });
+    const recordCheckedAt = vi.fn();
+
+    await expect(
+      runAppUpdateAutoCheck(baseDeps({ check, recordCheckedAt })),
+    ).resolves.toEqual({ checked: true });
+  });
+
+  it("records the timestamp even when check() rejects — a persistently-dead endpoint must not re-check on every launch", async () => {
+    const check = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const recordCheckedAt = vi.fn();
+
+    await runAppUpdateAutoCheck(baseDeps({ check, recordCheckedAt, now: 42 }));
+
+    expect(recordCheckedAt).toHaveBeenCalledWith(42);
+  });
+
+  it("skips entirely — never calls check, never records — while a meeting is live", async () => {
+    const check = vi.fn(async () => {});
+    const recordCheckedAt = vi.fn();
+
+    const result = await runAppUpdateAutoCheck(
+      baseDeps({ isMeetingActive: () => true, check, recordCheckedAt }),
+    );
+
+    expect(result).toEqual({ checked: false });
+    expect(check).not.toHaveBeenCalled();
+    expect(recordCheckedAt).not.toHaveBeenCalled();
+  });
+
+  it("skips — never calls check, never records — when not due yet", async () => {
+    const check = vi.fn(async () => {});
+    const recordCheckedAt = vi.fn();
+
+    const result = await runAppUpdateAutoCheck(
+      baseDeps({ lastCheckedAt: 1_700_000_000_000 - 1000, check, recordCheckedAt }),
+    );
+
+    expect(result).toEqual({ checked: false });
+    expect(check).not.toHaveBeenCalled();
+    expect(recordCheckedAt).not.toHaveBeenCalled();
+  });
+
+  it("never throws when isMeetingActive() itself throws synchronously", async () => {
+    const isMeetingActive = vi.fn(() => {
+      throw new Error("store not ready");
+    });
+
+    await expect(runAppUpdateAutoCheck(baseDeps({ isMeetingActive }))).resolves.toEqual({
+      checked: false,
+    });
+  });
+});
+
+describe("shouldShowUpdateBanner", () => {
+  it("false when status isn't 'available', even with a latestVersion set", () => {
+    expect(shouldShowUpdateBanner({ status: "current", latestVersion: "v0.5.0" })).toBe(false);
+    expect(shouldShowUpdateBanner({ status: "checking", latestVersion: "v0.5.0" })).toBe(false);
+    expect(shouldShowUpdateBanner({ status: "error", latestVersion: "v0.5.0" })).toBe(false);
+    expect(shouldShowUpdateBanner({ status: "idle" })).toBe(false);
+  });
+
+  it("true when available with no prior dismissal", () => {
+    expect(shouldShowUpdateBanner({ status: "available", latestVersion: "v0.5.0" })).toBe(true);
+  });
+
+  it("false once the user dismissed exactly this version", () => {
+    expect(
+      shouldShowUpdateBanner({ status: "available", latestVersion: "v0.5.0", dismissedVersion: "v0.5.0" }),
+    ).toBe(false);
+  });
+
+  it("true again for a NEWER version even though an older one was dismissed — non-nag, not silence-forever", () => {
+    expect(
+      shouldShowUpdateBanner({ status: "available", latestVersion: "v0.6.0", dismissedVersion: "v0.5.0" }),
+    ).toBe(true);
+  });
+
+  it("false when latestVersion is itself absent (shouldn't happen alongside status:available, but must not crash/show)", () => {
+    expect(shouldShowUpdateBanner({ status: "available" })).toBe(false);
   });
 });

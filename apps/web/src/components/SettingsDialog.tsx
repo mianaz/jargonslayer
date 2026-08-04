@@ -80,6 +80,7 @@ import { isValidProxyUrl, normalizeProxyUrl } from "@/lib/proxyUrl";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS, IS_TAURI } from "@/lib/platform/ios";
 import { openExternal } from "@/lib/platform/openExternal";
+import { checkAppUpdate, UPDATE_STATUS_LABEL, useUpdateCheck } from "@/lib/desktop/updateCheck";
 import { getInvoke } from "@/lib/desktop/tauriApi";
 import { initDesktop, type DesktopLogSource } from "@/lib/desktop/bootstrap";
 import { trackInstallDiar, trackSwitchModel } from "@/lib/desktop/jobsBridge";
@@ -1132,6 +1133,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
   const showToast = useApp((s) => s.showToast);
+  // Field-fix #8 v2: 检查更新 row (密钥 section, beside 诊断信息 — see that
+  // row's own comment below for why). Same store TaskCenterDrawer's own
+  // 系统状态 update row already reads; this dialog just adds a second
+  // consumer, per SettingsDialog's own "manual button always calls
+  // checkAppUpdate() directly, bypassing the 24h cadence gate" contract
+  // (lib/desktop/updateCheck.ts's own header comment).
+  const updateStatus = useUpdateCheck((s) => s.status);
+  const updateLatestVersion = useUpdateCheck((s) => s.latestVersion);
+  const updateUrl = useUpdateCheck((s) => s.url);
   // ITEM 2 fix (fix round, Sol#4 + Lane C flag): the D7 webspeech
   // on-device runtime overlay resolveEngineRetentionClass reads —
   // exactly the same store field Header/StatusLine already read, so the
@@ -2405,6 +2415,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // spreading draft's dialog-open-time snapshot here would silently
       // roll back a fresher background-recorded timestamp on ANY 保存.
       packAutoUpdateCheckedAt: useApp.getState().settings.packAutoUpdateCheckedAt,
+      // Field-fix #8 v2: same class of staleness bug, same fix — both
+      // written by background/other-surface code while this dialog may
+      // happen to be open (appUpdateCheckedAt by page.tsx's own launch
+      // effect, appUpdateDismissedVersion by AppUpdateBanner's 忽略
+      // button), never through `draft`.
+      appUpdateCheckedAt: useApp.getState().settings.appUpdateCheckedAt,
+      appUpdateDismissedVersion: useApp.getState().settings.appUpdateDismissedVersion,
       // Sol r4+r5 (v0.7 translation train): translateEngine is ALSO
       // written by background code while this dialog sits open
       // (hydrate()'s one-shot llm→system migration) — same staleness
@@ -6199,6 +6216,48 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
               )}
             </div>
+
+            {/* Field-fix #8 v2: 检查更新 — same "no dedicated 关于/版本
+               area, sits beside 诊断信息" placement call as the S14 note
+               right below (desktop-only: the whole feature is, see
+               lib/desktop/updateCheck.ts's own header comment). The
+               button always calls checkAppUpdate() directly, bypassing
+               the quiet check's own 24h cadence gate — "the manual
+               button always reports". */}
+            {IS_DESKTOP && (
+              <div className="border-t border-edge pt-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-fg">检查更新</span>
+                  <span className={`text-xs ${UPDATE_STATUS_LABEL[updateStatus].className}`}>
+                    {UPDATE_STATUS_LABEL[updateStatus].label}
+                  </span>
+                </div>
+                {updateLatestVersion && (
+                  <div className="mt-1 font-mono text-[11px] tabular-nums text-mut2">
+                    最新 {updateLatestVersion}
+                  </div>
+                )}
+                <div className="mt-2 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void checkAppUpdate()}
+                    disabled={updateStatus === "checking"}
+                    className="btn-tactile border border-edge px-2.5 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {updateStatus === "checking" ? "检查中…" : "检查更新"}
+                  </button>
+                  {updateStatus === "available" && updateUrl && (
+                    <button
+                      type="button"
+                      onClick={() => void openExternal(updateUrl)}
+                      className="text-xs text-lab-green hover:text-fg"
+                    >
+                      打开下载页
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* S14: understated cross-platform availability note — no
                button, no emphasis. This dialog has no dedicated 关于/

@@ -25,9 +25,10 @@ import TutorialOverlay, { shouldShowTutorial } from "@/components/TutorialOverla
 import LookupPopover from "@/components/LookupPopover";
 import Toast from "@/components/Toast";
 import RecoveryBanner from "@/components/RecoveryBanner";
+import AppUpdateBanner from "@/components/AppUpdateBanner";
 import FloatingCaption from "@/components/FloatingCaption";
 import { installGlobalDiagHandlers } from "@/lib/diag/globalHandlers";
-import { checkAppUpdate } from "@/lib/desktop/updateCheck";
+import { checkAppUpdate, runAppUpdateAutoCheck } from "@/lib/desktop/updateCheck";
 import { initIos } from "@/lib/desktop/bootstrap";
 import { enterDesktopCaptionMode, exitDesktopCaptionMode } from "@/lib/captionWindow";
 import { checkUpdates as checkPackUpdates, listPackSources } from "@/lib/detect/remotePacks";
@@ -145,17 +146,13 @@ export default function Home() {
     // needs the wizard at all, where wizardVisible just never leaves
     // `false` — byte-equivalent to the old unconditional open for both.
     if (shouldShowTutorial() && !wizardVisible) setHelpOpen(true);
-    // S10 field-fix #8: on-launch update check, desktop only, quiet —
-    // no toast/banner, Header's 后台任务 dot + TaskCenterDrawer's own
-    // system-status row are the only surfacing (Q2 verdict). Fires
-    // once per app session alongside this same mount effect.
-    // checkAppUpdate() is IS_DESKTOP-guarded internally too (inert
-    // no-op on a web build, never throws — see that module's own doc
-    // comment); the check here just skips the call outright on web
-    // rather than relying on that internal guard alone.
-    if (IS_DESKTOP) {
-      void checkAppUpdate();
-    }
+    // S10 field-fix #8 v2: the on-launch update check moved to its own
+    // hydrated-gated effect below (right after the dict-pack auto-update
+    // one) — it now needs the REAL persisted settings.appUpdateCheckedAt
+    // for its 24h cadence gate, which (like packAutoUpdateCheckedAt)
+    // isn't resolved yet at THIS pre-hydration tick — see that effect's
+    // own comment, same "gates on hydrated" rationale as the dict-pack
+    // effect's own leading comment documents.
     // HIGH-1 fix (v0.6 round-2 review), widened for iOS's own native
     // system-translate lane (same 4 invoke commands as desktop — see
     // providers.ts's NATIVE_SYSTEM_TRANSLATE): warm the probe once
@@ -226,6 +223,34 @@ export default function Home() {
     runCheck();
     window.addEventListener("online", runCheck);
     return () => window.removeEventListener("online", runCheck);
+  }, [hydrated]);
+
+  // S10 field-fix #8 v2: quiet on-launch app-update check, desktop only
+  // — now cadence-gated (24h, skew-tolerant, skips a live meeting) via
+  // lib/desktop/updateCheck.ts's runAppUpdateAutoCheck, mirroring the
+  // dict-pack effect immediately above almost exactly (same "gates on
+  // hydrated so the first run reads REAL persisted settings, not the
+  // pre-hydration DEFAULT_SETTINGS placeholder" posture, same inline
+  // isMeetingActive mirror — a fourth mirror of the same three-status
+  // rule, see that effect's own comment on why this isn't shared as an
+  // export). Surfacing is now AppUpdateBanner (mounted below, near
+  // RecoveryBanner) + SettingsDialog's own 检查更新 row, in addition to
+  // TaskCenterDrawer's existing 系统状态 row. checkAppUpdate() remains
+  // IS_DESKTOP-guarded internally too; the check here just skips the
+  // effect outright on web rather than relying on that internal guard
+  // alone (same posture the old pre-hydration call used to have).
+  useEffect(() => {
+    if (!hydrated || !IS_DESKTOP) return;
+    void runAppUpdateAutoCheck({
+      lastCheckedAt: useApp.getState().settings.appUpdateCheckedAt,
+      isMeetingActive: () => {
+        const s = useApp.getState().status;
+        return s === "connecting" || s === "listening" || s === "paused";
+      },
+      check: checkAppUpdate,
+      recordCheckedAt: (checkedAt) =>
+        useApp.getState().updateSettings({ appUpdateCheckedAt: checkedAt }),
+    });
   }, [hydrated]);
 
   // Jump to the report tab the moment a summary lands.
@@ -336,6 +361,7 @@ export default function Home() {
         onOpenCorrection={() => setCorrectionOpen(true)}
       />
       <RecoveryBanner />
+      <AppUpdateBanner />
 
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <section className="relative min-h-0 min-w-0 flex-1 border-b border-edge lg:border-b-0 lg:border-r">

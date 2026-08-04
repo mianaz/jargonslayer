@@ -980,6 +980,10 @@ export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settin
     "apiKey",
     "taskLlm",
     "packAutoUpdateCheckedAt",
+    // Field-fix #8 v2: same "optional field DEFAULT_SETTINGS deliberately
+    // omits" class as packAutoUpdateCheckedAt right above.
+    "appUpdateCheckedAt",
+    "appUpdateDismissedVersion",
   ]);
   const picked: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
@@ -1073,6 +1077,25 @@ export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settin
     picked.packAutoUpdateCheckedAt < 0
   ) {
     delete picked.packAutoUpdateCheckedAt;
+  }
+  // Field-fix #8 v2: appUpdateCheckedAt feeds the SAME kind of
+  // `now - lastCheckedAt >= INTERVAL` arithmetic (shouldCheckForAppUpdate)
+  // as packAutoUpdateCheckedAt above — identical guard, identical
+  // rationale. appUpdateDismissedVersion is only ever compared with
+  // `!==` against a real release tag (shouldShowUpdateBanner) — a
+  // non-string can't poison that comparison the way a non-finite number
+  // poisons subtraction, but it's still typed as a plain string, so a
+  // corrupted shape (an object, a number, …) is dropped rather than
+  // persisted as a value nothing in this app could have ever written.
+  if (
+    typeof picked.appUpdateCheckedAt !== "number" ||
+    !Number.isFinite(picked.appUpdateCheckedAt) ||
+    picked.appUpdateCheckedAt < 0
+  ) {
+    delete picked.appUpdateCheckedAt;
+  }
+  if (typeof picked.appUpdateDismissedVersion !== "string") {
+    delete picked.appUpdateDismissedVersion;
   }
   // packsSchemaVersion (MEDIUM-5, v0.6 round-2 review): same class of
   // trap — a corrupted value (e.g. a string) would poison
