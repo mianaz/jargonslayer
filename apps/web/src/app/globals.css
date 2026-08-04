@@ -80,9 +80,17 @@
      uiFont/monoFont; removeProperty lets these :root values take back
      over, same "CSS default is the fallback, never re-injected" shape
      as the theme engine's own token vars above. */
+  /* UI polish train: CJK chain hardened for Windows/Linux web users —
+     "Hiragino Sans GB" (macOS/iOS-only) is replaced by "HarmonyOS Sans
+     SC" (growing Huawei-ecosystem share) and "Noto Sans SC" (the
+     standard Linux CJK fallback, e.g. via the fonts-noto-cjk package),
+     both tried before "Microsoft YaHei" (the actual Windows default).
+     Nothing here is bundled — pure fallback-chain hardening; per-glyph
+     font matching means the trailing Latin entries below still resolve
+     for Latin runs regardless of this chain's position. */
   --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial,
-    sans-serif;
+    "HarmonyOS Sans SC", "Noto Sans SC", "Microsoft YaHei", "Helvetica Neue",
+    Arial, sans-serif;
   --font-mono-user: var(--font-mono-brand), "SF Mono", Menlo, monospace;
 }
 
@@ -249,6 +257,22 @@ html[data-fs="xl"] {
 .ts-translation {
   font-size: calc(0.75rem * var(--ts-scale, 1)); /* 12px base (text-xs) */
   line-height: var(--ts-leading, 1.7);
+}
+
+/* v3.9 type-scale primitives (UI polish train). .stat-numeral pairs
+   with tailwind.config.ts's `stat` fontSize token for large numerals
+   (StatCard, StatusLine's mode block, any other big-number display) —
+   mono for the brand identity, light-300 so a big digit doesn't read
+   as shouty, tabular-nums so a changing count doesn't jitter width. */
+.stat-numeral {
+  @apply font-mono font-light tabular-nums;
+}
+
+/* skeleton loading placeholder — static by law (DESIGN.md v3.9c) — do
+   not add pulse/shimmer. Size per use site with width/height
+   utilities; this class only supplies the fill. */
+.skeleton {
+  background: var(--panel3);
 }
 
 /* thin scrollbars */

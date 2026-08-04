@@ -134,7 +134,10 @@ export function hasPendingRelearn(
 
 function EmptyDueState({ pendingRelearn }: { pendingRelearn: boolean }) {
   return (
-    <div className="rounded-none border border-edge bg-panel p-6 text-center">
+    // id="due-queue": ReviewDashboard's start-review CTA scrolls here
+    // (see its own comment) — present on both of this component's
+    // top-level returns, this one and the main deck below.
+    <div id="due-queue" className="rounded-none border border-edge bg-panel p-6 text-center">
       <div className="text-sm font-medium text-fg">今天没有待复习的词条</div>
       <div className="mt-2 text-xs leading-[1.7] text-mut">
         继续开会积累新表达，或去词库收藏几个术语——到期后会自动出现在这里。
@@ -273,7 +276,8 @@ export default function DueReview({
   };
 
   return (
-    <div className="space-y-4">
+    // id="due-queue": see the matching comment on EmptyDueState above.
+    <div id="due-queue" className="space-y-4">
       <FlashCard content={content} flipped={flipped} onFlip={() => setFlipped((v) => !v)} />
 
       <div className="flex items-center justify-center gap-3">

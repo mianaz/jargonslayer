@@ -99,20 +99,21 @@ function useWordFrequency(cache: Record<string, MeetingSession>) {
 
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-none border-l-2 border-edge2 border-b border-edge bg-panel p-4">
-      <div className="font-mono text-4xl tabular-nums text-fg">{value}</div>
-      <div className="mt-2 text-xs uppercase tracking-wide text-mut">
-        {label}
-      </div>
+    <div className="rounded-none border-l-2 border-edge2 border-b border-edge bg-panel p-3">
+      <div className="stat-numeral text-stat text-fg">{value}</div>
+      <div className="mt-1 text-caption text-mut">{label}</div>
     </div>
   );
 }
 
-function StatsStrip() {
+// Shared by StatsStrip (all six tiles) and ReviewLead (the leading
+// due-count callout below) so both read the exact same numbers off one
+// memoized pass over sessions/learnset instead of drifting.
+function useDashboardStats() {
   const sessions = useApp((s) => s.sessions);
   const learnset = useApp((s) => s.learnset);
 
-  const stats = useMemo(() => {
+  return useMemo(() => {
     const now = Date.now();
     const meetingCount = sessions.length;
     const cardCount = sessions.reduce((sum, m) => sum + m.cardCount, 0);
@@ -124,15 +125,62 @@ function StatsStrip() {
     const streak = computeReviewStreak(learnset, now);
     return { meetingCount, cardCount, termCount, newThisWeek, dueToday, streak };
   }, [sessions, learnset]);
+}
+
+// IA reorder (UI polish train): the due-count + start-review action now
+// leads the page (see ReviewLead below) — this strip is the secondary
+// at-a-glance grid right under it, tightened from 2/4-col to 2/3-col.
+function StatsStrip() {
+  const stats = useDashboardStats();
 
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <div data-testid="stats-strip" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
       <StatCard label="会议场次" value={stats.meetingCount} />
       <StatCard label="累计表达" value={stats.cardCount} />
       <StatCard label="累计术语" value={stats.termCount} />
       <StatCard label="本周新增会议" value={stats.newThisWeek} />
       <StatCard label="今日待复习" value={stats.dueToday} />
       <StatCard label="连续复习天数" value={stats.streak} />
+    </div>
+  );
+}
+
+// New leading block (UI polish train, IA reorder): the review ACTION
+// leads the page — due-count + a way to jump straight into the queue —
+// ahead of the stat grid and word cloud below. No pre-existing "start
+// review" control lived inside this component to relabel/rewire, so
+// this is new. It stays self-contained (no prop/callback threaded from
+// app/review/page.tsx, which owns the 到期复习/翻卡浏览 mode switch):
+// DueReview.tsx (this file's own sibling) carries id="due-queue" on
+// both of its top-level returns, so the scroll below resolves whenever
+// the due-review deck is mounted — the page's default mode on every
+// fresh load. If the user has switched to 翻卡浏览 the id isn't in the
+// DOM and this is a harmless no-op; the 到期复习 tab sits right above
+// that deck either way.
+function ReviewLead() {
+  const { dueToday } = useDashboardStats();
+
+  return (
+    <div
+      data-testid="review-lead"
+      className="flex items-center justify-between gap-4 border-l-2 border-edge2 border-b border-edge bg-panel p-4"
+    >
+      <div>
+        <div className="stat-numeral text-stat text-fg">{dueToday}</div>
+        <div className="mt-1 text-caption text-mut">今日待复习</div>
+      </div>
+      <button
+        type="button"
+        data-testid="start-review-cta"
+        onClick={() =>
+          document
+            .getElementById("due-queue")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" })
+        }
+        className="btn-terminal shrink-0 rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85"
+      >
+        开始复习
+      </button>
     </div>
   );
 }
@@ -154,7 +202,20 @@ function TopExpressions({
   );
 
   if (loading) {
-    return <div className="text-sm text-mut">加载中…</div>;
+    // Static by law (DESIGN.md v3.9c) — 10 skeleton rows shaped like
+    // the real top-10 list below (same count/size), no spinner text.
+    return (
+      <div className="mt-2 space-y-2" aria-hidden="true">
+        {Array.from({ length: 10 }, (_, i) => (
+          <div key={i} className="flex items-center gap-3 px-1 py-1">
+            <div className="skeleton h-3 w-4 shrink-0" />
+            <div className="skeleton h-3 w-40 shrink-0" />
+            <div className="skeleton h-1.5 w-16 shrink-0" />
+            <div className="skeleton h-3 w-6 shrink-0" />
+          </div>
+        ))}
+      </div>
+    );
   }
 
   if (top.length === 0) return null;
@@ -308,8 +369,9 @@ export default function ReviewDashboard({
       <div className="space-y-6">
         {/* Streak/due-today can be non-zero even pre-first-meeting
            (glossary saves lazily enroll too — see store.ts's
-           addCustomEntry), so the strip stays visible here like
-           KnownTermsSection already does. */}
+           addCustomEntry), so the lead + strip both stay visible here
+           like KnownTermsSection already does. */}
+        <ReviewLead />
         <StatsStrip />
         <EmptyState />
         <KnownTermsSection />
@@ -319,6 +381,7 @@ export default function ReviewDashboard({
 
   return (
     <div className="space-y-6">
+      <ReviewLead />
       <StatsStrip />
       <KnownTermsSection />
       <WordCloud

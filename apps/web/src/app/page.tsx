@@ -340,7 +340,6 @@ export default function Home() {
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <section className="relative min-h-0 min-w-0 flex-1 border-b border-edge lg:border-b-0 lg:border-r">
           <TranscriptPanel
-            onDemo={() => void startDemo()}
             isMobileLayout={isMobileLayout}
             selectMode={selectMode}
             onToggleSelectMode={() => setSelectMode((v) => !v)}

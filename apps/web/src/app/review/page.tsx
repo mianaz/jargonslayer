@@ -89,10 +89,9 @@ export default function ReviewPage() {
           href="/"
           className="flex items-center gap-1.5 text-sm text-mut hover:text-fg"
         >
-          ← 返回会议
+          ← 返回
         </Link>
         <span className="font-medium text-fg">学习中心</span>
-        <span className="font-mono text-xs text-mut2">/review</span>
       </header>
 
       <main
