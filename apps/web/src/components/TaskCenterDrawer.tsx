@@ -30,7 +30,7 @@ import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { openExternal } from "@/lib/platform/openExternal";
 import { probeSidecar } from "@/lib/stt/sidecarHealth";
 import { initDesktop, type DesktopBootstrapHandle } from "@/lib/desktop/bootstrap";
-import { checkAppUpdate, useUpdateCheck, type UpdateCheckStatus } from "@/lib/desktop/updateCheck";
+import { checkAppUpdate, UPDATE_STATUS_LABEL, useUpdateCheck } from "@/lib/desktop/updateCheck";
 import { modelForTask, trackInstallDiar, trackSwitchModel } from "@/lib/desktop/jobsBridge";
 import { KIND_LABEL } from "@/components/TaskTray";
 import {
@@ -47,14 +47,6 @@ export interface TaskCenterDrawerProps {
   open: boolean;
   onClose: () => void;
 }
-
-const UPDATE_STATUS: Record<UpdateCheckStatus, { label: string; className: string }> = {
-  idle: { label: "未检查", className: "text-mut" },
-  checking: { label: "检查中…", className: "text-mut" },
-  current: { label: "已是最新", className: "text-mut" },
-  available: { label: "发现新版本", className: "text-lab-green" },
-  error: { label: "检查失败", className: "text-warn-soft" },
-};
 
 // F4 LOW precedent (registry.ts/HistoryDrawer/TaskTray all guard the
 // same way) — belt-and-suspenders clamp for a progress bar's CSS width.
@@ -200,7 +192,7 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
     });
   };
 
-  const updateInfo = UPDATE_STATUS[updateStatus];
+  const updateInfo = UPDATE_STATUS_LABEL[updateStatus];
 
   return (
     <>

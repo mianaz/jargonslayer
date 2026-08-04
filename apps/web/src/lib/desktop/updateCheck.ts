@@ -17,6 +17,25 @@
 // build never calls getAppVersion() (which throws synchronously outside
 // a desktop build, per tauriApi.ts's own contract) or reaches the
 // network.
+//
+// Field-fix #8 v2 (her ask, this round): the quiet on-launch check above
+// used to fire unconditionally on every app start with no surfacing
+// beyond TaskCenterDrawer's own 系统状态 row — field feedback was nobody
+// opens that drawer to notice. This version adds (a) a 24h cadence gate
+// + live-meeting skip for the quiet check (shouldCheckForAppUpdate/
+// runAppUpdateAutoCheck, mirroring lib/detect/packAutoUpdate.ts's own
+// shouldCheckForPackUpdates/runPackAutoUpdate shape exactly — same
+// skew-tolerant "future lastCheckedAt counts as due" rule, same
+// "recordCheckedAt fires on every ATTEMPT, never on a skip" contract),
+// backed by a NEW persisted Settings.appUpdateCheckedAt (this store
+// stays session-only, see this file's own header above) and (b) a
+// dismissible AppUpdateBanner (components/AppUpdateBanner.tsx) —
+// shouldShowUpdateBanner is this module's own pure gate for it,
+// Settings.appUpdateDismissedVersion is the "remember this ONE version"
+// persisted key. The manual TaskCenterDrawer 重新检查 button and the new
+// SettingsDialog 检查更新 button both still just call checkAppUpdate()
+// directly, bypassing the cadence gate entirely (spec: "the manual
+// button always reports") — the gate only wraps the QUIET launch call.
 
 import { create } from "zustand";
 import { IS_DESKTOP } from "../platform/desktop";
@@ -39,6 +58,19 @@ export const useUpdateCheck = create<UpdateCheckState>(() => ({
   status: "idle",
   currentVersion: "",
 }));
+
+// Shared status → zh label/color mapping — TaskCenterDrawer's own 系统状态
+// update row, SettingsDialog's new 检查更新 row, and AppUpdateBanner all
+// read the SAME copy rather than each hand-rolling their own (this used
+// to be a TaskCenterDrawer-local const; hoisted here once a second
+// consumer needed it).
+export const UPDATE_STATUS_LABEL: Record<UpdateCheckStatus, { label: string; className: string }> = {
+  idle: { label: "未检查", className: "text-mut" },
+  checking: { label: "检查中…", className: "text-mut" },
+  current: { label: "已是最新", className: "text-mut" },
+  available: { label: "发现新版本", className: "text-lab-green" },
+  error: { label: "检查失败", className: "text-warn-soft" },
+};
 
 interface ReleaseCache {
   etag: string;
@@ -176,11 +208,111 @@ export async function checkAppUpdateWith(deps: CheckAppUpdateDeps): Promise<void
   }
 }
 
-/** The real entry point — TaskCenterDrawer's 重新检查 button and its own
- *  quiet first-open effect. IS_DESKTOP-gated no-op on a web build (never
- *  calls getAppVersion(), never reaches the network) — see this
- *  module's own header comment. */
+/** The real entry point — TaskCenterDrawer's 重新检查 button, SettingsDialog's
+ *  检查更新 button (both unconditional, bypass the cadence gate below), and
+ *  runAppUpdateAutoCheck's own `check` dep for the gated quiet launch
+ *  check. IS_DESKTOP-gated no-op on a web build (never calls
+ *  getAppVersion(), never reaches the network) — see this module's own
+ *  header comment. */
 export function checkAppUpdate(): Promise<void> {
   if (!IS_DESKTOP) return Promise.resolve();
   return checkAppUpdateWith({ fetchImpl: fetch, getVersion: getAppVersion });
+}
+
+// ---------------------------------------------------------------
+// Field-fix #8 v2: 24h cadence gate for the quiet launch check —
+// mirrors lib/detect/packAutoUpdate.ts's shouldCheckForPackUpdates/
+// runPackAutoUpdate shape exactly (see this file's own header comment
+// for why); no "enabled" toggle (this quiet check isn't opt-out, unlike
+// packAutoUpdate) and no "hasInstalledPacks"-equivalent precondition.
+// ---------------------------------------------------------------
+
+export const APP_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+export interface ShouldCheckForAppUpdateInput {
+  lastCheckedAt?: number;
+  now: number;
+}
+
+/** Pure gate — true once >= APP_UPDATE_CHECK_INTERVAL_MS has elapsed
+ *  since lastCheckedAt. A missing lastCheckedAt (never auto-checked
+ *  before) counts as due immediately. Clock skew: a lastCheckedAt AHEAD
+ *  of `now` must never wedge this permanently "not due" (same rationale
+ *  as shouldCheckForPackUpdates' own doc comment) — treated as due right
+ *  away instead of going negative and failing the interval compare
+ *  forever. */
+export function shouldCheckForAppUpdate(input: ShouldCheckForAppUpdateInput): boolean {
+  if (input.lastCheckedAt === undefined) return true;
+  if (input.lastCheckedAt > input.now) return true;
+  return input.now - input.lastCheckedAt >= APP_UPDATE_CHECK_INTERVAL_MS;
+}
+
+export interface RunAppUpdateAutoCheckDeps {
+  lastCheckedAt?: number;
+  /** Defaults to Date.now() — overridable so a test (or a caller
+   *  wanting one consistent `now` shared between the gate check and the
+   *  recorded timestamp) doesn't race two separate clock reads. */
+  now?: number;
+  isMeetingActive: () => boolean;
+  /** checkAppUpdate itself in the real caller — deliberately loose
+   *  (`() => Promise<void>`) rather than importing CheckAppUpdateDeps,
+   *  so a test can inject a bare fake without also faking fetch/
+   *  getVersion. */
+  check: () => Promise<void>;
+  recordCheckedAt: (checkedAt: number) => void;
+}
+
+/** The quiet launch check's own gate+run — page.tsx's hydrated-gated
+ *  mount effect is the one real caller (constructs every dep from live
+ *  settings/store state; see that effect's own comment for why it has
+ *  to wait for hydration first). Never throws, by construction, same
+ *  "checked:false on any skip, checked:true + recordCheckedAt on any
+ *  actual attempt (success OR failure)" contract as runPackAutoUpdate —
+ *  see that function's own doc for the full rationale. */
+export async function runAppUpdateAutoCheck(
+  deps: RunAppUpdateAutoCheckDeps,
+): Promise<{ checked: boolean }> {
+  try {
+    if (deps.isMeetingActive()) return { checked: false };
+    const now = deps.now ?? Date.now();
+    if (!shouldCheckForAppUpdate({ lastCheckedAt: deps.lastCheckedAt, now })) {
+      return { checked: false };
+    }
+    try {
+      await deps.check();
+    } catch (err) {
+      // checkAppUpdate() itself already never throws (lands on
+      // status:"error" internally) — this catch is only a last-resort
+      // net for a test double or future change that doesn't hold that
+      // contract.
+      console.warn("[updateCheck] quiet check failed", err);
+    }
+    try {
+      deps.recordCheckedAt(now);
+    } catch (err) {
+      console.warn("[updateCheck] recordCheckedAt failed", err);
+    }
+    return { checked: true };
+  } catch (err) {
+    console.warn("[updateCheck] runAppUpdateAutoCheck unexpected failure", err);
+    return { checked: false };
+  }
+}
+
+// ---------------------------------------------------------------
+// Field-fix #8 v2: non-nagging dismissible banner gate.
+// ---------------------------------------------------------------
+
+export interface ShouldShowUpdateBannerInput {
+  status: UpdateCheckStatus;
+  latestVersion?: string;
+  dismissedVersion?: string;
+}
+
+/** Pure gate for AppUpdateBanner: shown only once an update is actually
+ *  found, and only for a version the user hasn't already dismissed —
+ *  dismissing remembers ONLY that exact tag, so a NEWER release found
+ *  later (latestVersion !== dismissedVersion) shows the banner again. */
+export function shouldShowUpdateBanner(input: ShouldShowUpdateBannerInput): boolean {
+  return input.status === "available" && !!input.latestVersion && input.latestVersion !== input.dismissedVersion;
 }

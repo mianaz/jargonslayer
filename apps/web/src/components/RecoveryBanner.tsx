@@ -3,13 +3,13 @@
 // Crash/refresh recovery banner (v0.5 closeout, owner field report: a
 // random iOS-Safari refresh mid-meeting lost the whole transcript — see
 // lib/history/liveDraft.ts's own header comment for the underlying
-// write policy). Mounted once in page.tsx, above <main> (the S10
-// on-launch update check is deliberately silent — no banner/toast, see
-// page.tsx's own checkAppUpdate comment — so there is no existing
-// global-notice banner to mirror here); styled like the rest of the
-// app's own in-flow notices (AiStatusPanel's zero-config banner,
-// Toast.tsx's action buttons) rather than inventing a new visual
-// language.
+// write policy). Mounted once in page.tsx, above <main>, right beside
+// AppUpdateBanner (field-fix #8 v2 — the ONE other global-notice banner
+// in the app today, added after this one; that component's own header
+// comment explicitly copies this one's shell rather than inventing a
+// new visual language); styled like the rest of the app's own in-flow
+// notices (AiStatusPanel's zero-config banner, Toast.tsx's action
+// buttons) rather than inventing a new visual language of its own.
 //
 // Visibility (Sol adversarial-review fix — replaces a one-way "hide on
 // new-meeting-start" latch): a loaded draft stays visible for as long as
