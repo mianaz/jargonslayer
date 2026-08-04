@@ -247,7 +247,10 @@ export default function Home() {
         const s = useApp.getState().status;
         return s === "connecting" || s === "listening" || s === "paused";
       },
-      check: checkAppUpdate,
+      // F4b fix (fix round v0.7.7): quiet:true — this launch check must
+      // never surface status:"error" into the shared store (Settings/
+      // 任务中心 row); see checkAppUpdate's own doc comment.
+      check: () => checkAppUpdate(true),
       recordCheckedAt: (checkedAt) =>
         useApp.getState().updateSettings({ appUpdateCheckedAt: checkedAt }),
     });

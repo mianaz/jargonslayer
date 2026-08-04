@@ -208,7 +208,9 @@ describe("checkAppUpdateWith — pure core", () => {
       throw new Error("network down");
     }) as unknown as typeof fetch;
 
-    await expect(checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" })).resolves.toBeUndefined();
+    await expect(checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" })).resolves.toEqual({
+      rateLimited: false,
+    });
     expect(useUpdateCheck.getState().status).toBe("error");
   });
 
@@ -231,8 +233,86 @@ describe("checkAppUpdateWith — pure core", () => {
       body: { tag_name: "v0.4.1", html_url: "https://example.com/v0.4.1" },
     });
 
-    await expect(checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" })).resolves.toBeUndefined();
+    await expect(checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" })).resolves.toEqual({
+      rateLimited: false,
+    });
     expect(useUpdateCheck.getState().status).toBe("current");
+  });
+});
+
+// ---------------------------------------------------------------
+// Fix round v0.7.7: F4a (rate-limit classification) + F4b (quiet path
+// never surfaces status:"error").
+// ---------------------------------------------------------------
+
+describe("checkAppUpdateWith — F4a: GitHub rate-limit classification", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetStore();
+  });
+
+  it("a 403 response is classified as rateLimited:true", async () => {
+    const fetchImpl = fakeFetchSequence({ ok: false, status: 403 });
+    await expect(checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" })).resolves.toEqual({
+      rateLimited: true,
+    });
+  });
+
+  it("a 429 response is classified as rateLimited:true too", async () => {
+    const fetchImpl = fakeFetchSequence({ ok: false, status: 429 });
+    await expect(
+      checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" }, true),
+    ).resolves.toEqual({ rateLimited: true });
+  });
+
+  it("an ordinary 500 is NOT classified as rateLimited", async () => {
+    const fetchImpl = fakeFetchSequence({ ok: false, status: 500 });
+    await expect(checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" })).resolves.toEqual({
+      rateLimited: false,
+    });
+  });
+});
+
+describe("checkAppUpdateWith — F4b: the quiet path never surfaces status:error", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetStore();
+  });
+
+  it("quiet:true — a failure leaves whatever status was showing before untouched, never 'error'", async () => {
+    // Seed a real prior successful check so there's a genuine "current"
+    // status (and fields) to preserve.
+    const first = fakeFetchSequence({
+      body: { tag_name: "v0.4.1", html_url: "https://example.com/v0.4.1" },
+    });
+    await checkAppUpdateWith({ fetchImpl: first, getVersion: async () => "0.4.1" });
+    expect(useUpdateCheck.getState().status).toBe("current");
+
+    const second = fakeFetchSequence({ ok: false, status: 500 });
+    await checkAppUpdateWith({ fetchImpl: second, getVersion: async () => "0.4.1" }, true);
+
+    const s = useUpdateCheck.getState();
+    expect(s.status).toBe("current"); // untouched — never "error"
+    expect(s.latestVersion).toBe("v0.4.1");
+  });
+
+  it("quiet:true — a failure from the very first check ever (idle, nothing prior) reverts to idle, not error", async () => {
+    const fetchImpl = fakeFetchSequence({ ok: false, status: 500 });
+    await checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" }, true);
+
+    expect(useUpdateCheck.getState().status).toBe("idle");
+  });
+
+  it("quiet:false (the default, manual checks) — a failure still writes status:error", async () => {
+    const first = fakeFetchSequence({
+      body: { tag_name: "v0.4.1", html_url: "https://example.com/v0.4.1" },
+    });
+    await checkAppUpdateWith({ fetchImpl: first, getVersion: async () => "0.4.1" });
+
+    const second = fakeFetchSequence({ ok: false, status: 500 });
+    await checkAppUpdateWith({ fetchImpl: second, getVersion: async () => "0.4.1" }); // quiet defaults false
+
+    expect(useUpdateCheck.getState().status).toBe("error");
   });
 });
 
@@ -463,6 +543,30 @@ describe("runAppUpdateAutoCheck", () => {
     await expect(runAppUpdateAutoCheck(baseDeps({ isMeetingActive }))).resolves.toEqual({
       checked: false,
     });
+  });
+
+  // F4a fix (fix round v0.7.7, adversarial review): a GitHub 403/429 is
+  // treated as NOT a completed check — recordCheckedAt is skipped so the
+  // NEXT launch retries instead of the transient throttle silently
+  // going quiet for the full 24h cadence interval.
+  it("F4a: skips recordCheckedAt and returns checked:false when check() reports rateLimited:true", async () => {
+    const check = vi.fn(async () => ({ rateLimited: true }));
+    const recordCheckedAt = vi.fn();
+
+    const result = await runAppUpdateAutoCheck(baseDeps({ check, recordCheckedAt }));
+
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ checked: false });
+    expect(recordCheckedAt).not.toHaveBeenCalled();
+  });
+
+  it("F4a: still records checkedAt when check() reports rateLimited:false — only an actual 403/429 skips it", async () => {
+    const check = vi.fn(async () => ({ rateLimited: false }));
+    const recordCheckedAt = vi.fn();
+
+    await runAppUpdateAutoCheck(baseDeps({ check, recordCheckedAt, now: 99 }));
+
+    expect(recordCheckedAt).toHaveBeenCalledWith(99);
   });
 });
 

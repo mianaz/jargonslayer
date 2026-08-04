@@ -276,6 +276,60 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
     expect(container!.querySelector('[data-testid="active-speaker-latch"]')).toBeTruthy();
   });
 
+  // F2 fix (fix round v0.7.7): speakerCounts's cache used to reset only
+  // on segments.length===0 — a session SWAP (loadSession) that lands
+  // straight on a DIFFERENT, non-empty segments array never tripped
+  // that reset, so counts from the vanished PREVIOUS session's segments
+  // kept contributing forever. Reproduced via the bulk-rename-all
+  // popover's own segment-count hint (the cache's one consumer,
+  // handleAssignRenameAll) — now gated on meetingGen too, bumped by
+  // beginMeeting/newMeeting/loadSession (store.ts).
+  it("loadSession swapping straight to a non-empty segments array resets the speaker-count cache (meetingGen-gated, not just segments.length===0)", async () => {
+    useApp.setState({
+      segments: [
+        seg({ id: "s1", speaker: "Alice" }),
+        seg({ id: "s2", speaker: "Alice" }),
+        seg({ id: "s3", speaker: "Alice" }),
+      ],
+      status: "stopped",
+      settings: makeSettings(),
+    });
+    await renderPanel();
+
+    const openAliceAssignPopover = async () => {
+      const chip = Array.from(container!.querySelectorAll("span")).find(
+        (el) => el.className.includes("group/chip") && el.textContent === "Alice",
+      ) as HTMLSpanElement;
+      expect(chip).toBeTruthy();
+      await act(async () => chip.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+      await act(async () =>
+        (container!.querySelector('[data-testid="speaker-assign-rename-all"]') as HTMLButtonElement).dispatchEvent(
+          new MouseEvent("click", { bubbles: true }),
+        ),
+      );
+    };
+
+    await openAliceAssignPopover();
+    expect(container!.textContent).toContain("所有 3 段发言");
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    // loadSession's own reset shape: a brand-new meetingGen, segments
+    // landing straight on a NON-empty array — must not inherit the old
+    // session's 3-segment tally for the reused speaker name "Alice".
+    await act(async () => {
+      useApp.setState((s) => ({
+        segments: [seg({ id: "t1", speaker: "Alice" })],
+        meetingGen: s.meetingGen + 1,
+      }));
+    });
+
+    await openAliceAssignPopover();
+    expect(container!.textContent).toContain("所有 1 段发言");
+    expect(container!.textContent).not.toContain("所有 4 段发言");
+  });
+
   it("+ 新建… in the latch picker calls addSpeakerToRoster and setActiveSpeaker with the resolved name", async () => {
     useApp.setState({ segments: [seg({ id: "s1" })], status: "listening", settings: makeSettings() });
     await renderPanel();

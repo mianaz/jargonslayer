@@ -111,7 +111,7 @@ const TAB_CARD_ENGINE: Exclude<STTEngineKind, "demo"> = PREVIEW_TIER ? "tabaudio
 // above.
 const TUTORIAL_HEADLINE = IS_DESKTOP ? "你的双语会议引擎，全程本地" : "你的双语会议引擎";
 const TUTORIAL_SUPPORT = IS_DESKTOP
-  ? "私有 · 全本地 · 双语。系统声音和麦克风都能收，自动分「我」「对方」。"
+  ? "私有 · 全本地 · 双语。系统声音和麦克风都能收，自动分「我」「对方」（macOS 26+）。"
   : "听英文、看中文解释。选本地引擎时，音频和内容不出设备。";
 
 // Per-card onboarding copy for the iOS matrix — Record over the shared

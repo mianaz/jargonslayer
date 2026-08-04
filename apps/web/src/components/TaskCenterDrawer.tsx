@@ -122,10 +122,13 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
 
   // 系统状态 update row: quiet first-open check only (status still
   // "idle" — never re-fires on every open; checkAppUpdate's own ETag
-  // cache makes a repeat 重新检查 click cheap regardless).
+  // cache makes a repeat 重新检查 click cheap regardless). quiet:true
+  // (F4b fix, fix round v0.7.7) — not user-clicked, so a failure here
+  // must never surface status:"error"; the 重新检查 button below stays
+  // unconditional (quiet defaults to false there).
   useEffect(() => {
     if (!open || !IS_DESKTOP || updateStatus !== "idle") return;
-    void checkAppUpdate();
+    void checkAppUpdate(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, updateStatus]);
 

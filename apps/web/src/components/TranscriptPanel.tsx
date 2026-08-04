@@ -835,6 +835,13 @@ export default function TranscriptPanel({
   onCorrectionOpenChange,
 }: TranscriptPanelProps) {
   const segments = useApp((s) => s.segments);
+  // F2 fix (fix round v0.7.7): meeting-boundary signal for the
+  // speakerCounts/segmentTimeLabels caches below — bumped by
+  // beginMeeting/newMeeting/loadSession (store.ts), unlike segments
+  // itself, which a session SWAP can land straight on a NON-empty array
+  // (loadSession), never tripping those caches' old segments.length===0
+  // reset.
+  const meetingGen = useApp((s) => s.meetingGen);
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
   const status = useApp((s) => s.status);
@@ -1105,18 +1112,29 @@ export default function TranscriptPanel({
   // recomputing (both feed segmentElapsedMs for every segment) and the
   // id-keyed cache below is invalidated wholesale.
   const segmentTimeLabelsCacheRef = useRef<{
+    gen: number;
     elapsedZero: number;
     pauseIntervals: typeof pauseIntervals;
     map: Map<string, { elapsed: string; absolute: string }>;
-  }>({ elapsedZero, pauseIntervals, map: new Map() });
+  }>({ gen: meetingGen, elapsedZero, pauseIntervals, map: new Map() });
   const segmentTimeLabels = useMemo(() => {
     const cache = segmentTimeLabelsCacheRef.current;
     // ponytail: append-only otherwise (an id already cached is never
     // re-verified) — also cleared on a fresh meeting's own segments:[]
     // (store.ts's beginMeeting) so this doesn't grow unbounded across a
-    // full day of back-to-back meetings in one tab.
-    if (segments.length === 0 || cache.elapsedZero !== elapsedZero || cache.pauseIntervals !== pauseIntervals) {
+    // full day of back-to-back meetings in one tab. F2 fix (fix round
+    // v0.7.7): segments.length===0 alone misses a session SWAP that
+    // lands straight on a DIFFERENT, non-empty segments array
+    // (loadSession) — gated on meetingGen too, see that field's own doc
+    // above.
+    if (
+      segments.length === 0 ||
+      cache.gen !== meetingGen ||
+      cache.elapsedZero !== elapsedZero ||
+      cache.pauseIntervals !== pauseIntervals
+    ) {
       cache.map = new Map();
+      cache.gen = meetingGen;
       cache.elapsedZero = elapsedZero;
       cache.pauseIntervals = pauseIntervals;
     }
@@ -1130,7 +1148,7 @@ export default function TranscriptPanel({
       cache.map.set(seg.id, computed);
       return computed;
     });
-  }, [segments, elapsedZero, pauseIntervals]);
+  }, [segments, meetingGen, elapsedZero, pauseIntervals]);
   const cardsById = useMemo(() => {
     const map = new Map<string, ExpressionCard>();
     for (const c of cards) map.set(c.id, c);
@@ -1164,16 +1182,24 @@ export default function TranscriptPanel({
   // an id whose speaker actually changed since the last render (a rare,
   // manual action — never the ~6.7/s per-final hot path this exists to
   // fix). Reset alongside a fresh meeting's own segments:[], same
-  // rationale as segmentTimeLabelsCacheRef above.
+  // rationale as segmentTimeLabelsCacheRef above. F2 fix (fix round
+  // v0.7.7): segments.length===0 alone missed a session SWAP that lands
+  // straight on a DIFFERENT, non-empty segments array (loadSession) —
+  // the cache kept accumulating counts for ids that had already
+  // vanished, over-counting every speaker the new session happened to
+  // reuse the name of. Gated on meetingGen too (see that field's own
+  // doc above), same fix as segmentTimeLabelsCacheRef.
   const speakerCountsCacheRef = useRef<{
+    gen: number;
     counts: Map<string, number>;
     lastSpeakerById: Map<string, string | undefined>;
-  }>({ counts: new Map(), lastSpeakerById: new Map() });
+  }>({ gen: meetingGen, counts: new Map(), lastSpeakerById: new Map() });
   const speakerCounts = useMemo(() => {
     const cache = speakerCountsCacheRef.current;
-    if (segments.length === 0) {
+    if (segments.length === 0 || cache.gen !== meetingGen) {
       cache.counts = new Map();
       cache.lastSpeakerById = new Map();
+      cache.gen = meetingGen;
     }
     for (const s of segments) {
       const last = cache.lastSpeakerById.get(s.id);
@@ -1183,7 +1209,7 @@ export default function TranscriptPanel({
       cache.lastSpeakerById.set(s.id, s.speaker);
     }
     return cache.counts;
-  }, [segments]);
+  }, [segments, meetingGen]);
 
   // v0.5 Wave-1 Feature 1 (live latch visibility, §1 F1 item 4): "no
   // diarized speakers present" = no segment currently displays an

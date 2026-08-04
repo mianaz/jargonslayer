@@ -21,7 +21,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "JargonSlayer · 私有、全本地双语会议引擎",
+  title: "JargonSlayer · 双语会议引擎，本地优先",
   description:
     "系统声音和麦克风双路收音，自动标注「我」「对方」。本地识别、本地翻译，双语字幕实时滚动，一键存进 Obsidian 或 Notion。",
   manifest: withBase("/manifest.webmanifest"),

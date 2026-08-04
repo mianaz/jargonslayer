@@ -158,12 +158,30 @@ export interface CheckAppUpdateDeps {
   getVersion: () => Promise<string>;
 }
 
+// Fix round v0.7.7 (F4a): a distinguishable marker for a GitHub
+// rate-limit response (403/429) — thrown instead of the generic
+// non-ok-status Error below so the catch block can tell "GitHub is
+// throttling us" apart from every other failure shape (network down,
+// malformed JSON, a draft/prerelease release, …). Only this ONE case
+// feeds runAppUpdateAutoCheck's own "don't stamp appUpdateCheckedAt"
+// decision (see checkAppUpdateWith's returned `rateLimited` below).
+class GithubRateLimitedError extends Error {}
+
 /** Pure(-ish) core — see this module's own header comment. Never
  *  throws: every failure (network, non-ok/non-304 status, malformed
  *  JSON, `getVersion()` itself rejecting) lands the store on
- *  status:"error", preserving whatever currentVersion/latestVersion/url
- *  a PRIOR successful check already found rather than blanking them. */
-export async function checkAppUpdateWith(deps: CheckAppUpdateDeps): Promise<void> {
+ *  status:"error" and reports `rateLimited:false` — UNLESS `quiet` is
+ *  true, in which case (F4b fix, adversarial review) status is left
+ *  exactly as it was found (never "error", never even the transient
+ *  "checking") — a background/quiet check must never surface an alarm
+ *  the user didn't ask for; a PRIOR successful check's own fields are
+ *  preserved either way, quiet or not. `rateLimited:true` (F4a fix)
+ *  additionally tells the caller this specific failure was GitHub
+ *  actively throttling us (403/429) — see runAppUpdateAutoCheck's own
+ *  doc for why that's treated as "not a completed check" rather than
+ *  an ordinary failure. */
+export async function checkAppUpdateWith(deps: CheckAppUpdateDeps, quiet = false): Promise<{ rateLimited: boolean }> {
+  const previousState = useUpdateCheck.getState();
   useUpdateCheck.setState({ status: "checking" });
   try {
     const currentVersion = await deps.getVersion();
@@ -192,6 +210,8 @@ export async function checkAppUpdateWith(deps: CheckAppUpdateDeps): Promise<void
       url = body.html_url;
       const etag = res.headers.get("etag");
       if (etag) writeCache({ etag, version: latestVersion, url });
+    } else if (res.status === 403 || res.status === 429) {
+      throw new GithubRateLimitedError(`更新检查请求被限流（${res.status}）`);
     } else {
       throw new Error(`更新检查请求失败（${res.status}）`);
     }
@@ -203,20 +223,29 @@ export async function checkAppUpdateWith(deps: CheckAppUpdateDeps): Promise<void
       url,
       checkedAt: Date.now(),
     });
-  } catch {
-    useUpdateCheck.setState((s) => ({ ...s, status: "error" }));
+    return { rateLimited: false };
+  } catch (err) {
+    if (quiet) {
+      useUpdateCheck.setState(previousState);
+    } else {
+      useUpdateCheck.setState((s) => ({ ...s, status: "error" }));
+    }
+    return { rateLimited: err instanceof GithubRateLimitedError };
   }
 }
 
 /** The real entry point — TaskCenterDrawer's 重新检查 button, SettingsDialog's
- *  检查更新 button (both unconditional, bypass the cadence gate below), and
+ *  检查更新 button (both unconditional, bypass the cadence gate below and
+ *  pass no `quiet` — a manual click always reports, error included), and
  *  runAppUpdateAutoCheck's own `check` dep for the gated quiet launch
- *  check. IS_DESKTOP-gated no-op on a web build (never calls
- *  getAppVersion(), never reaches the network) — see this module's own
- *  header comment. */
-export function checkAppUpdate(): Promise<void> {
-  if (!IS_DESKTOP) return Promise.resolve();
-  return checkAppUpdateWith({ fetchImpl: fetch, getVersion: getAppVersion });
+ *  check (which DOES pass `quiet:true` — see that function's own call
+ *  site in page.tsx) plus TaskCenterDrawer's own quiet first-open effect
+ *  (same reasoning, not user-clicked). IS_DESKTOP-gated no-op on a web
+ *  build (never calls getAppVersion(), never reaches the network) — see
+ *  this module's own header comment. */
+export function checkAppUpdate(quiet = false): Promise<{ rateLimited: boolean }> {
+  if (!IS_DESKTOP) return Promise.resolve({ rateLimited: false });
+  return checkAppUpdateWith({ fetchImpl: fetch, getVersion: getAppVersion }, quiet);
 }
 
 // ---------------------------------------------------------------
@@ -254,11 +283,14 @@ export interface RunAppUpdateAutoCheckDeps {
    *  recorded timestamp) doesn't race two separate clock reads. */
   now?: number;
   isMeetingActive: () => boolean;
-  /** checkAppUpdate itself in the real caller — deliberately loose
-   *  (`() => Promise<void>`) rather than importing CheckAppUpdateDeps,
-   *  so a test can inject a bare fake without also faking fetch/
-   *  getVersion. */
-  check: () => Promise<void>;
+  /** checkAppUpdate itself in the real caller (called as `() =>
+   *  checkAppUpdate(true)` — see page.tsx's own call site — so quiet
+   *  failures never surface status:"error"; F4b fix) — deliberately
+   *  loose (`() => Promise<{ rateLimited: boolean } | void>` rather than
+   *  importing CheckAppUpdateDeps, so a test can inject a bare fake
+   *  without also faking fetch/getVersion; the `| void` keeps every
+   *  pre-existing bare `async () => {}` test fake compiling unchanged. */
+  check: () => Promise<{ rateLimited: boolean } | void>;
   recordCheckedAt: (checkedAt: number) => void;
 }
 
@@ -268,7 +300,12 @@ export interface RunAppUpdateAutoCheckDeps {
  *  to wait for hydration first). Never throws, by construction, same
  *  "checked:false on any skip, checked:true + recordCheckedAt on any
  *  actual attempt (success OR failure)" contract as runPackAutoUpdate —
- *  see that function's own doc for the full rationale. */
+ *  see that function's own doc for the full rationale — with ONE
+ *  addition (F4a fix, adversarial review): a check() that reports
+ *  `rateLimited:true` (GitHub 403/429) is treated as NOT a completed
+ *  check either — recordCheckedAt is skipped so the NEXT launch retries
+ *  instead of the transient throttle silently going quiet for the full
+ *  24h cadence interval. */
 export async function runAppUpdateAutoCheck(
   deps: RunAppUpdateAutoCheckDeps,
 ): Promise<{ checked: boolean }> {
@@ -278,8 +315,10 @@ export async function runAppUpdateAutoCheck(
     if (!shouldCheckForAppUpdate({ lastCheckedAt: deps.lastCheckedAt, now })) {
       return { checked: false };
     }
+    let rateLimited = false;
     try {
-      await deps.check();
+      const result = await deps.check();
+      rateLimited = result?.rateLimited ?? false;
     } catch (err) {
       // checkAppUpdate() itself already never throws (lands on
       // status:"error" internally) — this catch is only a last-resort
@@ -287,6 +326,7 @@ export async function runAppUpdateAutoCheck(
       // contract.
       console.warn("[updateCheck] quiet check failed", err);
     }
+    if (rateLimited) return { checked: false };
     try {
       deps.recordCheckedAt(now);
     } catch (err) {

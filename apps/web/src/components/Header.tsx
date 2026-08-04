@@ -1147,7 +1147,7 @@ export default function Header({
                 JargonSlayer
               </span>
               <span className="hidden text-[11px] text-mut md:inline">
-                私有、全本地双语会议引擎
+                {IS_DESKTOP ? "私有、全本地双语会议引擎" : "双语会议引擎"}
               </span>
             </div>
           </div>

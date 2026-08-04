@@ -25,7 +25,7 @@
 
 ---
 
-JargonSlayer captures both sides of an English meeting at once — system audio and microphone, echo-cancelled and auto-tagged 我/对方. Local Whisper, Apple's on-device speech recognition, and on-device translation keep it fully local: nothing leaves your Mac. A live bilingual transcript scrolls as people talk, and one click exports the bilingual summary to Obsidian or Notion when the meeting ends. Jargon still gets a short Chinese card, now live assist rather than the headline.
+JargonSlayer captures both sides of an English meeting at once — system audio and microphone, echo-cancelled and auto-tagged 我/对方 (macOS 26+). Local Whisper, Apple's on-device speech recognition, and on-device translation form the default pipeline — fully local, nothing leaves your Mac; cloud engines are strictly opt-in. A live bilingual transcript scrolls as people talk, and when the meeting ends one click files the bilingual summary into Obsidian — or copies it Notion-ready. Jargon still gets a short Chinese card, now live assist rather than the headline.
 
 > The product UI is Simplified Chinese — it is built for non-native English speakers (Chinese-speaking professionals and researchers first).
 
@@ -39,10 +39,10 @@ JargonSlayer captures both sides of an English meeting at once — system audio 
 ## Features
 
 - **Dual capture** — system audio and microphone recorded together, echo-cancelled (AEC) so your mic doesn't also pick up what's playing from your speakers; no virtual audio device (desktop, macOS 26+).
-- **Fully local** — local Whisper, Apple's on-device speech recognition, and on-device translation; zero bytes leave your Mac.
+- **Fully local by default** — local Whisper, Apple on-device recognition and on-device translation run on your machine; with them, zero bytes leave your Mac. Cloud engines (bring your own key) are opt-in and labeled in the UI.
 - **Bilingual live transcript** — English audio, Chinese translation, side by side as people talk.
 - **我/对方 speaker attribution** — dual capture tags your mic and the meeting audio as 我 (you) and 对方 (them) automatically; pyannote diarization (optional one-click install) breaks out individual speakers live or from an imported recording.
-- **Export to your vault** — one click sends a bilingual summary and full transcript translation to Obsidian or Notion; also Anki, Markdown, JSON, and webhooks.
+- **Export to your vault** — one click files a bilingual summary and full transcript translation into Obsidian, or copies it Notion-ready and opens Notion to paste; also Anki, Markdown, JSON, and webhooks.
 - **Jargon cards (live assist)** — slang, idioms, metaphors, acronyms → short Chinese explanations as they're spoken; dictionary mode is default (1,000+ entries, fully local, no key needed), with an optional AI mode (Beta, bring your own key) one toggle apart.
 - **Learning center** — personal glossary, flip-card review with spaced repetition, a word cloud, and known-word suppression, all in one place.
 - **Imports** — audio/video files and URLs, transcribed locally in the browser or by the sidecar.

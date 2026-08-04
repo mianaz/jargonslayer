@@ -587,7 +587,24 @@ pub async fn system_translate_prepare(
 
     match tokio::time::timeout(TRANSLATE_TIMEOUT, ready_rx).await {
         Ok(Ok(Ok(()))) => Ok(generation),
-        Ok(Ok(Err(message))) => Err(message),
+        Ok(Ok(Err(message))) => {
+            // Fix round v0.7.7 (F5, adversarial review): this arm used to
+            // return the ready-failure message WITHOUT killing the child —
+            // handle_translate_line's own id-less Error branch resolves
+            // ready_tx with Err while the underlying jargonslayer-audiocap
+            // process may still be alive (it merely emitted a startup-level
+            // error line; nothing here guarantees it exits on its own), so
+            // register_running_child's earlier registration could survive
+            // this failure untouched. Same invariant as the timeout arm
+            // just below: a prepare failure must never leave a registered
+            // child behind.
+            kill_running_if_generation(
+                &state,
+                generation,
+                "system_translate_prepare: the --translate child reported a startup error",
+            );
+            Err(message)
+        }
         Ok(Err(_)) => Err("jargonslayer-audiocap --translate exited before becoming ready".to_string()),
         Err(_) => {
             // Long-session hardening item 3: unlike system_translate's own

@@ -30,13 +30,23 @@ const MAX_RECONNECT_DELAY_MS = 30_000;
 // whether the connection ever did anything useful. That was the actual
 // bug: the old reconnectAttempted boolean reset itself right there in
 // onopen, so the backoff never engaged and the loop free-ran at a flat
-// 1s cadence.
-const HEALTHY_CONNECTION_MS = 10_000;
+// 1s cadence. Fix round v0.7.7 (F3b): raised 10s -> 30s — a sidecar
+// dying every ~11s (just past the old threshold) kept "proving healthy"
+// each cycle and resetting the backoff streak right back to the 1s base
+// delay forever, never actually backing off.
+const HEALTHY_CONNECTION_MS = 30_000;
 // Long-session hardening item 6c: this many CONSECUTIVE failed
 // reconnect cycles (since the last proven-healthy connection) before
 // the user is told anything at all — below this, a flap is exactly the
 // kind of transient hiccup this class already self-heals silently.
 const FLAP_NOTICE_THRESHOLD = 5;
+// Fix round v0.7.7 (F3c): once the one-shot flap notice has fired, a
+// streak that just keeps failing (never recovering long enough to reset
+// consecutiveFailures) re-arms it at most this often — the user hasn't
+// been told anything NEW since the last notice, but a sidecar that's
+// been down for 20 minutes straight shouldn't rely on the ONE notice
+// from minute 1 still being remembered/visible.
+const FLAP_RENOTICE_INTERVAL_MS = 5 * 60 * 1000;
 
 // STT protocol v2: stop() sends {"type":"stop"} and waits for the
 // sidecar's drain ack ({"type":"stopped"}, sent once its tail final —
@@ -173,7 +183,7 @@ export class WsTransport {
   private reconnectDelayMs = RECONNECT_DELAY_MS;
   // Long-session hardening item 6a/6c: consecutive failed reconnect
   // cycles since the last proven-healthy connection — drives both the
-  // backoff above and the flap notice (flapNoticeShown/
+  // backoff above and the flap notice (lastNoticeAt/
   // FLAP_NOTICE_THRESHOLD) below.
   private consecutiveFailures = 0;
   // Long-session hardening item 6a: Date.now() at the most recent
@@ -188,13 +198,25 @@ export class WsTransport {
   // dropped because the ws wasn't OPEN, accumulated since the last
   // flap-cycle diagLog — see pushPcm/handleConnectionFailure below.
   private droppedFrameCount = 0;
-  // Long-session hardening item 6c: onNotice fires at most once per
-  // failure streak — reset alongside consecutiveFailures/
-  // reconnectDelayMs the moment a connection proves itself healthy
-  // again, so a LATER, separate flap later in a long meeting still gets
-  // its own notice instead of going silent for the rest of the session.
-  private flapNoticeShown = false;
+  // Long-session hardening item 6c, re-armed by fix round v0.7.7 (F3c):
+  // Date.now() of the most recent onNotice firing — null whenever no
+  // notice has fired for the CURRENT failure streak yet. Reset to null
+  // (not just "shown") alongside consecutiveFailures/reconnectDelayMs
+  // the moment a connection proves itself healthy again, so a LATER,
+  // separate flap later in a long meeting still gets its own first
+  // notice. Within one continuously-failing streak, re-checked on every
+  // failure and re-fired (updating this timestamp) once
+  // FLAP_RENOTICE_INTERVAL_MS has passed since the last firing — never
+  // more often than that.
+  private lastNoticeAt: number | null = null;
   private stopping = false;
+  // Fix round v0.7.7 (F3a): the reconnect setTimeout handle scheduled by
+  // handleConnectionFailure — cleared in stop() so a meeting ended mid-
+  // backoff (up to MAX_RECONNECT_DELAY_MS out) doesn't leave a dangling
+  // timer that reconnects a transport nobody is listening to anymore.
+  // Nulled the instant it fires too (own callback), so stop()'s clear is
+  // a harmless no-op once the reconnect has already happened.
+  private reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   // FB6 (S12b fix round B): mirrors userStopped/stopping's own idiom —
   // a boolean handleDisconnect()/handleConnectionFailure() both check
@@ -419,6 +441,23 @@ export class WsTransport {
       const initialPrompt = projectForInitialPrompt(this.lexicon ?? { terms: [] });
       if (initialPrompt) config.initial_prompt = initialPrompt;
       ws.send(JSON.stringify(config));
+      // Fix round v0.7.7 (F3d, adversarial review): flush/log any frames
+      // dropped during the delay window that just ended — otherwise
+      // they'd only ever get diagLog'd (misattributed) at whatever LATER
+      // failure happens to come next, if the connection stays healthy
+      // long enough for one to be a totally different, unrelated flap.
+      // Mirrors handleConnectionFailure's own summarize-and-reset below,
+      // just on the SUCCESS side of a reconnect instead of the failure
+      // side.
+      if (this.droppedFrameCount > 0) {
+        diagLog(
+          "warn",
+          "stt-ws-transport",
+          "dropped PCM frames while reconnecting — connection recovered",
+          `droppedFrames=${this.droppedFrameCount}`,
+        );
+        this.droppedFrameCount = 0;
+      }
       // Long-session hardening item 6a: replaces the old
       // reconnectAttempted=false reset here, which fired (and wrongly
       // counted as "recovered") on every single onopen, even one
@@ -558,7 +597,7 @@ export class WsTransport {
     if (this.openedAt > 0 && Date.now() - this.openedAt >= HEALTHY_CONNECTION_MS) {
       this.reconnectDelayMs = RECONNECT_DELAY_MS;
       this.consecutiveFailures = 0;
-      this.flapNoticeShown = false;
+      this.lastNoticeAt = null;
     }
     this.openedAt = 0;
     this.consecutiveFailures++;
@@ -584,10 +623,17 @@ export class WsTransport {
     // the full stop flow. A flapping sidecar must not itself end an
     // otherwise-recoverable long session. Reuses the exact message this
     // transport already shows for a dead connection (connectFailureMessage)
-    // through this non-fatal channel instead; fires at most once per
-    // streak (flapNoticeShown resets alongside the counters above).
-    if (this.consecutiveFailures >= FLAP_NOTICE_THRESHOLD && !this.flapNoticeShown) {
-      this.flapNoticeShown = true;
+    // through this non-fatal channel instead. Fix round v0.7.7 (F3c):
+    // fires the FIRST time this streak crosses the threshold, same as
+    // before (lastNoticeAt is null until then), then RE-ARMS — never
+    // more often than FLAP_RENOTICE_INTERVAL_MS — for as long as the
+    // streak keeps failing without ever recovering long enough to reset
+    // (lastNoticeAt resets alongside the counters above).
+    if (
+      this.consecutiveFailures >= FLAP_NOTICE_THRESHOLD &&
+      (this.lastNoticeAt === null || Date.now() - this.lastNoticeAt >= FLAP_RENOTICE_INTERVAL_MS)
+    ) {
+      this.lastNoticeAt = Date.now();
       this.events.onNotice?.(this.connectFailureMessage(this.settings.whisperUrl));
     }
 
@@ -596,7 +642,10 @@ export class WsTransport {
     // recover once the sidecar comes back.
     const delay = this.reconnectDelayMs;
     this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
-    setTimeout(() => {
+    // Fix round v0.7.7 (F3a): stored so stop() can cancel it — see
+    // reconnectTimeoutId's own doc above.
+    this.reconnectTimeoutId = setTimeout(() => {
+      this.reconnectTimeoutId = null;
       if (this.userStopped || this.stopping || this.terminalFailure) return;
       this.connect();
     }, delay);
@@ -637,6 +686,13 @@ export class WsTransport {
     }
     this.stopping = true;
     this.userStopped = true;
+    // Fix round v0.7.7 (F3a): a reconnect scheduled during an up-to-30s
+    // backoff must not fire after stop() has already torn the transport
+    // down — see reconnectTimeoutId's own doc above.
+    if (this.reconnectTimeoutId) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
 
     const ws = this.ws;
     this.ws = null;

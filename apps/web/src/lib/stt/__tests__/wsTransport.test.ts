@@ -30,8 +30,13 @@ const POST_STOP_LINGER_MS = 12000;
 // comments on MAX_RECONNECT_DELAY_MS/HEALTHY_CONNECTION_MS/
 // FLAP_NOTICE_THRESHOLD.
 const MAX_RECONNECT_DELAY_MS = 30_000;
-const HEALTHY_CONNECTION_MS = 10_000;
+// Fix round v0.7.7 (F3b): raised 10s -> 30s — see wsTransport.ts's own
+// doc comment on HEALTHY_CONNECTION_MS.
+const HEALTHY_CONNECTION_MS = 30_000;
 const FLAP_NOTICE_THRESHOLD = 5;
+// Fix round v0.7.7 (F3c) mirror — see wsTransport.ts's own doc comment
+// on FLAP_RENOTICE_INTERVAL_MS.
+const FLAP_RENOTICE_INTERVAL_MS = 5 * 60 * 1000;
 
 describe("WsTransport — protocol v2", () => {
   let wsInstances: FakeWebSocket[];
@@ -800,6 +805,25 @@ describe("WsTransport — protocol v2", () => {
       }
     });
 
+    it("stop() during an active reconnect backoff clears the pending timer — no reconnect fires afterward (F3a)", async () => {
+      vi.useFakeTimers();
+      const transport = makeTransport();
+      await transport.attachStream(fakeMediaStream());
+      const ws = wsInstances[wsInstances.length - 1];
+      ws.simulateOpen();
+
+      ws.simulateServerClose(); // drops mid-session, schedules a reconnect at the base delay
+      expect(wsInstances.length).toBe(1);
+
+      await transport.stop();
+
+      // The scheduled reconnect must never fire — advancing well past
+      // even the capped 30s backoff creates no new connection once
+      // stop() has torn the transport down.
+      await vi.advanceTimersByTimeAsync(MAX_RECONNECT_DELAY_MS);
+      expect(wsInstances.length).toBe(1);
+    });
+
     it("an accept-then-close sidecar (opens, then closes almost immediately) still backs off — onopen alone is not proof of recovery", async () => {
       vi.useFakeTimers();
       const transport = makeTransport();
@@ -852,7 +876,7 @@ describe("WsTransport — protocol v2", () => {
       expect(wsInstances.length).toBe(3);
     });
 
-    it("pushPcm() drops while disconnected are counted and diagLog'd once per flap cycle, not per frame", async () => {
+    it("pushPcm() drops while disconnected are counted and diagLog'd once per flap cycle, not per frame — and once more, separately, when a reconnect actually succeeds (F3d)", async () => {
       vi.useFakeTimers();
       const diagSpy = vi.spyOn(diagLogModule, "diagLog");
       const transport = makeTransport();
@@ -876,11 +900,33 @@ describe("WsTransport — protocol v2", () => {
       const ws2 = wsInstances[wsInstances.length - 1];
       expect(ws2).not.toBe(ws1);
 
-      // A single drop during the SECOND outage is logged on its own —
-      // the counter reset to 0 right after the first summary, so this
-      // must read 1, not 4.
+      // Fix round v0.7.7 (F3d, adversarial review): frames dropped WHILE
+      // ws2 is still connecting (not yet OPEN) belong to THIS outage —
+      // flushed the moment the reconnect actually succeeds, not left to
+      // bleed into whatever failure (if any, possibly much later) comes
+      // next.
       transport.pushPcm(new ArrayBuffer(8));
+      transport.pushPcm(new ArrayBuffer(8));
+      ws2.simulateOpen();
+      expect(diagSpy).toHaveBeenCalledWith(
+        "warn",
+        "stt-ws-transport",
+        expect.any(String),
+        expect.stringContaining("droppedFrames=2"),
+      );
+      diagSpy.mockClear();
+
+      // A single drop during a THIRD, later outage is logged on its own
+      // — the counter was already reset by the success-flush above, so
+      // this must read 1, not 3 (the two frames from the SECOND outage
+      // must never get re-attributed here).
       ws2.simulateServerClose();
+      await vi.advanceTimersByTimeAsync(MAX_RECONNECT_DELAY_MS); // whatever the current backoff is, this covers it
+      const ws3 = wsInstances[wsInstances.length - 1];
+      expect(ws3).not.toBe(ws2);
+
+      transport.pushPcm(new ArrayBuffer(8));
+      ws3.simulateServerClose();
       expect(diagSpy).toHaveBeenCalledWith(
         "warn",
         "stt-ws-transport",
@@ -901,7 +947,7 @@ describe("WsTransport — protocol v2", () => {
       expect(diagSpy).not.toHaveBeenCalledWith("warn", "stt-ws-transport", expect.any(String), expect.any(String));
     });
 
-    it("after FLAP_NOTICE_THRESHOLD consecutive failed cycles, surfaces the connect-failure message via onNotice — never onStatus('error') — and keeps retrying at the 30s cap afterward", async () => {
+    it("after FLAP_NOTICE_THRESHOLD consecutive failed cycles, surfaces the connect-failure message via onNotice — never onStatus('error') — keeps retrying at the 30s cap afterward, and re-arms the notice every additional 5 minutes of continuous failure (F3c)", async () => {
       vi.useFakeTimers();
       const onNotice = vi.fn();
       events.onNotice = onNotice;
@@ -924,12 +970,25 @@ describe("WsTransport — protocol v2", () => {
       // flow, directly contradicting "keep retrying regardless").
       expect(onStatus).not.toHaveBeenCalledWith("error", expect.anything());
 
-      // A 6th failure must not re-fire the one-shot notice...
+      // A 6th failure must not re-fire the notice — well under 5 minutes
+      // since the first one...
       ws.simulateServerClose();
       await vi.advanceTimersByTimeAsync(MAX_RECONNECT_DELAY_MS); // capped by now
       expect(onNotice).toHaveBeenCalledTimes(1);
       // ...but it keeps retrying regardless — never strands the session.
       expect(wsInstances.length).toBe(7);
+
+      // F3c: keep failing at the (now-capped 30s) backoff — once enough
+      // CONTINUOUS failure has accumulated to cross another
+      // FLAP_RENOTICE_INTERVAL_MS (5min) since the first notice, it
+      // fires again. 10 more 30s cycles crosses that mark.
+      for (let i = 0; i < 10; i++) {
+        ws.simulateServerClose();
+        await vi.advanceTimersByTimeAsync(MAX_RECONNECT_DELAY_MS);
+        ws = wsInstances[wsInstances.length - 1];
+      }
+      expect(onNotice).toHaveBeenCalledTimes(2);
+      expect(onStatus).not.toHaveBeenCalledWith("error", expect.anything());
     });
   });
 });

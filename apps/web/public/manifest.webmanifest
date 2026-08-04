@@ -1,5 +1,5 @@
 {
-  "name": "JargonSlayer · 私有、全本地双语会议引擎",
+  "name": "JargonSlayer · 双语会议引擎，本地优先",
   "short_name": "JargonSlayer",
   "description": "系统声音和麦克风双路收音，自动标注「我」「对方」；本地识别、本地翻译，为非母语者设计。",
   "start_url": "./",
