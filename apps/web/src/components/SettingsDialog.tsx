@@ -124,6 +124,7 @@ import AnkiConnectSection from "@/components/settings/AnkiConnectSection";
 import UsagePanel from "@/components/settings/UsagePanel";
 import ThemeEditor from "@/components/settings/ThemeEditor";
 import { langPairFromSettings } from "@/lib/translate/providers";
+import { useOverlayA11y } from "@/lib/a11y";
 import ModelPicker from "@/components/desktop/ModelPicker";
 import { MODEL_CATALOG } from "@/lib/desktop/modelCatalog";
 import CredentialFields, {
@@ -233,7 +234,13 @@ const ALL_ENGINE_CARDS: {
   {
     value: "whisper",
     label: "本地模型",
-    hint: "本地 sidecar 运行 Whisper/Parakeet 模型（在下方「模型」选择），音频不出设备；听麦克风还是系统/标签页音频由「音源」决定，系统音频仅捕获对方声音、不含你的麦克风",
+    // Verified against code: 「更换模型」only exists under IS_DESKTOP +
+    // sidecarMode===managed (below). Web has no in-dialog model picker;
+    // 音源 lives in StatusLine's bottom bar on every platform that shows
+    // this card (iOS filters whisper out of ENGINE_CARDS entirely).
+    hint: IS_DESKTOP
+      ? "本地转录服务运行 Whisper/Parakeet 模型（在下方选择型号），音频不出设备；听麦克风还是系统/标签页音频由底部状态栏的「音源」决定，系统音频仅捕获对方声音、不含你的麦克风"
+      : "本地转录服务运行 Whisper/Parakeet 模型，音频不出设备；听麦克风还是系统/标签页音频由底部状态栏的「音源」决定，系统音频仅捕获对方声音、不含你的麦克风",
     sidecarOnly: true,
     sidecarFamily: true,
   },
@@ -301,8 +308,8 @@ const ALL_ENGINE_CARDS: {
           // three-source axis — iOS osspeech stays mic-only v1
           // (unaffected), so its copy is untouched.
           hint: IS_IOS
-            ? "无需下载模型、无需 Python，音频不离开本机；不支持说话人分离，需要 iOS 26 或更高版本"
-            : "无需下载模型、无需 Python，音频不离开本机；听麦克风、系统声音还是麦克风+系统由「音源」决定，不支持说话人分离，需要 macOS 26 或更高版本",
+            ? "无需下载模型，音频不离开本机；不支持说话人分离，需要 iOS 26 或更高版本"
+            : "无需下载模型，音频不离开本机；听麦克风、系统声音还是麦克风+系统由底部状态栏的「音源」决定，不支持说话人分离，需要 macOS 26 或更高版本",
         },
       ]
     : []),
@@ -890,7 +897,7 @@ function AccountConnectionChip({ connected }: { connected: boolean }) {
   return (
     <span
       data-testid="account-connection-chip"
-      className={`border border-edge px-1.5 py-0.5 text-[10px] whitespace-nowrap ${
+      className={`border border-edge px-2 py-1 text-xs whitespace-nowrap ${
         connected ? "text-lab-green" : "text-mut2"
       }`}
     >
@@ -908,11 +915,27 @@ function ConnectorStatusChip({
 }) {
   return (
     <span
-      className={`border border-edge px-1.5 py-0.5 text-[10px] whitespace-nowrap ${
+      className={`border border-edge px-2 py-1 text-xs whitespace-nowrap ${
         active ? "text-lab-green" : "text-mut2"
       }`}
     >
       {label}
+    </span>
+  );
+}
+
+/** 3-swatch preview for a theme tile (ink / fg / act). Hex comes from
+ *  the theme definition itself — never duplicated here. */
+function ThemeSwatches({ tokens }: { tokens: ThemeDefinition["tokens"] }) {
+  return (
+    <span className="mr-2 inline-flex shrink-0 items-center gap-0.5" aria-hidden>
+      {(["ink", "fg", "act"] as const).map((key) => (
+        <span
+          key={key}
+          className="inline-block h-3 w-3 border border-edge"
+          style={{ backgroundColor: tokens[key] }}
+        />
+      ))}
     </span>
   );
 }
@@ -1897,6 +1920,25 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Discard-draft close (取消 / Escape / backdrop) — must live ABOVE the
+  // `if (!open) return null` so useOverlayA11y can wire Escape to it.
+  const dialogPanelRef = useRef<HTMLDivElement>(null);
+  const handleDialogClose = () => {
+    const live = useApp.getState().settings;
+    const target = resolveThemeById(live.themeId, live.customThemes);
+    if (target) {
+      activateTheme(target.id, target.tokens, target.scheme);
+    } else {
+      resetToDefaultTheme();
+    }
+    onClose();
+  };
+  const overlayA11yProps = useOverlayA11y({
+    open,
+    onClose: handleDialogClose,
+    containerRef: dialogPanelRef,
+  });
+
   if (!open) return null;
 
   const patch = (p: Partial<Settings>) => setDraft((d) => ({ ...d, ...p }));
@@ -1995,25 +2037,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     handleImportThemeJson(text);
   };
 
-  // Whole-dialog close (取消 button + backdrop click, wrapped below):
-  // ALWAYS re-activate the SAVED settings.themeId — never draft.themeId.
-  // Tile clicks only patch the draft (nothing applies until 保存), so on
-  // a cancel path the applied visual must land back on the saved theme.
-  // Unconditional (not gated on the editor being open) because preview
-  // pixels can outlive the editor: 保存主题 leaves the new theme's live
-  // preview on screen with only draft.themeId pointing at it — a
-  // subsequent 取消 must clean that up too, and re-activating an
-  // already-correct theme is an idempotent no-op (17 setProperty calls).
-  const handleDialogClose = () => {
-    const live = useApp.getState().settings;
-    const target = resolveThemeById(live.themeId, live.customThemes);
-    if (target) {
-      activateTheme(target.id, target.tokens, target.scheme);
-    } else {
-      resetToDefaultTheme();
-    }
-    onClose();
-  };
+  // handleDialogClose lives above the open-guard (Escape / 取消 / backdrop).
 
   const togglePack = (id: string, checked: boolean) => {
     setCheckedPacks((prev) => {
@@ -2082,7 +2106,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <bdi>{p.name}</bdi>
             {origin && (
               <span
-                className="ml-1.5 border border-edge2 px-1.5 py-0 text-[10px] font-normal text-mut"
+                className="ml-1.5 border border-edge2 px-2 py-1 text-xs font-normal text-mut"
                 title={
                   origin === "official"
                     ? "来自 JargonSlayer 官方词典库"
@@ -2785,7 +2809,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     try {
       const health = await fetchSidecarHealth(draft);
       if (!health) {
-        showToast("无法连接本地转录服务，请先启动（README）");
+        showToast("无法连接本地转录服务，请先启动");
         return;
       }
       if (health.diarization_ready) {
@@ -3105,6 +3129,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       }
     >
       <div
+        ref={dialogPanelRef}
+        {...overlayA11yProps}
         className={
           IS_IOS
             ? "flex min-h-0 w-full flex-1 flex-col"
@@ -3446,13 +3472,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                            just a different color so it doesn't blend
                            with 云端/本地 next to it. */}
                         {opt.byokOnly && (
-                          <span className="shrink-0 border border-lab-purple/30 px-1.5 py-0 text-[10px] text-lab-purple">
+                          <span className="shrink-0 border border-lab-purple/30 px-2 py-1 text-xs text-lab-purple">
                             实验
                           </span>
                         )}
                         <span
                           title={retention.hint}
-                          className={`shrink-0 border px-1.5 py-0 text-[10px] ${retention.borderClass} ${retention.textClass}`}
+                          className={`shrink-0 border px-2 py-1 text-xs ${retention.borderClass} ${retention.textClass}`}
                         >
                           {retention.label}
                         </span>
@@ -3544,13 +3570,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
                 {!sidecarStatus?.up && (
                   <div className="text-xs leading-[1.7] text-mut2">
-                    需要本地转录服务——见{" "}
+                    需要本地转录服务，见{" "}
                     <button
                       type="button"
                       onClick={() => void openExternal("https://github.com/mianaz/jargonslayer#readme")}
                       className="text-lab-cyan underline decoration-lab-cyan/40"
                     >
-                      README「本地版安装」
+                      安装说明
                     </button>
                   </div>
                 )}
@@ -3573,7 +3599,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <div className="space-y-2 border border-edge bg-panel2 p-3">
                 <div className="text-sm text-fg">系统音频录制权限</div>
                 <div className="text-xs leading-[1.7] text-mut2">
-                  首次开始监听时 macOS 会弹出授权提示；如果已拒绝或没看到提示，可前往系统设置手动开启后重试——重试会重新触发系统权限提示。
+                  首次开始监听时 macOS 会弹出授权提示；如果已拒绝或没看到提示，可前往系统设置手动开启后重试。重试会重新触发系统权限提示。
                 </div>
                 <button
                   type="button"
@@ -3822,7 +3848,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     "未填 Key 时（体验版试用）走 Soniox 限时试用；填入自己的 Key 后使用你的账户、浏览器直连"
                   ) : (
                     <>
-                      选择转录服务商；需在对应引擎卡片填写该服务商的 API Key——
+                      选择转录服务商；需在对应引擎卡片填写该服务商的 API Key。
                       {draft.tabAudioCloudProvider === "deepgram"
                         ? draft.deepgramKey
                           ? "Deepgram Key 已配置"
@@ -3944,7 +3970,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className="text-xs leading-[1.7] text-mut2">
                   {draft.sidecarMode === "managed"
                     ? "由应用管理本地识别服务：自动安装、启动，异常退出会自动重启；下方 Whisper 地址由应用固定，无需手动填写。"
-                    : "连接我自己启动的服务：按 README「本地版安装」手动跑 whisper_server.py，下方 Whisper 地址可以编辑。"}
+                    : "连接我自己启动的服务：按使用手册手动启动本地转录服务，下方 Whisper 地址可以编辑。"}
                 </div>
                 {draft.sidecarMode === "managed" && (
                   <>
@@ -3974,7 +4000,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <div className="flex items-center justify-between gap-3 border-t border-edge pt-3">
                       <div className="text-sm text-fg">
                         当前模型：
-                        <span className="font-mono text-mut">{installedModel ?? "—"}</span>
+                        <span className="font-mono text-mut">{installedModel ?? "未知"}</span>
                       </div>
                       <button
                         type="button"
@@ -4439,7 +4465,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       ? "Key 存入 macOS 系统钥匙串，不再明文保存在应用存储中；其他 App 未经许可无法读取"
                       : IS_IOS
                         ? "在电脑浏览器完成 OpenRouter 授权后，把 API Key 粘贴到这里；仅存本机，不上传"
-                        : "仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
+                        : "仅存于本机浏览器；调用时经应用接口内存转发，不落盘"
                   }
                   // BYOK preview sprint (2026-07-21): the chip used to be
                   // suppressed wholesale under PREVIEW_TIER (a key field
@@ -4684,7 +4710,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     has no confidence check at all — 术语卡片 are never
                     filtered by this control, from any source. */}
                 <div className="mt-1 text-xs text-mut2">
-                  低于该置信度的 AI 检测结果不会生成表达卡片——调高更准但更少，调低更多但可能误报；词典、我的词典命中不受影响；此项不影响术语卡片。
+                  低于该置信度的 AI 检测结果不会生成表达卡片。调高更准但更少，调低更多但可能误报；词典、我的词典命中不受影响；此项不影响术语卡片。
                 </div>
 
                 {/* v0.4.5 detect-span QC (design doc v045-ai-
@@ -5474,7 +5500,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     OpenRouter
                     <AccountConnectionChip connected={!!draft.apiKeyOpenrouter} />
                   </div>
-                  <div className="mt-0.5 text-[10px] leading-[1.6] text-mut2">
+                  <div className="mt-0.5 text-xs leading-[1.6] text-mut2">
                     OAuth 授权后自动生成 Key；连接状态与下方 OpenRouter Key 使用同一份数据
                   </div>
                 </div>
@@ -5513,7 +5539,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                         ChatGPT 订阅
                         <AccountConnectionChip connected={agentHealthState?.codex_logged_in === true} />
                       </div>
-                      <div className="mt-0.5 text-[10px] leading-[1.6] text-mut2">
+                      <div className="mt-0.5 text-xs leading-[1.6] text-mut2">
                         使用本机 Codex 登录态；不是 OpenAI API Key
                       </div>
                     </div>
@@ -5534,7 +5560,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                         Claude 订阅
                         <AccountConnectionChip connected={agentHealthState?.claude_logged_in === true} />
                       </div>
-                      <div className="mt-0.5 text-[10px] leading-[1.6] text-mut2">
+                      <div className="mt-0.5 text-xs leading-[1.6] text-mut2">
                         使用本机 Claude Code 登录态；不是 Anthropic API Key
                       </div>
                     </div>
@@ -5831,7 +5857,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     active
                   />
                 </div>
-                <div className="mt-1 text-[10px] leading-[1.6] text-mut2">
+                <div className="mt-1 text-xs leading-[1.6] text-mut2">
                   一键复制并打开；选择 vault 文件夹后还可自动写入
                 </div>
               </div>
@@ -5840,7 +5866,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <span>Notion</span>
                   <ConnectorStatusChip label="快速导出可用" active />
                 </div>
-                <div className="mt-1 text-[10px] leading-[1.6] text-mut2">
+                <div className="mt-1 text-xs leading-[1.6] text-mut2">
                   当前复制富文本并打开 Notion；直接写入需配置安全的 OAuth 服务端
                 </div>
               </div>
@@ -5849,7 +5875,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <span>Apple 备忘录</span>
                   <ConnectorStatusChip label="无需连接" active />
                 </div>
-                <div className="mt-1 text-[10px] leading-[1.6] text-mut2">
+                <div className="mt-1 text-xs leading-[1.6] text-mut2">
                   通过系统分享菜单发送 Markdown 文件
                 </div>
               </div>
@@ -5899,7 +5925,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 )}
               </div>
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                选择 Obsidian vault 子目录后，每场会议结束自动写入带 frontmatter 的 .md + .json；也可选择 git 仓库或任意目录
+                选择 Obsidian 笔记库子目录后，每场会议结束后自动写入笔记文件（Markdown，含元信息）；也可选择任意目录
               </div>
             </div>
             </>
@@ -5915,8 +5941,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
               />
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                会后 POST 会议 JSON 到该地址（n8n/飞书机器人等），导入任务的开始/完成/失败也会推送
-                task.* 事件
+                会议结束后把会议数据发送到该地址，可接 n8n、飞书机器人等自动化工具；导入任务的进度也会一并推送。字段格式见使用手册。
               </div>
             </div>
 
@@ -5944,9 +5969,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <label className="flex items-center justify-between gap-3 py-1">
               <div>
-                <div className="text-sm text-fg">Frontmatter</div>
+                <div className="text-sm text-fg">笔记元信息</div>
                 <div className="text-xs text-mut2">
-                  导出的 Markdown 带 YAML frontmatter
+                  导出的笔记文件开头附带标题、时间等信息，方便 Obsidian 等工具整理
                 </div>
               </div>
               <ToggleSwitch
@@ -6211,12 +6236,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             >
               <SectionHeading>订阅直连（实验性）</SectionHeading>
               <div className="text-xs leading-[1.7] text-mut2">
-                用你自己机器上已登录的 Claude / ChatGPT，通过本机 sidecar 直接调用
-                ——凭据不经过任何服务器，仅 detect / define 两个场景生效；依官方政策可能变化，随时可关闭。
+                用你自己机器上已登录的 Claude / ChatGPT，通过本机代理服务直接调用。凭据不经过任何服务器，仅检测与解释两个场景生效；依官方政策可能变化，随时可关闭。
               </div>
 
               <label className="flex items-center justify-between gap-3 py-1">
-                <span className="text-sm text-fg">启用订阅直连（仅 detect/define，限本地版）</span>
+                <span className="text-sm text-fg">启用订阅直连（仅检测与解释，限本地版）</span>
                 <ToggleSwitch
                   checked={draft.subscriptionDirect}
                   onChange={(checked) => patch({ subscriptionDirect: checked })}
@@ -6227,7 +6251,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <>
                   <div className="flex items-center justify-between gap-3 border border-edge bg-panel2 px-3 py-2">
                     <div className="text-sm text-fg">
-                      宿主状态：
+                      代理服务状态：
                       {agentHealthState ? (
                         <span className="text-lab-green">● 已连接（{draft.agentUrl}）</span>
                       ) : (
@@ -6246,16 +6270,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
                   {!agentHealthState && (
                     <div className="text-xs leading-[1.7] text-mut2">
-                      未检测到宿主，请先启动 sidecar（
+                      未检测到代理服务，请先启动本机代理（
                       <code className="bg-panel2 px-1 font-mono">
                         python -m sidecar.agent_server --port 8767
                       </code>
-                      ），详见 README「订阅直连」章节
+                      ），详见使用手册「订阅直连」
                     </div>
                   )}
 
                   <div>
-                    <label className="text-xs text-mut">宿主地址</label>
+                    <label className="text-xs text-mut">代理服务地址</label>
                     <input
                       type="text"
                       value={draft.agentUrl}
@@ -6330,11 +6354,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       type="text"
                       value={draft.agentToken}
                       onChange={(e) => patch({ agentToken: e.target.value })}
-                      placeholder="从 sidecar 启动日志复制粘贴"
+                      placeholder="从代理服务启动日志复制粘贴"
                       className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                     />
                     <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                      仅存本机浏览器；sidecar 每次启动会打印一个新连接码，粘贴到这里才能调用
+                      仅存本机浏览器；代理服务每次启动会打印一个新连接码，粘贴到这里才能调用
                     </div>
                   </div>
                 </>
@@ -6380,7 +6404,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                             : "border-edge text-fg hover:bg-panel3"
                         }`}
                       >
-                        {t.label}
+                        <span className="flex items-center">
+                          <ThemeSwatches tokens={t.tokens} />
+                          {t.label}
+                        </span>
                       </button>
                     ))}
                     {settings.customThemes.map((t) => (
@@ -6394,7 +6421,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                               : "border-edge text-fg hover:bg-panel3"
                           }`}
                         >
-                          {t.label}
+                          <span className="flex items-center">
+                            <ThemeSwatches tokens={t.tokens} />
+                            {t.label}
+                          </span>
                         </button>
                         <button
                           type="button"

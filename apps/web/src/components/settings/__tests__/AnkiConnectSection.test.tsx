@@ -62,6 +62,7 @@ describe("AnkiConnectSection", () => {
   it("renders the toggle/deck-name/port fields reflecting the given value", () => {
     const el = mount(value, () => {});
     expect(el.querySelector('[data-testid="anki-connect-section"]')).not.toBeNull();
+    expect(el.textContent).toContain("Anki 同步（AnkiConnect）");
     const deckInput = el.querySelector('input[type="text"]') as HTMLInputElement;
     expect(deckInput.value).toBe("JargonSlayer");
     const portInput = el.querySelector('input[type="number"]') as HTMLInputElement;
