@@ -70,12 +70,5 @@ let package = Package(
             dependencies: ["AudioCapCore"],
             path: "Tests/AudioCapCoreTests"
         ),
-        // TEMPORARY dual-capture Phase 0 spike (AEC + tap coexistence,
-        // dual SpeechAnalyzer) — delete this target when the spike ends.
-        .executableTarget(
-            name: "aec-spike",
-            dependencies: ["AudioCapCore"],
-            path: "Sources/aec-spike"
-        ),
     ]
 )
