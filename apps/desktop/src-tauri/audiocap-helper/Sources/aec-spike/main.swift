@@ -181,6 +181,71 @@ func runCoexist() {
     exit(0)
 }
 
+// ---- micrate mode: claimed vs delivered VP input rate ----
+// Replicates MicCapture.setup()'s exact sequence (VP on -> read
+// outputFormat -> installTap with that format) and measures what the
+// callbacks actually deliver: the first buffer's own format.sampleRate
+// and the effective frames-per-wall-second. A VP node that CLAIMS 48kHz
+// but DELIVERS another rate would make the analyzer session mis-pitch
+// speech (told the wrong rate) while every RMS/peak stat still looks
+// healthy — exactly the "loud mic ring, zero mic transcripts" signature.
+@available(macOS 26.0, *)
+func runMicRate() {
+    let engine = AVAudioEngine()
+    let input = engine.inputNode
+    do {
+        try input.setVoiceProcessingEnabled(true)
+    } catch {
+        fail("setVoiceProcessingEnabled threw: \(error)")
+    }
+    input.voiceProcessingOtherAudioDuckingConfiguration =
+        AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
+    let claimed = input.outputFormat(forBus: 0)
+    let lock = NSLock()
+    var totalFrames: UInt64 = 0
+    var firstBufferRate: Double = 0
+    var firstBufferChannels: UInt32 = 0
+    var firstFrameLength: UInt32 = 0
+    input.installTap(onBus: 0, bufferSize: 4_800, format: claimed) { buffer, _ in
+        lock.lock()
+        if firstBufferRate == 0 {
+            firstBufferRate = buffer.format.sampleRate
+            firstBufferChannels = buffer.format.channelCount
+            firstFrameLength = buffer.frameLength
+        }
+        totalFrames += UInt64(buffer.frameLength)
+        lock.unlock()
+    }
+    do {
+        try engine.start()
+    } catch {
+        fail("engine.start failed: \(error)")
+    }
+    let start = Date()
+    Thread.sleep(forTimeInterval: seconds)
+    let wall = Date().timeIntervalSince(start)
+    engine.stop()
+    input.removeTap(onBus: 0)
+    lock.lock()
+    let frames = totalFrames
+    let bufRate = firstBufferRate
+    let bufChannels = firstBufferChannels
+    let bufFirstLen = firstFrameLength
+    lock.unlock()
+    emit([
+        "spike": "micrate",
+        "claimed_rate": claimed.sampleRate,
+        "claimed_channels": Int(claimed.channelCount),
+        "buffer_rate": bufRate,
+        "buffer_channels": Int(bufChannels),
+        "first_frame_length": Int(bufFirstLen),
+        "frames_delivered": Int(frames),
+        "wall_seconds": wall,
+        "effective_rate": wall > 0 ? Double(frames) / wall : 0,
+    ])
+    exit(0)
+}
+
 // ---- dual-analyzer mode ----
 /// Pushes 100 ms mono-Float32 silence buffers so the second analyzer
 /// session has a live (but silent) audio source.
@@ -289,6 +354,8 @@ if #available(macOS 26.0, *) {
     switch mode {
     case "coexist":
         runCoexist()
+    case "micrate":
+        runMicRate()
     case "dual-analyzer":
         let semaphore = DispatchSemaphore(value: 0)
         Task {
