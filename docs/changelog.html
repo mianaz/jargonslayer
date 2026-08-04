@@ -28,6 +28,7 @@
     <a href="advanced.html">Power Users</a>
 
     <div class="label">Versions</div>
+    <a href="#v076">v0.7.6</a>
     <a href="#v075">v0.7.5</a>
     <a href="#v074">v0.7.4</a>
     <a href="#v073">v0.7.3</a>
@@ -48,10 +49,23 @@
       <p class="lead">Every user-visible change, newest first. Versions cover the web app, the macOS desktop app, the iOS beta, and the Chrome extension together unless a change names a specific platform. Release downloads live on <a href="https://github.com/mianaz/jargonslayer/releases" target="_blank" rel="noopener">GitHub releases</a>; what's planned next is on the <a href="features.html#next">Features page</a>.</p>
     </section>
 
-    <section id="v075">
+    <section id="v076">
       <h2>v0.7</h2>
       <div class="ver">
-        <div class="ver-head"><h3>v0.7.5</h3><span class="ver-date">2026-08-02</span><span class="ver-tag">Latest</span></div>
+        <div class="ver-head"><h3>v0.7.6</h3><span class="ver-date">2026-08-04</span><span class="ver-tag">Latest</span></div>
+        <ul>
+          <li><strong>Dual capture:</strong> mic + system audio with echo cancellation, auto me/other tagging (macOS 26+ desktop).</li>
+          <li><strong>New 3-step onboarding with one-tap demo.</strong></li>
+          <li><strong>Status bar shows the actual running mode and privacy posture, always visible on mobile.</strong></li>
+          <li><strong>Mobile chrome folded.</strong></li>
+          <li><strong>Plain-language settings + theme swatches.</strong></li>
+          <li><strong>Accessibility:</strong> screen-reader announcements, dialog focus, larger touch targets.</li>
+          <li><strong>Study center leads with Start review.</strong></li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v075">
+        <div class="ver-head"><h3>v0.7.5</h3><span class="ver-date">2026-08-02</span></div>
         <ul>
           <li><strong>Translation no longer dies silently:</strong> a single failed startup handshake used to latch the translation lane off for an entire meeting, with one notice at the very start and then nothing — while another session the same day on the same settings produced full bilingual output. The lane now retries on its own, and if recovery genuinely fails the status bar reads 翻译失败 instead of looking like it is still working.</li>
           <li><strong>Desktop microphone mode recorded silence:</strong> the desktop system recognizer is a system-output tap with no microphone path, so selecting 麦克风 started the output tap under a mic label and recognized nothing. Microphone mode now routes to the local model, and installs already saved in the broken state repair themselves on launch.</li>

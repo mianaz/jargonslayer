@@ -28,6 +28,7 @@
     <a href="advanced.html">高级玩法</a>
 
     <div class="label">版本</div>
+    <a href="#v076">v0.7.6</a>
     <a href="#v075">v0.7.5</a>
     <a href="#v074">v0.7.4</a>
     <a href="#v073">v0.7.3</a>
@@ -48,10 +49,23 @@
       <p class="lead">每一条用户能感知到的变化，按时间倒序排列。除非条目里写明具体平台，否则版本号同时覆盖网页版、macOS 桌面版、iOS 测试版和 Chrome 插件。发布下载在 <a href="https://github.com/mianaz/jargonslayer/releases" target="_blank" rel="noopener">GitHub releases</a>；接下来打算做什么见「<a href="features.html#next">功能页</a>」。</p>
     </section>
 
-    <section id="v075">
+    <section id="v076">
       <h2>v0.7</h2>
       <div class="ver">
-        <div class="ver-head"><h3>v0.7.5</h3><span class="ver-date">2026-08-02</span><span class="ver-tag">最新</span></div>
+        <div class="ver-head"><h3>v0.7.6</h3><span class="ver-date">2026-08-04</span><span class="ver-tag">最新</span></div>
+        <ul>
+          <li><strong>双路收音：</strong>麦克风+系统音频同时捕获，回声消除，自动区分「我/对方」（macOS 26+ 桌面版）。</li>
+          <li><strong>全新三步首次引导，演示一键直达。</strong></li>
+          <li><strong>状态栏显示实际运行模式与隐私状态，手机端常驻。</strong></li>
+          <li><strong>手机界面收纳与 ⋯ 折叠。</strong></li>
+          <li><strong>设置文案口语化 + 主题色板预览。</strong></li>
+          <li><strong>无障碍：</strong>屏幕阅读器播报、对话框焦点管理、更大触控目标。</li>
+          <li><strong>学习中心「开始复习」置顶。</strong></li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v075">
+        <div class="ver-head"><h3>v0.7.5</h3><span class="ver-date">2026-08-02</span></div>
         <ul>
           <li><strong>翻译不再无声死掉：</strong>启动握手失败一次就把整场会议的翻译通道锁死，只有开头一条提示，之后一片空白——同一天同样设置的另一场却正常出双语。现在通道自动重连，真恢复不了状态栏写「翻译失败」，不再装作还在工作。</li>
           <li><strong>桌面版麦克风模式录到静音：</strong>桌面版系统识别走的是系统输出捕获，没有麦克风通路，选「麦克风」只是给输出捕获贴了个麦克风标签，什么都识别不出来。现在麦克风模式走本地模型；之前已存成错误配置的安装启动时自动修正。</li>
