@@ -28,6 +28,7 @@
     <a href="advanced.html">高级玩法</a>
 
     <div class="label">版本</div>
+    <a href="#v077">v0.7.7</a>
     <a href="#v076">v0.7.6</a>
     <a href="#v075">v0.7.5</a>
     <a href="#v074">v0.7.4</a>
@@ -49,10 +50,22 @@
       <p class="lead">每一条用户能感知到的变化，按时间倒序排列。除非条目里写明具体平台，否则版本号同时覆盖网页版、macOS 桌面版、iOS 测试版和 Chrome 插件。发布下载在 <a href="https://github.com/mianaz/jargonslayer/releases" target="_blank" rel="noopener">GitHub releases</a>；接下来打算做什么见「<a href="features.html#next">功能页</a>」。</p>
     </section>
 
-    <section id="v076">
+    <section id="v077">
       <h2>v0.7</h2>
       <div class="ver">
-        <div class="ver-head"><h3>v0.7.6</h3><span class="ver-date">2026-08-04</span><span class="ver-tag">最新</span></div>
+        <div class="ver-head"><h3>v0.7.7</h3><span class="ver-date">2026-08-04</span><span class="ver-tag">最新</span></div>
+        <ul>
+          <li><strong>检查更新：</strong>设置里可手动查新版，后台每日静默核对；发现新版弹横幅，一键打开下载页（桌面版）。</li>
+          <li><strong>翻译断线看得见：</strong>翻译通道会议中途死掉也会亮「翻译失败」，不再只有全程零翻译才报；判定有 60 秒地板，短暂抖动不闪假警。</li>
+          <li><strong>长会性能：</strong>90 分钟会议尾段逐条重算全表的热点改为增量缓存。</li>
+          <li><strong>转录服务重连：</strong>闪断改指数退避（1 秒起步 30 秒封顶），掉帧计入诊断，连挂五轮弹提示且不放弃重试。</li>
+          <li><strong>定位刷新：</strong>文案转向捕获优先——双路收音是主角，术语卡片是实时辅助；「全本地」只在默认本地引擎下声明。</li>
+          <li><strong>修复：</strong>翻译准备超时残留子进程；历史会话切换后说话人计数串台；更新检查遇 GitHub 限流误记已检查。</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v076">
+        <div class="ver-head"><h3>v0.7.6</h3><span class="ver-date">2026-08-04</span></div>
         <ul>
           <li><strong>双路收音：</strong>麦克风+系统音频同时捕获，回声消除，自动区分「我/对方」（macOS 26+ 桌面版）。</li>
           <li><strong>全新三步首次引导，演示一键直达。</strong></li>

@@ -28,6 +28,7 @@
     <a href="advanced.html">Power Users</a>
 
     <div class="label">Versions</div>
+    <a href="#v077">v0.7.7</a>
     <a href="#v076">v0.7.6</a>
     <a href="#v075">v0.7.5</a>
     <a href="#v074">v0.7.4</a>
@@ -49,10 +50,22 @@
       <p class="lead">Every user-visible change, newest first. Versions cover the web app, the macOS desktop app, the iOS beta, and the Chrome extension together unless a change names a specific platform. Release downloads live on <a href="https://github.com/mianaz/jargonslayer/releases" target="_blank" rel="noopener">GitHub releases</a>; what's planned next is on the <a href="features.html#next">Features page</a>.</p>
     </section>
 
-    <section id="v076">
+    <section id="v077">
       <h2>v0.7</h2>
       <div class="ver">
-        <div class="ver-head"><h3>v0.7.6</h3><span class="ver-date">2026-08-04</span><span class="ver-tag">Latest</span></div>
+        <div class="ver-head"><h3>v0.7.7</h3><span class="ver-date">2026-08-04</span><span class="ver-tag">Latest</span></div>
+        <ul>
+          <li><strong>Update check:</strong> manual check in Settings plus a quiet daily check; a banner opens the download page when a new version exists (desktop).</li>
+          <li><strong>Translation death visible:</strong> a lane dying mid-meeting now shows 翻译失败, not only after a fully silent meeting; a 60s floor prevents false alarms.</li>
+          <li><strong>Long-session performance:</strong> hot paths that recomputed the full transcript per line become incremental caches.</li>
+          <li><strong>Transcription reconnect:</strong> exponential backoff (1s→30s), dropped frames logged, a notice after five failed cycles, retries never stop.</li>
+          <li><strong>Repositioning:</strong> capture-first copy — dual capture is the headline, jargon cards are live assist; "fully local" claimed only for the default local engines.</li>
+          <li><strong>Fixes:</strong> translate-prepare timeouts leaving a child process; speaker counts leaking across history loads; rate-limited update checks miscounted as completed.</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v076">
+        <div class="ver-head"><h3>v0.7.6</h3><span class="ver-date">2026-08-04</span></div>
         <ul>
           <li><strong>Dual capture:</strong> mic + system audio with echo cancellation, auto me/other tagging (macOS 26+ desktop).</li>
           <li><strong>New 3-step onboarding with one-tap demo.</strong></li>
