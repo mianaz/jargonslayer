@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FileAudio, FileText, LinkSimple, X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
+import { useOverlayA11y } from "@/lib/a11y";
 import { PREVIEW_TIER } from "@/lib/deployTier";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import {
@@ -109,6 +110,9 @@ const ALL_TABS: { key: HubTab; label: string; icon: typeof FileAudio }[] = [
 const TABS = IS_IOS ? ALL_TABS.filter((t) => t.key !== "url") : ALL_TABS;
 
 export default function ImportHub({ open, onClose, initialTab }: ImportHubProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const overlayA11y = useOverlayA11y({ open, onClose, containerRef });
+
   const settings = useApp((s) => s.settings);
   const loadSession = useApp((s) => s.loadSession);
   const showToast = useApp((s) => s.showToast);
@@ -178,19 +182,6 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  // Esc-to-close (#58 review fix 5) — matches the affordance the old
-  // 导入录音 popover this dialog replaced already had.
-  useEffect(() => {
-    if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [open, onClose]);
 
   // Debounced live parse preview for the 文稿 tab.
   useEffect(() => {
@@ -615,6 +606,8 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
   if (IS_IOS) {
     return (
       <div
+        ref={containerRef}
+        {...overlayA11y}
         data-testid="import-hub-fullscreen"
         className="fixed inset-0 z-50 flex flex-col bg-panel pt-[env(safe-area-inset-top)]"
       >
@@ -669,7 +662,11 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="scroll-thin max-h-[85vh] w-[560px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel glassable-panel p-5">
+      <div
+        ref={containerRef}
+        {...overlayA11y}
+        className="scroll-thin max-h-[85vh] w-[560px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel glassable-panel p-5"
+      >
         <div className="mb-4 flex items-center justify-between gap-2">
           <span className="text-lg font-semibold text-fg">导入</span>
           {/* S14.1 field fix (item 6): visible 关闭 affordance — the

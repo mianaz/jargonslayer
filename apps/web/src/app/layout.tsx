@@ -10,8 +10,11 @@ import { BUILTIN_THEMES } from "@/lib/theme/themes";
 // runtime external request) as --font-mono-brand. Retires v2's
 // brand-position-only Cinzel serif; the Cornell parchment artifact
 // pins its own Songti serif stack inline.
+// UI polish train: widened from [400, 700] — 300 is for large numerals
+// (globals.css's .stat-numeral), 800 is for StatusLine's mode block
+// (owned by another lane; this just makes the weight AVAILABLE).
 const jetbrainsMono = JetBrains_Mono({
-  weight: ["400", "700"],
+  weight: ["300", "400", "500", "700", "800"],
   subsets: ["latin"],
   variable: "--font-mono-brand",
   display: "swap",

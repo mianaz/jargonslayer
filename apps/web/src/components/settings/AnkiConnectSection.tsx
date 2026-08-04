@@ -66,7 +66,7 @@ export default function AnkiConnectSection({ value, onChange }: AnkiConnectSecti
 
   return (
     <div className="space-y-3 border-t border-edge pt-3" data-testid="anki-connect-section">
-      <div className="text-xs uppercase tracking-wide text-mut">AnkiConnect</div>
+      <div className="text-xs tracking-wide text-mut">Anki 同步（AnkiConnect）</div>
 
       <label className="flex items-center justify-between gap-3 py-1">
         <span className="text-sm text-fg">启用 AnkiConnect</span>

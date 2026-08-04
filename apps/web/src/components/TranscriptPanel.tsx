@@ -13,7 +13,6 @@ import {
   ArrowDown,
   MagicWand,
   PencilSimple,
-  Play,
   Selection,
   Translate,
   X,
@@ -399,7 +398,7 @@ function ActiveSpeakerLatch() {
 
   return (
     <div className="flex items-center gap-1.5 font-mono text-xs">
-      <span className="text-mut2">当前说话人</span>
+      <span className="text-mut">当前说话人</span>
       <select
         data-testid="active-speaker-latch"
         value={activeSpeaker ?? OFF_VALUE}
@@ -547,7 +546,7 @@ export const SegmentRow = memo(function SegmentRow({
           />
         </div>
       )}
-      <div className="select-none pt-0.5 font-mono text-[11px] leading-[1.6] text-mut2">
+      <div className="select-none pt-0.5 font-mono text-xs leading-[1.6] text-mut">
         {palette && (
           <span className={`block text-sm font-bold ${palette.text}`}>
             {palette.glyph}
@@ -597,7 +596,7 @@ export const SegmentRow = memo(function SegmentRow({
                 const rect = e.currentTarget.getBoundingClientRect();
                 onAssignRequest(seg.id, undefined, false, !!seg.sttSpeaker, rect.left, rect.bottom);
               }}
-              className="mt-0.5 inline-flex items-center whitespace-nowrap text-mut2 hover:text-fg"
+              className="mt-0.5 inline-flex items-center whitespace-nowrap text-mut hover:text-fg"
             >
               + 说话人
             </button>
@@ -738,7 +737,7 @@ export function InterimLine({ onGrow }: { onGrow?: () => void }) {
 
   return (
     <div className="grid grid-cols-[64px_1fr] gap-3 border-b border-edge/60 px-4 py-3">
-      <div className="select-none pt-0.5 font-mono text-[11px] leading-[1.6] text-mut2">
+      <div className="select-none pt-0.5 font-mono text-xs leading-[1.6] text-mut">
         {displayed.speaker &&
           (() => {
             const palette = SPEAKER_PALETTE[hashSpeaker(displayed.speaker)];
@@ -809,13 +808,8 @@ function selectionLookupRequest(container: HTMLElement): LookupRequest | null {
 }
 
 export interface TranscriptPanelProps {
-  // Empty-state demo CTA (E2E feedback): optional so every existing
-  // render-test call site (`<TranscriptPanel />`, no props) keeps
-  // working unchanged — the button itself only renders when a handler
-  // is actually supplied.
-  onDemo?: () => void;
   // Mobile toolbar migration: on a narrow layout the toolbar row's own
-  // 选择/AI 校正/补全翻译 buttons hand off to Header.tsx's MobileToolbarButtons
+  // 选择/AI 校正/补全翻译 buttons hand off to Header.tsx's ≡-menu toolbar rows
   // instead (see this file's own toolbarVisible below) — the row itself
   // still renders whenever showLatch is true (当前说话人 latch must never
   // be lost). Optional, default false, so every bare `<TranscriptPanel />`
@@ -834,7 +828,6 @@ export interface TranscriptPanelProps {
 }
 
 export default function TranscriptPanel({
-  onDemo,
   isMobileLayout = false,
   selectMode: selectModeProp,
   onToggleSelectMode: onToggleSelectModeProp,
@@ -1368,7 +1361,7 @@ export default function TranscriptPanel({
   // Mobile toolbar migration: on a narrow layout the row itself only
   // ever exists to carry the latch (当前说话人 latch must never be lost)
   // — segments.length alone no longer earns the row a mobile mount,
-  // since its own buttons now live in Header.tsx's MobileToolbarButtons
+  // since its own buttons now live in Header.tsx's ≡ menu (useMobileToolbarState)
   // instead (rendered right below, wrapped in `!isMobileLayout`). Desktop
   // keeps the exact original gate.
   const toolbarVisible = isMobileLayout ? showLatch : showLatch || segments.length > 0;
@@ -1450,30 +1443,7 @@ export default function TranscriptPanel({
         onScroll={handleScroll}
         onMouseUp={handleMouseUp}
       >
-        {isEmpty ? (
-          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-            <div className="border border-edge bg-panel2 px-4 py-2 font-mono text-sm text-mut">
-              <span className="text-lab-green">$</span>
-              <span className="cursor-block ml-1 inline-block h-[1em] w-[0.55em] translate-y-[0.15em] bg-mut align-baseline">
-                &nbsp;
-              </span>
-            </div>
-            <div className="mt-3 max-w-sm text-[15px] leading-[26px] text-mut">
-              选择下方引擎并点「开始监听」，或先看演示——无需麦克风与 API Key。
-            </div>
-            {onDemo && (
-              <button
-                type="button"
-                data-testid="btn-demo-empty"
-                onClick={onDemo}
-                className="mt-4 flex items-center gap-1.5 border border-edge bg-panel2 px-4 py-1.5 font-mono text-sm text-fg hover:bg-panel3"
-              >
-                <Play size={14} weight="regular" />
-                演示
-              </button>
-            )}
-          </div>
-        ) : (
+        {isEmpty ? null : (
           <>
             {segments.map((seg, i) => (
               <SegmentRow
@@ -1508,7 +1478,7 @@ export default function TranscriptPanel({
 
       {selectMode && (
         <div className="flex shrink-0 items-center gap-3 border-t border-edge bg-panel2 px-3 py-2">
-          <span className="font-mono text-xs text-mut2">已选 {selectedIds.size}</span>
+          <span className="font-mono text-xs text-mut">已选 {selectedIds.size}</span>
           <button
             type="button"
             data-testid="btn-select-all"

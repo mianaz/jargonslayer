@@ -20,6 +20,11 @@ const SIZE_STEPS = [
   "text-4xl",
 ] as const;
 
+// UI polish train (5c extension): fixed placeholder widths for the
+// loading skeleton below — real word count/size is data-dependent, so
+// this is a representative filler shape, not a literal count match.
+const SKELETON_WORD_WIDTHS = [64, 40, 88, 52, 76, 36, 60, 96, 44, 80, 56, 68];
+
 /** Bucket a count into one of SIZE_STEPS given the observed [min, max]
  *  range. Guards the single-item and all-equal cases (both collapse
  *  to the same range) by always returning the top tier — one word, or
@@ -113,7 +118,17 @@ export default function WordCloud({
 
       <div className="mt-3">
         {loading ? (
-          <div className="text-sm text-mut">加载中…</div>
+          // Static by law (DESIGN.md v3.9c) — no spinner text.
+          <div
+            className="rounded-none border border-edge bg-panel p-4"
+            aria-hidden="true"
+          >
+            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
+              {SKELETON_WORD_WIDTHS.map((w, i) => (
+                <div key={i} className="skeleton h-5" style={{ width: w }} />
+              ))}
+            </div>
+          </div>
         ) : words.length === 0 ? (
           <EmptyState />
         ) : (

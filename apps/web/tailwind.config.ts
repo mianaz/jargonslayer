@@ -82,6 +82,19 @@ export default {
         // serif survivor (CornellNote's frozen parchment artifact) pins
         // its Songti stack inline.
       },
+      // v3.9 type scale (DESIGN.md v3.9a) — named size/line-height
+      // tiers for the UI polish pass. micro/caption/body/title are
+      // general-purpose text tiers; stat is the large-numeral size,
+      // paired with globals.css's .stat-numeral utility (mono/light/
+      // tabular-nums) for big-number displays like StatCard. Additive
+      // only — none of Tailwind's default text-* sizes are touched.
+      fontSize: {
+        micro: ["11px", { lineHeight: "1.2" }],
+        caption: ["12px", { lineHeight: "1.4" }],
+        body: ["14px", { lineHeight: "1.65" }],
+        title: ["16px", { lineHeight: "1.5" }],
+        stat: ["28px", { lineHeight: "1.1" }],
+      },
     },
   },
   plugins: [],

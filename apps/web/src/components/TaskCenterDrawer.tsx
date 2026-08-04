@@ -20,12 +20,12 @@
 // where TaskTray's OLD popover row-rendering moved to (see TaskTray.tsx's
 // own header comment), extended with per-kind retry/re-check actions.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { ArrowClockwise, ArrowSquareOut, CheckCircle, WarningCircle, X } from "@phosphor-icons/react";
 import { IS_IOS } from "@/lib/platform/ios";
 import { useApp } from "@/lib/store";
-import { handleButtonKeyDown } from "@/lib/a11y";
+import { handleButtonKeyDown, useOverlayA11y } from "@/lib/a11y";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { openExternal } from "@/lib/platform/openExternal";
 import { probeSidecar } from "@/lib/stt/sidecarHealth";
@@ -63,6 +63,9 @@ function clampProgress(progress: number): number {
 }
 
 export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const overlayA11y = useOverlayA11y({ open, onClose, containerRef: panelRef });
+
   const settings = useApp((s) => s.settings);
   const sidecarUp = useApp((s) => s.sidecarUp);
   const loadSession = useApp((s) => s.loadSession);
@@ -203,6 +206,8 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
     <>
       <div className="fixed inset-0 z-30 bg-black/50" onClick={onClose} aria-hidden />
       <div
+        ref={panelRef}
+        {...overlayA11y}
         className={`fixed inset-y-0 right-0 z-40 flex w-full max-w-[380px] flex-col border-l border-edge bg-panel glassable-panel ${
           // iOS-cloud round: same full-bleed top-inset rule as
           // HistoryDrawer — see that panel's comment.
@@ -215,7 +220,7 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
             type="button"
             onClick={onClose}
             aria-label="关闭"
-            className="flex h-8 w-8 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
+            className="flex h-9 w-9 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
           >
             <X size={18} weight="regular" />
           </button>

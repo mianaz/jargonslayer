@@ -54,7 +54,11 @@ export default function Toast() {
     // bottom offset rides the safe-area inset (iOS-cloud round, Sol F3):
     // keeps the toast clear of the raised StatusLine on a full-bleed
     // iOS webview; env() is 0 elsewhere (identical to the old bottom-9).
-    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(2.25rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-3">
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none fixed inset-x-0 bottom-[calc(2.25rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-3"
+    >
       <div className="fade-up pointer-events-auto flex max-w-full items-center gap-3 border border-edge bg-panel2 px-4 py-2 text-sm text-fg shadow-lg">
       <span>
         {message}

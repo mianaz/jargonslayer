@@ -261,14 +261,16 @@ describe("Header — iOS brand removal + icon-only transport buttons (mobile ico
     expect(startBtn.getAttribute("title")).toBe("开始");
   });
 
-  // Mobile toolbar migration: 选择/AI 校正/补全翻译 move off TranscriptPanel's
-  // own second bar into this header's ml-auto cluster — gated on the new
-  // isMobileLayout prop (not bare IS_IOS), same gate TranscriptPanel.tsx's
-  // own toolbarVisible now reads. Each button's OWN gate (aiConfigured/
+  // D2 fold (task 4): 选择/AI 校正/补全翻译 no longer render as standalone
+  // header buttons at all — they moved into the ≡ menu (IosMenuSheet on
+  // this build) as labeled rows, still gated on the same isMobileLayout
+  // prop (not bare IS_IOS), same gate TranscriptPanel.tsx's own
+  // toolbarVisible reads. Each button's OWN gate (aiConfigured/
   // stopped+segments, showGapFill) is exercised once here; the exhaustive
   // per-condition matrix already lives in TranscriptPanel.f1f2.test.tsx —
-  // this only pins that Header actually renders/wires them when told to.
-  it("mobile toolbar buttons (选择/AI 校正/补全翻译) render in the header when isMobileLayout is true, and 选择 fires onToggleSelectMode", async () => {
+  // this only pins that Header actually renders/wires them into the sheet
+  // when told to.
+  it("mobile toolbar rows (选择/AI 校正/补全翻译) render inside the ≡ sheet when isMobileLayout is true, and 选择 fires onToggleSelectMode", async () => {
     useApp.setState({
       settings: {
         ...DEFAULT_SETTINGS,
@@ -289,6 +291,15 @@ describe("Header — iOS brand removal + icon-only transport buttons (mobile ico
       onOpenCorrection: noop,
     });
 
+    // Not present before the menu is opened at all.
+    expect(container!.querySelector('[data-testid="btn-select-mode"]')).toBeNull();
+
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="btn-menu"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
     expect(container!.querySelector('[data-testid="btn-select-mode"]')).not.toBeNull();
     expect(container!.querySelector('[data-testid="btn-ai-correct"]')).not.toBeNull();
     const gapFillBtn = container!.querySelector('[data-testid="btn-gap-fill"]');
@@ -301,11 +312,27 @@ describe("Header — iOS brand removal + icon-only transport buttons (mobile ico
         .dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onToggleSelectMode).toHaveBeenCalledTimes(1);
+    // Tapping the row also closes the sheet (mirrors every other row).
+    expect(container!.querySelector('[data-testid="header-menu-sheet"]')).toBeNull();
   });
 
-  it("mobile toolbar buttons are absent when isMobileLayout is false (default) — desktop-shaped header, unchanged", async () => {
-    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle" });
+  it("mobile toolbar rows are absent from the ≡ sheet when isMobileLayout is false (default) — desktop-shaped header, unchanged", async () => {
+    useApp.setState({
+      settings: DEFAULT_SETTINGS,
+      status: "stopped",
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "demo" }],
+    });
     await renderHeader();
+
+    expect(container!.querySelector('[data-testid="btn-select-mode"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-ai-correct"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-gap-fill"]')).toBeNull();
+
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="btn-menu"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
 
     expect(container!.querySelector('[data-testid="btn-select-mode"]')).toBeNull();
     expect(container!.querySelector('[data-testid="btn-ai-correct"]')).toBeNull();

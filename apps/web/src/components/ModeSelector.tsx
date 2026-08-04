@@ -105,9 +105,8 @@ export function visibleModeTileKeys(v: ModeTileVisibility): ModeTileKey[] {
 
 export interface ModeSelectorProps {
   onOpenImport: (tab: HubTab) => void;
-  /** 先看演示 — the keyless first-touch path (L8 integration fix: this
-   *  overlay covers TranscriptPanel's own empty-state demo CTA, so the
-   *  affordance moves INTO the selector instead of being buried). */
+  /** 先看演示 — the keyless first-touch path. ModeSelector is the
+   *  canonical idle-state affordance, rather than a second panel CTA. */
   onDemo?: () => void;
 }
 
@@ -261,7 +260,7 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
       </div>
 
       {captureMode && engineLabel && (
-        <div data-testid="mode-selector-hint" className="mt-3 text-xs text-mut2">
+        <div data-testid="mode-selector-hint" className="mt-3 text-xs text-mut">
           已选 {CAPTURE_MODE_LABEL[captureMode]} · 引擎：{engineLabel}（可在底栏更换）
         </div>
       )}
@@ -271,9 +270,9 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
           type="button"
           data-testid="mode-selector-demo"
           onClick={onDemo}
-          className="mt-5 text-xs text-mut2 underline decoration-edge underline-offset-4 hover:text-fg"
+          className="mt-5 text-xs text-mut underline decoration-edge underline-offset-4 hover:text-fg"
         >
-          ▷ 先看演示——无需麦克风与 API Key
+          ▷ 先看演示（无需麦克风与 API Key）
         </button>
       )}
     </div>

@@ -59,6 +59,20 @@ export default function ReviewPage() {
   // semantics) — store nonce (celebrateBit) → PixelDragon.
   const handleQueueEmptied = () => useApp.getState().celebrateBit();
 
+  // F8 fix round (MEDIUM): ReviewDashboard's 开始复习 CTA used to be a
+  // bare getElementById("due-queue") scroll, which went inert once the
+  // user had switched to 翻卡浏览 (DueReview, the only element carrying
+  // that id, unmounts there). This page owns the due/browse switch, so
+  // it flips mode back to "due" FIRST — DueReview needs to actually
+  // remount before #due-queue exists again — then scrolls on the next
+  // animation frame, after that remount has committed.
+  const handleStartReview = () => {
+    setMode("due");
+    requestAnimationFrame(() => {
+      document.getElementById("due-queue")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   return (
     // iOS-cloud round (固定顶部/底部 shell): this was the ONE in-app
     // route still built on document scroll (min-h-screen + sticky
@@ -89,10 +103,9 @@ export default function ReviewPage() {
           href="/"
           className="flex items-center gap-1.5 text-sm text-mut hover:text-fg"
         >
-          ← 返回会议
+          ← 返回
         </Link>
         <span className="font-medium text-fg">学习中心</span>
-        <span className="font-mono text-xs text-mut2">/review</span>
       </header>
 
       <main
@@ -125,7 +138,7 @@ export default function ReviewPage() {
 
         {centerTab === "review" ? (
           <>
-            <ReviewDashboard cache={cache} loading={loading} />
+            <ReviewDashboard cache={cache} loading={loading} onStartReview={handleStartReview} />
             <div className="border-t border-edge" aria-hidden="true" />
             <div className="space-y-4">
               <div className="flex items-center gap-1 rounded-none border border-edge bg-panel2 p-0.5">

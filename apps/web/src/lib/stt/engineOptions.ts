@@ -59,6 +59,7 @@ import {
   ENGINE_CAPABILITIES,
   IOS_ENGINE_KINDS,
   resolveWebspeechRetentionClass,
+  type EngineCapability,
   type EngineFamily,
   type LiveEngineKind,
   type RetentionClass,
@@ -265,7 +266,18 @@ export function resolveEngineRetentionClass(
   sttEngineMode: OnDeviceMode | null,
 ): RetentionClass {
   if (engine === "demo") return "local";
-  const fallback = ENGINE_OPTIONS.find((o) => o.value === engine)?.retentionClass ?? "cloud-transient";
+  // F6 fix round (HIGH): resolve the fallback off the platform-
+  // INDEPENDENT ENGINE_CAPABILITIES map, not the platform-filtered
+  // ENGINE_OPTIONS array. A persisted cross-platform engine absent from
+  // THIS build's ENGINE_OPTIONS (e.g. osspeech surviving into a web
+  // session) is still a KNOWN engine whose real retention we can look
+  // up — only a genuinely unrecognized kind (import/browser-whisper,
+  // never real capture engines, or a future/corrupted value) falls back
+  // to cloud-transient. Same "don't index a Record<LiveEngineKind, …>
+  // with a wider STTEngineKind" cast StatusLine's own unmappedLabel uses.
+  const fallback =
+    (ENGINE_CAPABILITIES as Partial<Record<STTEngineKind, EngineCapability>>)[engine]?.retentionClass ??
+    "cloud-transient";
   return engine === "webspeech"
     ? resolveWebspeechRetentionClass(fallback, sttEngineMode ?? undefined)
     : fallback;

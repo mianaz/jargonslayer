@@ -1,11 +1,11 @@
 "use client";
 
-// First-run onboarding: 5-step carousel, engine-picker as the core
+// First-run onboarding: 3-step carousel, engine-picker as the core
 // step (Handy-app style). shouldShowTutorial() is an SSR-safe pure
 // check consumed by app/page.tsx to decide whether to auto-open this
 // overlay on first load. OWNER: this worker (#21).
 
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { CaretRight, CheckCircle } from "@phosphor-icons/react";
 import { modeForPersistedEngine, useApp, type ModePlatform } from "@/lib/store";
 import { RETENTION_COPY, resolveEngineRetentionClass } from "@/lib/stt/engineOptions";
@@ -15,6 +15,7 @@ import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
 import { PREVIEW_TIER } from "@/lib/deployTier";
+import { useOverlayA11y } from "@/lib/a11y";
 
 // ITEM 4 fix (fix round, Opus#2): platform for modeForPersistedEngine
 // below — IS_DESKTOP/IS_IOS are build-time consts, so this resolves once
@@ -51,14 +52,12 @@ function markTutorialDone(): void {
   }
 }
 
-const STEP_COUNT = 5;
+const STEP_COUNT = 3;
 
 // ---------------------------------------------------------------
 // Step 2: engine picker card grid — Handy-app style. Demo is NOT a
-// capture engine (no audio, scripted preview) so it is not a card
-// peer here — it gets its own visually-separated "先看演示" row above
-// the grid, still driving the same settings.engine="demo" + onStart
-// demo mechanism as the header's 演示 button. The retention chip below
+// capture engine (no audio, scripted preview), so it remains a separate
+// action on the positioning step. The retention chip below
 // each card (ITEM 2 fix, fix round Sol#4 + Lane C flag) is derived from
 // resolveEngineRetentionClass/RETENTION_COPY (lib/stt/engineOptions.ts)
 // — the SAME tri-state source Header/StatusLine already read — instead
@@ -100,6 +99,20 @@ const STEP_COUNT = 5;
 // and ModeSelector can never disagree about what "浏览器标签页" actually
 // runs. Resolved once at module load (mirrors IS_DESKTOP/IS_IOS above).
 const TAB_CARD_ENGINE: Exclude<STTEngineKind, "demo"> = PREVIEW_TIER ? "tabaudio-cloud" : "tabaudio";
+
+// F1 fix round (BLOCKER): step 0 used to claim "全程本地" unconditionally
+// — true only on desktop, where every default engine (osspeech,
+// whisper) actually IS local. Step 2 (this same overlay) offers cloud
+// engines on every platform, and web's own default (webspeech) is
+// browser-cloud — the old copy was simply false there. Capability-
+// phrased on web/iOS instead of a claim that doesn't hold; desktop
+// keeps the stronger line since it's genuinely true by default there.
+// Resolved once at module load, mirroring IS_DESKTOP/IS_IOS/PLATFORM
+// above.
+const TUTORIAL_HEADLINE = IS_DESKTOP ? "你的双语会议引擎，全程本地" : "你的双语会议引擎";
+const TUTORIAL_SUPPORT = IS_DESKTOP
+  ? "私有 · 全本地 · 双语。听英文、看中文解释，会议内容留在你的设备。"
+  : "听英文、看中文解释。选本地引擎时，音频和内容不出设备。";
 
 // Per-card onboarding copy for the iOS matrix — Record over the shared
 // IOS_ENGINE_KINDS so adding an engine there without copy here fails
@@ -194,7 +207,23 @@ const ENGINE_OPTIONS: {
         },
       ];
 
-function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
+function DemoAction({ onStartDemo }: { onStartDemo: () => void }) {
+  return (
+    <button
+      type="button"
+      data-testid="tutorial-demo"
+      onClick={onStartDemo}
+      className="btn-terminal mt-5 flex w-full items-center justify-between gap-2 border border-act bg-act px-4 py-3 text-left text-sm font-medium text-ink hover:bg-act/85"
+    >
+      <span>
+        <span className="font-mono">$</span> demo · 先看演示
+      </span>
+      <CaretRight size={16} weight="regular" className="shrink-0" />
+    </button>
+  );
+}
+
+function EnginePickerStep() {
   const engine = useApp((s) => s.settings.engine);
   // Dual capture v1: read alongside `engine` so a re-pick of 系统识别
   // while it's ALREADY the current engine (e.g. revisiting this step)
@@ -215,18 +244,6 @@ function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
       <div className="text-lg font-medium text-fg">
         选择你的收听方式
       </div>
-
-      <button
-        type="button"
-        onClick={onStartDemo}
-        className="btn-tactile mt-3 flex w-full items-center justify-between gap-2 rounded-none border border-dashed border-edge2 bg-panel2 px-3 py-2 text-left text-xs text-mut hover:border-lab-orange/40 hover:text-fg"
-      >
-        <span>
-          <span className="font-mono text-mut2">$</span> demo —
-          先看演示（无需麦克风/API Key）
-        </span>
-        <CaretRight size={14} weight="regular" className="shrink-0 text-lab-orange" />
-      </button>
 
       <div className="mt-3 grid grid-cols-2 gap-2">
         {ENGINE_OPTIONS.map((opt) => {
@@ -288,7 +305,7 @@ function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
           );
         })}
       </div>
-      <div className="mt-3 text-xs leading-[1.7] text-mut2">
+      <div className="mt-3 text-xs leading-[1.7] text-mut">
         之后随时可在设置里更换；上传录音/文稿/视频链接转录在「历史→导入」（文件/文稿/链接三个标签）。
       </div>
     </div>
@@ -301,16 +318,19 @@ export default function TutorialOverlay({
   onStartDemo,
 }: TutorialOverlayProps) {
   const [step, setStep] = useState(0);
-
-  if (!open) return null;
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const isLast = step === STEP_COUNT - 1;
 
-  const finish = () => {
+  const finish = useCallback(() => {
     markTutorialDone();
     setStep(0);
     onClose();
-  };
+  }, [onClose]);
+
+  const dialogProps = useOverlayA11y({ open, onClose: finish, containerRef });
+
+  if (!open) return null;
 
   const handleStartDemo = () => {
     finish();
@@ -328,7 +348,7 @@ export default function TutorialOverlay({
          viewport (short/landscape phones) just clipped with no way to
          reach the buttons. Same scroll-thin internal-scroller contract
          every other overlay already follows; inert when content fits. */}
-      <div className="scroll-thin max-h-full w-[560px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel p-6">
+      <div ref={containerRef} {...dialogProps} className="scroll-thin max-h-full w-[560px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel p-6">
         <div className="flex items-center justify-center gap-2 font-mono text-xs tabular-nums text-mut">
           <span className="text-fg">
             [{step + 1}/{STEP_COUNT}]
@@ -353,81 +373,29 @@ export default function TutorialOverlay({
                 </span>
               </div>
               <div className="mt-4 text-base font-medium leading-[26px] text-fg">
-                把听不懂的行话，一条条屠掉。
+                {TUTORIAL_HEADLINE}
               </div>
               <div className="mt-3 text-sm leading-[26px] text-mut">
-                开会时它听英文，你看中文解释卡片。英文习语、俚语、缩写第一时间变成看得懂的解释，不用中途打断会议去查词典。
+                {TUTORIAL_SUPPORT}
               </div>
+              <div className="mt-2 text-xs leading-[1.7] text-mut">行话来了，也能一条条屠掉。</div>
+              <DemoAction onStartDemo={handleStartDemo} />
             </div>
           )}
 
-          {step === 1 && <EnginePickerStep onStartDemo={handleStartDemo} />}
+          {step === 1 && <EnginePickerStep />}
 
           {step === 2 && (
             <div>
               <div className="text-lg font-medium text-fg">
-                三种用法
+                会议中这样用
               </div>
-              <div className="mt-4 space-y-3">
-                <div className="rounded-none border border-edge p-3">
-                  <div className="text-sm font-medium text-fg">免费词典模式</div>
-                  <div className="mt-2 text-xs leading-[1.7] text-mut">
-                    开箱即用，428 条内置商务表达与术语，无需任何配置。
-                  </div>
-                </div>
-                <div className="rounded-none border border-edge p-3">
-                  <div className="text-sm font-medium text-fg">填 API Key 解锁 AI 上下文检测</div>
-                  <div className="mt-2 text-xs leading-[1.7] text-mut">
-                    设置→AI 检测，兼容 DeepSeek/Ollama，解释更贴合当前语境。
-                  </div>
-                </div>
-                <div className="rounded-none border border-edge p-3">
-                  {/* iOS-cloud round: 全离线 stays the desktop/web title
-                     (that copy really is fully offline); iOS says 本地优先
-                     — its copy now names an optional cloud path, and a
-                     全离线 headline over that would oversell. */}
-                  <div className="text-sm font-medium text-fg">{IS_IOS ? "本地优先" : "全离线"}</div>
-                  <div className="mt-2 text-xs leading-[1.7] text-mut">
-                    {/* #58 fix round FIX 9 (Sol MEDIUM): the desktop/web
-                       copy names 本地模型 + Ollama — neither exists
-                       on iOS v1 (no Python sidecar at all, see ios.ts's
-                       own header comment). iOS's actual offline story is
-                       narrower: 系统识别 transcribes on-device, 词典检测
-                       works with no network, but AI 解释 still needs a
-                       key — an honest replacement, not a claim iOS can't
-                       back up. iOS-cloud round: cloud engines are now
-                       selectable on iOS too, so the copy pins 默认 to
-                       the local claim and names the switch honestly —
-                       状态栏的引擎颜色 (StatusLine's iosTextClass) is
-                       the live surface of the same fact. */}
-                    {IS_IOS
-                      ? "默认系统识别，全程本机转录；切换云端识别引擎后音频会发往对应服务商。词典检测离线可用，AI 解释需配置 API Key。"
-                      : "本地模型 + Ollama，音频和内容完全不出本机。"}
-                  </div>
-                </div>
+              <div className="mt-4 space-y-3 text-sm leading-[26px] text-fg/90">
+                <div>· 金色/青色下划线可点开对应卡片</div>
+                <div>· 选中英文可划词存入个人词典</div>
+                <div>· 结束后生成双语纪要与学习卡片，历史里随时回看</div>
               </div>
-            </div>
-          )}
-
-          {step === 3 && (
-            <div>
-              <div className="text-lg font-medium text-fg">
-                实时体验
-              </div>
-              <div className="mt-3 text-sm leading-[26px] text-fg/90">
-                新卡片到达有金色高亮提示；转录文本里的金色虚线下划线可以点击定位到对应卡片。最新几张卡片全展开，其余折叠为摘要，随手展开/折叠。选中任意英文文字即可划词收藏，直接存入个人词库。专注模式下折叠右栏，鼠标悬停在高亮上就能看到释义。
-              </div>
-            </div>
-          )}
-
-          {step === 4 && (
-            <div>
-              <div className="text-lg font-medium text-fg">
-                会后
-              </div>
-              <div className="mt-3 text-sm leading-[26px] text-fg/90">
-                结束会议后可以生成双语纪要、全文翻译和学习卡片，一键导出 Markdown 或 Anki。练习卡支持复习页反复巩固，所有历史记录自动落盘保存在本机，不上传任何服务器。
-              </div>
+              <div className="mt-5 text-xs leading-[1.7] text-mut">准备好了就开始吧。</div>
             </div>
           )}
         </div>
@@ -463,7 +431,9 @@ export default function TutorialOverlay({
               <button
                 type="button"
                 onClick={() => setStep((s) => Math.min(STEP_COUNT - 1, s + 1))}
-                className="btn-terminal rounded-none bg-act px-3 py-1.5 font-mono text-sm font-semibold text-ink hover:bg-act/85"
+                className={step === 0
+                  ? "btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                  : "btn-terminal rounded-none bg-act px-3 py-1.5 font-mono text-sm font-semibold text-ink hover:bg-act/85"}
               >
                 下一步
               </button>

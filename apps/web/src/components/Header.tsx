@@ -76,9 +76,12 @@ export interface HeaderProps {
   onOpenTaskCenter: () => void;
   /** Mobile toolbar migration: TranscriptPanel's own second toolbar row
    *  (选择/AI 校正/补全翻译) hands its three buttons off to this header on
-   *  narrow layouts — see MobileToolbarButtons below and TranscriptPanel.
-   *  tsx's own toolbarVisible doc for the other half of this split. Gated
-   *  on isMobileLayout (page.tsx's own IS_IOS-or-matchMedia state) rather
+   *  narrow layouts — see TranscriptPanel.tsx's own toolbarVisible doc for
+   *  the other half of that split. D2 fold (task 4): the three buttons
+   *  now render as labeled rows inside the ≡ menu (useMobileToolbarState/
+   *  HamburgerMenu/IosMenuSheet below), not a standalone header cluster —
+   *  the <sm row has no width budget left for a third cluster. Gated on
+   *  isMobileLayout (page.tsx's own IS_IOS-or-matchMedia state) rather
    *  than the bare IS_IOS constant so narrow-web mobile layout gets it
    *  too, not just a native iOS build. selectMode/onToggleSelectMode are
    *  the SAME lifted state TranscriptPanel now accepts as an optional
@@ -474,28 +477,25 @@ function TaskCenterLauncher({ onOpenTaskCenter }: { onOpenTaskCenter: () => void
   );
 }
 
-// Mobile toolbar migration: 选择/AI 校正/补全翻译 move off TranscriptPanel's
-// own second bar and into this header's ml-auto cluster on mobile — see
-// TranscriptPanel.tsx's own toolbarVisible doc comment for the desktop-
-// unchanged / mobile-latch-only half of this split. Every gating
-// condition below reads the SAME store selectors TranscriptPanel's own
-// desktop buttons use (aiConfigured/untranslatedCount/showGapFill/
-// gapFillBusy) so the two surfaces can never disagree — deliberately
-// re-derived here rather than extracted into a shared helper (four
-// lines each, not worth an abstraction for one caller on each side).
-// selectMode/onToggleSelectMode are the lifted page.tsx state;
-// onOpenCorrection just flips TranscriptPanel's own controlled
-// correctionOpen prop true (see that file's own hybrid controlled/
-// uncontrolled doc).
-function MobileToolbarButtons({
-  selectMode,
-  onToggleSelectMode,
-  onOpenCorrection,
-}: {
-  selectMode: boolean;
-  onToggleSelectMode: () => void;
-  onOpenCorrection: () => void;
-}) {
+// D2 fold (task 4): 选择/AI 校正/补全翻译 used to live as icon-only buttons
+// in this header's own ml-auto cluster on mobile (first migrated off
+// TranscriptPanel's own second bar — see that file's own toolbarVisible
+// doc comment for the desktop-unchanged / mobile-latch-only half of that
+// earlier split). The <sm row has no width budget left for a THIRD
+// standalone cluster, so they move again — into the ≡ menu itself, as
+// labeled rows (HamburgerMenu's dropdown AND IosMenuSheet's BottomSheet
+// each render their OWN row markup, matching that host's existing item
+// style, off this ONE shared gating/count computation, so the two menu
+// hosts can't drift into a forked copy of the logic itself). Every
+// gating condition below reads the SAME store selectors TranscriptPanel's
+// own desktop buttons use (aiConfigured/untranslatedCount/showGapFill/
+// gapFillBusy) so all three surfaces can never disagree — deliberately
+// re-derived here rather than extracted into a cross-file shared helper
+// (four lines each, not worth an abstraction for one caller on each
+// side). selectMode is the lifted page.tsx state this hook's caller
+// already has; onToggleSelectMode/onOpenCorrection stay owned by the
+// two menu components themselves (this hook is state only, no handlers).
+function useMobileToolbarState(selectMode: boolean) {
   const status = useApp((s) => s.status);
   const segments = useApp((s) => s.segments);
   const correctionBusy = useApp((s) => s.correctionBusy);
@@ -515,54 +515,15 @@ function MobileToolbarButtons({
     translateLanguage.split("-")[0] !== explainLanguage &&
     untranslatedCount > 0;
 
-  const iconBtnCls =
-    "flex h-9 w-9 items-center justify-center border text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50";
-
-  return (
-    <>
-      {segments.length > 0 && (
-        <button
-          type="button"
-          data-testid="btn-select-mode"
-          onClick={onToggleSelectMode}
-          aria-label={selectMode ? "退出选择" : "选择"}
-          title={selectMode ? "退出选择" : "选择"}
-          className={`${iconBtnCls} ${selectMode ? "border-act bg-act/10 text-act" : "border-edge"}`}
-        >
-          {selectMode ? <X size={18} weight="regular" /> : <Selection size={18} weight="regular" />}
-        </button>
-      )}
-      {aiConfigured && status === "stopped" && segments.length > 0 && (
-        <button
-          type="button"
-          data-testid="btn-ai-correct"
-          disabled={correctionBusy}
-          onClick={onOpenCorrection}
-          aria-label={correctionBusy ? "校正中…" : "AI 校正"}
-          title={correctionBusy ? "校正中…" : "AI 校正"}
-          className={`${iconBtnCls} border-edge`}
-        >
-          <MagicWand size={18} weight="regular" />
-        </button>
-      )}
-      {showGapFill && (
-        <button
-          type="button"
-          data-testid="btn-gap-fill"
-          disabled={gapFillBusy}
-          onClick={() => void runGapFill()}
-          aria-label={`补全翻译 (${untranslatedCount})`}
-          title={`补全翻译 (${untranslatedCount})`}
-          className={`relative ${iconBtnCls} border-edge`}
-        >
-          <Translate size={18} weight="regular" />
-          <span className="absolute -right-1 -top-1 text-[10px] tabular-nums text-lab-orange">
-            {untranslatedCount}
-          </span>
-        </button>
-      )}
-    </>
-  );
+  return {
+    showSelect: segments.length > 0,
+    selectLabel: selectMode ? "退出选择" : "选择",
+    showAiCorrect: aiConfigured && status === "stopped" && segments.length > 0,
+    correctionBusy,
+    showGapFill,
+    gapFillBusy,
+    untranslatedCount,
+  };
 }
 
 // ≡ 汉堡菜单 (v3.3 汉堡收纳): 演示/学习中心/设置/帮助 live here now — 历史
@@ -576,6 +537,10 @@ function HamburgerMenu({
   onOpenSettings,
   onOpenHelp,
   onIosMenu,
+  isMobileLayout,
+  selectMode,
+  onToggleSelectMode,
+  onOpenCorrection,
 }: Pick<HeaderProps, "onDemo" | "onOpenSettings" | "onOpenHelp"> & {
   /** iOS only (sim-caught WKWebView fix): the sheet now mounts from
    *  Header as a SIBLING of the sticky <header> — outside its z-20
@@ -584,8 +549,15 @@ function HamburgerMenu({
    *  painted but untappable). The ☰ button therefore just signals
    *  Header instead of toggling the local dropdown state. */
   onIosMenu?: () => void;
+  /** D2 fold (task 4): 选择/AI 校正/补全翻译 rows — see
+   *  useMobileToolbarState's own doc comment above. */
+  isMobileLayout: boolean;
+  selectMode: boolean;
+  onToggleSelectMode: () => void;
+  onOpenCorrection: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const toolbar = useMobileToolbarState(selectMode);
   const rootRef = useRef<HTMLDivElement>(null);
   const status = useApp((s) => s.status);
   const activeSessionId = useApp((s) => s.activeSessionId);
@@ -673,6 +645,65 @@ function HamburgerMenu({
           role="menu"
           className="absolute right-0 top-[calc(100%+4px)] z-30 flex w-56 flex-col border border-edge bg-panel2 glassable py-1 shadow-lg"
         >
+          {/* D2 fold (task 4): 选择/AI 校正/补全翻译 — mobile-only rows,
+              same gate (isMobileLayout) the old standalone header cluster
+              used; same handlers/testids, now labeled instead of
+              icon-only, with 补全翻译's own count badge trailing the
+              label. */}
+          {isMobileLayout && toolbar.showSelect && (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-select-mode"
+              onClick={() => {
+                setOpen(false);
+                onToggleSelectMode();
+              }}
+              className={itemCls}
+            >
+              {selectMode ? <X size={16} weight="regular" /> : <Selection size={16} weight="regular" />}
+              {toolbar.selectLabel}
+            </button>
+          )}
+          {isMobileLayout && toolbar.showAiCorrect && (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-ai-correct"
+              disabled={toolbar.correctionBusy}
+              onClick={() => {
+                setOpen(false);
+                onOpenCorrection();
+              }}
+              className={itemCls}
+            >
+              <MagicWand size={16} weight="regular" />
+              {toolbar.correctionBusy ? "校正中…" : "AI 校正"}
+            </button>
+          )}
+          {isMobileLayout && toolbar.showGapFill && (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-gap-fill"
+              disabled={toolbar.gapFillBusy}
+              onClick={() => {
+                setOpen(false);
+                void runGapFill();
+              }}
+              className={itemCls}
+            >
+              <Translate size={16} weight="regular" />
+              补全翻译
+              {/* F11 fix round (law sweep): text-[10px] is illegal on an
+                  interactive element (this whole row is role="menuitem")
+                  — text-xs matches the byte-identical count badge on
+                  this button's own iOS-menu sibling just below. */}
+              <span className="ml-auto text-xs tabular-nums text-lab-orange">
+                {toolbar.untranslatedCount}
+              </span>
+            </button>
+          )}
           {!meetingActive && (
             <button
               type="button"
@@ -826,14 +857,25 @@ function IosMenuSheet({
   onDemo,
   onOpenSettings,
   onOpenHelp,
+  isMobileLayout,
+  selectMode,
+  onToggleSelectMode,
+  onOpenCorrection,
 }: Pick<HeaderProps, "onDemo" | "onOpenSettings" | "onOpenHelp"> & {
   open: boolean;
   onClose: () => void;
+  /** D2 fold (task 4): mirrors HamburgerMenu's own new props exactly —
+   *  see useMobileToolbarState's own doc comment above. */
+  isMobileLayout: boolean;
+  selectMode: boolean;
+  onToggleSelectMode: () => void;
+  onOpenCorrection: () => void;
 }) {
   const status = useApp((s) => s.status);
   const activeSessionId = useApp((s) => s.activeSessionId);
   const newMeeting = useApp((s) => s.newMeeting);
   const showToast = useApp((s) => s.showToast);
+  const toolbar = useMobileToolbarState(selectMode);
   const meetingActive =
     status === "connecting" || status === "listening" || status === "paused";
 
@@ -872,6 +914,59 @@ function IosMenuSheet({
           into this branch at all. */}
       <BottomSheet open={open} onClose={onClose}>
           <div data-testid="header-menu-sheet" role="menu" className="divide-y divide-edge">
+            {/* D2 fold (task 4): 选择/AI 校正/补全翻译 — same gate/handlers/
+                testids as HamburgerMenu's own copy above, sized for this
+                sheet's own row idiom instead. */}
+            {isMobileLayout && toolbar.showSelect && (
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="btn-select-mode"
+                onClick={() => {
+                  onClose();
+                  onToggleSelectMode();
+                }}
+                className={iosItemCls}
+              >
+                {selectMode ? <X size={18} weight="regular" /> : <Selection size={18} weight="regular" />}
+                {toolbar.selectLabel}
+              </button>
+            )}
+            {isMobileLayout && toolbar.showAiCorrect && (
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="btn-ai-correct"
+                disabled={toolbar.correctionBusy}
+                onClick={() => {
+                  onClose();
+                  onOpenCorrection();
+                }}
+                className={iosItemCls}
+              >
+                <MagicWand size={18} weight="regular" />
+                {toolbar.correctionBusy ? "校正中…" : "AI 校正"}
+              </button>
+            )}
+            {isMobileLayout && toolbar.showGapFill && (
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="btn-gap-fill"
+                disabled={toolbar.gapFillBusy}
+                onClick={() => {
+                  onClose();
+                  void runGapFill();
+                }}
+                className={iosItemCls}
+              >
+                <Translate size={18} weight="regular" />
+                补全翻译
+                <span className="ml-auto text-xs tabular-nums text-lab-orange">
+                  {toolbar.untranslatedCount}
+                </span>
+              </button>
+            )}
             {!meetingActive && (
               <button
                 type="button"
@@ -1061,14 +1156,6 @@ export default function Header({
           <DetectModeBadge />
           <ElapsedTimer />
 
-          {isMobileLayout && (
-            <MobileToolbarButtons
-              selectMode={selectMode}
-              onToggleSelectMode={onToggleSelectMode ?? (() => {})}
-              onOpenCorrection={onOpenCorrection ?? (() => {})}
-            />
-          )}
-
           {(status === "idle" || status === "stopped") && (
             <button
               type="button"
@@ -1080,7 +1167,10 @@ export default function Header({
               // transport button goes icon-only on iOS — neighbors
               // (pause/resume/stop) already make each one's purpose
               // contextual, and the phone-width row has no room left for
-              // a label once 选择/AI 校正/补全翻译 also moved in here.
+              // a label (D2 fold, task 4: 选择/AI 校正/补全翻译 no longer
+              // compete for this same row at all — they moved into the
+              // ≡ menu — but iOS stays icon-only regardless; the row is
+              // still tight without them).
               className={`btn-terminal h-9 rounded-none bg-act font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap ${
                 IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
               }`}
@@ -1190,6 +1280,10 @@ export default function Header({
             onOpenSettings={onOpenSettings}
             onOpenHelp={onOpenHelp}
             onIosMenu={IS_IOS ? () => setIosMenuOpen(true) : undefined}
+            isMobileLayout={isMobileLayout}
+            selectMode={selectMode}
+            onToggleSelectMode={onToggleSelectMode ?? (() => {})}
+            onOpenCorrection={onOpenCorrection ?? (() => {})}
           />
         </div>
     </header>
@@ -1200,6 +1294,10 @@ export default function Header({
         onDemo={onDemo}
         onOpenSettings={onOpenSettings}
         onOpenHelp={onOpenHelp}
+        isMobileLayout={isMobileLayout}
+        selectMode={selectMode}
+        onToggleSelectMode={onToggleSelectMode ?? (() => {})}
+        onOpenCorrection={onOpenCorrection ?? (() => {})}
       />
     )}
     </>

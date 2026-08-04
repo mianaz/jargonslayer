@@ -14,7 +14,7 @@
 // — pins the pairing for each card.
 
 import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "@/lib/store";
 import { RETENTION_COPY } from "@/lib/stt/engineOptions";
@@ -35,6 +35,7 @@ describe("TutorialOverlay — web build, ambient test env", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    window.localStorage.removeItem("jargonslayer:tutorial_done");
   });
 
   afterEach(async () => {
@@ -43,6 +44,7 @@ describe("TutorialOverlay — web build, ambient test env", () => {
     container = null;
     root = null;
     resetStore();
+    window.localStorage.removeItem("jargonslayer:tutorial_done");
   });
 
   async function openEnginePickerStep() {
@@ -64,6 +66,65 @@ describe("TutorialOverlay — web build, ambient test env", () => {
     if (!btn) throw new Error(`card containing "${labelSubstring}" not found`);
     return btn as HTMLButtonElement;
   }
+
+  it("flows through three steps and ends with the orientation copy", async () => {
+    await act(async () => {
+      root!.render(<TutorialOverlay open={true} onClose={() => {}} />);
+    });
+    expect(container!.textContent).toContain("[1/3]");
+    // F1 fix round (BLOCKER): web's step-1 copy is capability-phrased —
+    // "全程本地" was only true on desktop, and step 2 (this same overlay)
+    // offers cloud engines here too.
+    expect(container!.textContent).toContain("你的双语会议引擎");
+    expect(container!.textContent).not.toContain("全程本地");
+    expect(container!.textContent).toContain("听英文、看中文解释。选本地引擎时，音频和内容不出设备。");
+
+    await act(async () => {
+      Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === "下一步")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.textContent).toContain("[2/3]");
+    expect(container!.textContent).toContain("选择你的收听方式");
+
+    await act(async () => {
+      Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === "下一步")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.textContent).toContain("[3/3]");
+    expect(container!.textContent).toContain("金色/青色下划线可点开对应卡片");
+    expect(container!.textContent).toContain("开始使用");
+  });
+
+  it("starts the demo from step one and marks the tutorial done", async () => {
+    const onClose = vi.fn();
+    const onStartDemo = vi.fn();
+    await act(async () => {
+      root!.render(<TutorialOverlay open={true} onClose={onClose} onStartDemo={onStartDemo} />);
+    });
+
+    await act(async () => {
+      container!.querySelector('[data-testid="tutorial-demo"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onStartDemo).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem("jargonslayer:tutorial_done")).toBe("1");
+  });
+
+  it("uses the skip path when Escape closes the dialog", async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      root!.render(<TutorialOverlay open={true} onClose={onClose} />);
+    });
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem("jargonslayer:tutorial_done")).toBe("1");
+  });
 
   it("浏览器识别 (webspeech, cloud-transient) shows RETENTION_COPY's 云端·不留存 label", async () => {
     await openEnginePickerStep();

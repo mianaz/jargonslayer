@@ -70,6 +70,18 @@ describe("TutorialOverlay — desktop engine picker (Miana 2026-08-01 taxonomy f
     return btn as HTMLButtonElement;
   }
 
+  // F1 fix round (BLOCKER): desktop's default engines (osspeech,
+  // whisper) genuinely ARE local, so this build keeps the stronger
+  // step-1 claim — only web/iOS (whose defaults/step-2 offers can be
+  // cloud) get the capability-phrased copy instead.
+  it("F1: keeps the unconditional 全程本地 claim on step 1 (default engines are actually local here)", async () => {
+    await act(async () => {
+      root!.render(<TutorialOverlay open={true} onClose={() => {}} />);
+    });
+    expect(container!.textContent).toContain("你的双语会议引擎，全程本地");
+    expect(container!.textContent).toContain("私有 · 全本地 · 双语。听英文、看中文解释，会议内容留在你的设备。");
+  });
+
   it("offers osspeech + 本地模型 only — no webspeech/浏览器识别/系统 App 音频 card", async () => {
     await openEnginePickerStep();
 

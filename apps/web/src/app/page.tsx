@@ -34,6 +34,7 @@ import { checkUpdates as checkPackUpdates, listPackSources } from "@/lib/detect/
 import { warmSystemTranslateProbeForStartup } from "@/lib/translate/providers";
 import { nextHelpOpenForWizardTransition } from "./wizardHelpTransition";
 import { triggerDictPackAutoUpdate } from "./dictPackAutoUpdateTrigger";
+import { CardArrivalAnnouncer } from "@/lib/a11y";
 
 type RightTab = "cards" | "summary";
 
@@ -78,7 +79,7 @@ export default function Home() {
   const [importHubOpen, setImportHubOpen] = useState(false);
   // Mobile toolbar migration: 选择/AI 校正 open-state lifted here so
   // Header's mobile 选择/AI 校正 buttons and TranscriptPanel's own desktop
-  // buttons can drive the SAME state — see Header.tsx's MobileToolbarButtons
+  // buttons can drive the SAME state — see Header.tsx's ≡-menu toolbar rows (useMobileToolbarState)
   // and TranscriptPanel.tsx's controlled/uncontrolled hybrid doc comments.
   const [selectMode, setSelectMode] = useState(false);
   const [correctionOpen, setCorrectionOpen] = useState(false);
@@ -339,7 +340,6 @@ export default function Home() {
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <section className="relative min-h-0 min-w-0 flex-1 border-b border-edge lg:border-b-0 lg:border-r">
           <TranscriptPanel
-            onDemo={() => void startDemo()}
             isMobileLayout={isMobileLayout}
             selectMode={selectMode}
             onToggleSelectMode={() => setSelectMode((v) => !v)}
@@ -538,6 +538,7 @@ export default function Home() {
       />
       <LookupPopover />
       <Toast />
+      <CardArrivalAnnouncer />
       {/* v0.4 S3 chunk 6: first-run local sidecar provisioning wizard —
          renders nothing on an ordinary web build (see DesktopBootstrap.
          tsx's own header comment for why this is gated at BOTH this

@@ -28,9 +28,11 @@ import {
   useAudiocapCaps,
 } from "@/lib/stt/engineOptions";
 import {
+  ENGINE_CAPABILITIES,
   ENGINE_FAMILY_LABEL,
   ENGINE_FAMILY_ORDER,
   resolveTabAudioCloudProvider,
+  type RetentionClass,
 } from "@/lib/stt/engineCapabilities";
 import { KEY_STATUS_LABEL, deriveKeyStatus } from "@/lib/settings/keyStatus";
 import { sttProviderKeyValue } from "@/lib/settings/keysCatalog";
@@ -41,7 +43,9 @@ import TaskTray from "@/components/TaskTray";
 import AiStatusPanel, { deriveHealthStatus, type AiHealthStatus } from "@/components/AiStatusPanel";
 import { useLlmTelemetry } from "@/lib/llm/telemetry";
 import { resolveTaskCreds } from "@/lib/llm/taskConfig";
-import type { Settings } from "@jargonslayer/core/types";
+import { useDirectTransport } from "@/lib/llm/client";
+import { useOverlayA11y } from "@/lib/a11y";
+import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 
 // Exported (tech-debt ledger #4, 2026-07-17): StatusLine.test.tsx
 // imports this instead of re-pinning its own copy of the zh labels, so
@@ -145,7 +149,14 @@ function AudioSourceDropdown() {
           engine: deriveEngineForMode(nextMode, { isDesktop: IS_DESKTOP, isIos: IS_IOS }, settings),
         });
       }}
-      className="h-full max-w-[7.5rem] shrink-0 border-l border-edge bg-panel2 px-2 font-mono text-fg disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem]"
+      // F5 fix round (HIGH): below sm this is the NARROWER of the two
+      // selects (7rem vs 引擎's 8.5rem, EngineDropdown below) — its own
+      // option labels (麦克风/系统/麦克风+系统/浏览器标签页) are shorter
+      // than the engine picker's third-party names, so it needs less of
+      // the row's tight budget. Native <select> clips its own displayed
+      // (selected) text once boxed this narrow — no extra truncate class
+      // needed. ≥sm unchanged.
+      className="h-full max-w-[7rem] shrink-0 border-l border-edge bg-panel2 px-2 font-mono text-fg disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem]"
     >
       {!selected && (
         <option value="" disabled>
@@ -162,7 +173,7 @@ function AudioSourceDropdown() {
 }
 
 // FINDING 12 fix (LOW): short NAME half for the cramped bottom bar (the
-// select is max-w-[7.5rem] below sm — "Soniox 云端识别 · 未配置" truncates
+// select is max-w-[8.5rem] below sm — "Soniox 云端识别 · 未配置" truncates
 // on iOS) — a display-only override local to this component, never a
 // change to the shared ENGINE_OPTIONS array (SettingsDialog's own
 // ENGINE_CARDS, the actual source of `label`, keeps the full name).
@@ -231,15 +242,33 @@ function EngineDropdown() {
     options: ENGINE_OPTIONS.filter((option) => option.family === family),
   })).filter((group) => group.options.length > 0);
 
-  const selectValue =
-    engine === "demo" || engine === "import"
-      ? ""
-      : isSidecarFamily(engine)
-        ? LOCAL_SIDECAR_VALUE
-        : engine;
+  // TASK 5 root cause (value/option mismatch): `engine` can be a value
+  // this BUILD's platform-filtered ENGINE_OPTIONS carries no <option>
+  // for at all — "demo"/"import" by design (never live engines), but
+  // also any cross-platform/stale persisted kind (e.g. a desktop-only
+  // "osspeech"/"appaudio" surviving into a web session). Before this
+  // fix `selectValue` fell through to that raw string for every
+  // non-demo/import case, which matches no rendered <option> — a
+  // native <select> then silently auto-selects its FIRST enabled
+  // option (verified against jsdom's own HTMLSelectElement algorithm:
+  // it lands on 本地模型, the first-rendered option) instead of showing
+  // nothing, quietly misrepresenting an unrelated engine as 本地模型.
+  // `unmapped` generalizes the existing demo/import placeholder path
+  // to catch this too, so the select falls back to an honest
+  // placeholder instead of a WRONG live option.
+  const unmapped = !selectedOpt;
+  // The unmapped engine's OWN name when ENGINE_CAPABILITIES still knows
+  // it (a real engine, just unavailable on this platform/build) — the
+  // generic ENGINE_SELECT_PLACEHOLDER stays reserved for demo/import,
+  // which were never real capture engines to begin with.
+  const unmappedLabel =
+    (ENGINE_CAPABILITIES as Partial<Record<STTEngineKind, { label: string }>>)[engine]?.label ??
+    ENGINE_SELECT_PLACEHOLDER;
+
+  const selectValue = unmapped ? "" : isSidecarFamily(engine) ? LOCAL_SIDECAR_VALUE : engine;
 
   const iosTextClass = IS_IOS
-    ? engine === "demo" || engine === "import"
+    ? unmapped
       ? "text-fg"
       : RETENTION_COPY[resolveEngineRetentionClass(engine, sttEngineMode)].textClass
     : "text-fg";
@@ -275,11 +304,15 @@ function EngineDropdown() {
           ),
         });
       }}
-      className={`h-full max-w-[7.5rem] shrink-0 border-x border-edge bg-panel2 px-2 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem] sm:px-2 ${iosTextClass}`}
+      // F5 fix round (HIGH): below sm this is the WIDER of the two
+      // selects (8.5rem vs 音源's 7rem, AudioSourceDropdown above) — its
+      // third-party option labels (Soniox/Deepgram/ElevenLabs · 未配置)
+      // need more of the row's tight budget. ≥sm unchanged.
+      className={`h-full max-w-[8.5rem] shrink-0 border-x border-edge bg-panel2 px-2 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem] sm:px-2 ${iosTextClass}`}
     >
-      {(engine === "demo" || engine === "import") && (
+      {unmapped && (
         <option value="" disabled>
-          {ENGINE_SELECT_PLACEHOLDER}
+          {unmappedLabel}
         </option>
       )}
       {groupedOptions.map((group) => (
@@ -339,32 +372,97 @@ export const AI_STATUS_CHIP_GLYPH: Record<AiHealthStatus, string> = {
 
 export const AI_STATUS_CHIP_DOMAIN_LABEL = "检测";
 
-// Chip + popover: always-visible "检测 · {model} {glyph}" label for the
-// detect agent (the one every meeting actually uses live), click opens
-// the full 4-row AiStatusPanel. Click-outside/Escape close mirrors
+// TASK 1 truth fix (owner ask): this chip used to show the CONFIGURED
+// detect model regardless of whether it's actually what's running —
+// dictionary mode (or autoDetect off entirely) never calls it, and llm
+// mode with no resolved key never gets past client.ts's own NoKeyError
+// fallback to use it either. detectMode (the scheduler's own runtime
+// state, detect/scheduler.ts) is already the truth signal AiStatusPanel's
+// aiFallenBack reads for the identical reason — no new plumbing, just
+// branch the label on it + the resolved key's presence. Exported (same
+// "don't re-pin raw zh in the test" convention as DETECT_MODE_LABEL).
+export const AI_STATUS_CHIP_DICT_LABEL = "词典";
+export const AI_STATUS_CHIP_UNCONFIGURED_LABEL = "未配置";
+
+// D2 fold (task 4): extracted out of the inline JSX that used to sit
+// directly in StatusLine's own return — reused byte-identically both in
+// the sm+ inline group below and inside OverflowChip's <sm popover, so
+// neither copy can drift into a fork of the other's logic.
+function DetectModeChip() {
+  const detectMode = useApp((s) => s.detectMode);
+  const aiDetect = useApp((s) => s.settings.aiDetect);
+  const updateSettings = useApp((s) => s.updateSettings);
+  const setDetectMode = useApp((s) => s.setDetectMode);
+
+  if (detectMode === "off") {
+    return (
+      <span className="whitespace-nowrap px-2 sm:px-3">
+        {DETECT_MODE_LABEL.off}
+      </span>
+    );
+  }
+
+  // Clickable (E2E feedback): flips settings.aiDetect. The label
+  // derives from detectMode (the scheduler's runtime state, see
+  // detect/scheduler.ts), which the scheduler only re-reads on its
+  // next segment/batch — so the click ALSO echoes the expected
+  // mode synchronously, or an idle meeting would show a dead
+  // button. The scheduler's own onModeChange remains authoritative
+  // and corrects the echo if reality differs (e.g. key-less
+  // fallback downgrades llm back to dictionary).
+  return (
+    <button
+      type="button"
+      data-testid="statusline-detect-toggle"
+      onClick={() => {
+        const next = !aiDetect;
+        updateSettings({ aiDetect: next });
+        setDetectMode(next ? "llm" : "dictionary");
+      }}
+      title="点击切换 AI 模式（词典模式始终开启）"
+      className="flex h-full items-center whitespace-nowrap px-2 hover:bg-panel3 hover:text-fg sm:px-3"
+    >
+      {DETECT_MODE_LABEL[detectMode]}
+    </button>
+  );
+}
+
+// Chip + popover: always-visible "检测 · {running label} {glyph}" for
+// the detect agent (the one every meeting actually uses live), click
+// opens the full 4-row AiStatusPanel. Click-outside/Escape close mirrors
 // Header.tsx's HamburgerMenu exactly (same pattern, this bar's own
 // popover). Opens UPWARD (bottom-full) since this bar sits at the
 // bottom of the screen — mirrors HamburgerMenu's positioning inverted.
 function AiStatusChip() {
   const settings = useApp((s) => s.settings);
+  const detectMode = useApp((s) => s.detectMode);
   const detectStat = useLlmTelemetry((s) => s.detect);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  // F4 fix round (HIGH): routed through useOverlayA11y for stack-aware
+  // Escape (this popover can itself nest inside StatusLine's <sm
+  // OverflowChip popover — see that component's own doc) + Tab-trap +
+  // focus-restore-to-trigger. modal:false — role=dialog stays, but this
+  // is a non-modal popover, and a nested aria-modal here would be the
+  // wrong ARIA shape once it's stacked under the overflow popover's own
+  // aria-modal.
+  const dialogProps = useOverlayA11y({
+    open,
+    onClose: () => setOpen(false),
+    containerRef: popoverRef,
+    modal: false,
+  });
 
   useEffect(() => {
     if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
     const handleMouseDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
-    document.addEventListener("keydown", handleKey);
     document.addEventListener("mousedown", handleMouseDown);
     return () => {
-      document.removeEventListener("keydown", handleKey);
       document.removeEventListener("mousedown", handleMouseDown);
     };
   }, [open]);
@@ -372,7 +470,44 @@ function AiStatusChip() {
   const resolved = resolveTaskCreds(settings, "detect");
   const model = shortModelName(resolved.model);
   const health = deriveHealthStatus(detectStat);
-  const glyph = AI_STATUS_CHIP_GLYPH[health];
+  // F2 fix round (HIGH): 未配置 used to key on resolved.apiKey ALONE —
+  // but on the Next.js transport path the SERVER may hold its own
+  // funded key (preview tier's shared trial key, or a full-tier
+  // server-side key) and subscription-direct works keyless too, so a
+  // missing CLIENT key doesn't mean the call can't succeed there.
+  // useDirectTransport (client.ts) is the exact gate every *Api call
+  // site already uses to decide direct-vs-/api/* for this same
+  // resolved cred — 未配置 is honest only when THIS call would actually
+  // skip /api/* (desktop, or preview tier with a key — which can't
+  // co-occur with "no key"). When the Next path would serve instead,
+  // show the model name; its own health glyph (below) tells the truth
+  // about whether it's actually succeeding.
+  const direct = useDirectTransport(resolved);
+  const unconfigured = detectMode === "llm" && direct && !resolved.apiKey;
+  // TRUTH: what's actually running, not what's merely configured —
+  // dictionary/off never call the model above regardless of what's
+  // configured; llm with no resolved key (and no server fallback to
+  // catch it) doesn't either.
+  const runningLabel =
+    detectMode === "off"
+      ? DETECT_MODE_LABEL.off
+      : detectMode === "dictionary"
+        ? AI_STATUS_CHIP_DICT_LABEL
+        : unconfigured
+          ? AI_STATUS_CHIP_UNCONFIGURED_LABEL
+          : model;
+  // F10 fix round (MEDIUM): the ✓/✗ telemetry glyph used to render
+  // regardless of runningLabel — an OLD failure recorded while llm mode
+  // was active stayed "✗" even after switching to 词典 mode (which never
+  // calls the model at all), reading as "dictionary is failing" when
+  // nothing dictionary-related ever ran. A glyph is only ever earned
+  // while a real model name is shown.
+  const showingModel = detectMode === "llm" && !unconfigured;
+  const glyph = showingModel ? AI_STATUS_CHIP_GLYPH[health] : undefined;
+  // Compact (phone-width) variant additionally drops the neutral "…"
+  // glyph (reads as a truncation artifact there, not a status — see the
+  // span below); ok "✓"/fail "✗" still show, both unambiguous at a glance.
+  const compactGlyph = glyph && health !== "neutral" ? glyph : undefined;
 
   return (
     <div ref={rootRef} className="relative flex h-full items-center">
@@ -383,24 +518,21 @@ function AiStatusChip() {
         aria-haspopup="dialog"
         aria-expanded={open}
         title="AI 状态"
-        className="flex h-full items-center whitespace-nowrap px-2 hover:bg-panel3 hover:text-fg sm:px-3"
+        className={`flex h-full items-center whitespace-nowrap px-2 hover:bg-panel3 hover:text-fg sm:px-3 ${unconfigured ? "text-warn-soft" : ""}`}
       >
         <span className="hidden sm:inline">
-          {AI_STATUS_CHIP_DOMAIN_LABEL} · {model} {glyph}
+          {AI_STATUS_CHIP_DOMAIN_LABEL} · {runningLabel}
+          {glyph ? ` ${glyph}` : ""}
         </span>
-        {/* Compact (phone-width) variant: the neutral "…" glyph read as
-            a truncation artifact rather than a status — dropped here
-            (ok "✓"/fail "✗" still show, both unambiguous at a glance).
-            The desktop-full span above keeps "…" unchanged. */}
+        {/* Compact (phone-width) variant — see compactGlyph above. */}
         <span className="sm:hidden">
-          {health === "neutral"
-            ? AI_STATUS_CHIP_DOMAIN_LABEL
-            : `${AI_STATUS_CHIP_DOMAIN_LABEL} ${glyph}`}
+          {compactGlyph ? `${AI_STATUS_CHIP_DOMAIN_LABEL} ${compactGlyph}` : AI_STATUS_CHIP_DOMAIN_LABEL}
         </span>
       </button>
       {open && (
         <div
-          role="dialog"
+          ref={popoverRef}
+          {...dialogProps}
           data-testid="statusline-ai-status-popover"
           // S14.1 field fix (item 4): the ORIGINAL absolute/left-0/w-72
           // anchors the popover to THIS chip's own left edge — fine on
@@ -478,7 +610,7 @@ function TranslateStatusChip() {
           updateSettings({ bilingualTranscript: true });
         }}
         title="点击开启双语转录"
-        className="flex h-full items-center whitespace-nowrap px-2 text-mut2 hover:bg-panel3 hover:text-fg sm:px-3"
+        className="flex h-full items-center whitespace-nowrap px-2 text-mut hover:bg-panel3 hover:text-fg sm:px-3"
       >
         未译
       </button>
@@ -541,7 +673,7 @@ function TranslateStatusChip() {
     return (
       <span
         data-testid="statusline-translate-chip"
-        className="flex h-full items-center whitespace-nowrap px-2 text-mut2 sm:px-3"
+        className="flex h-full items-center whitespace-nowrap px-2 text-mut sm:px-3"
       >
         翻译
       </span>
@@ -559,6 +691,116 @@ function TranslateStatusChip() {
   );
 }
 
+// TASK 2 (privacy visible at every breakpoint): the color-coded privacy
+// SENTENCE below (privacyCopy.hint) is `hidden sm:inline` — this app's
+// one privacy promise must never fully disappear below that width. This
+// compact chip is its <sm replacement, reading the SAME RETENTION_COPY
+// table (lib/stt/engineOptions.ts) the sentence right next to it already
+// does. F7 fix round (MEDIUM): this used to collapse to the binary
+// local/cloud posture (derivePosture + POSTURE_LABEL) — a cloud-STORED
+// engine (ElevenLabs, 可能留存) then read identically to a cloud-
+// TRANSIENT one on phones, losing its stronger warning exactly where a
+// BYOK phone user is most likely to be looking. No tap-to-expand
+// popover: aria-label + title already carry the full sentence for both
+// mouse hover and screen readers, and a second popover mechanism for
+// one static line has no real payoff over the sentence itself being
+// back at sm+.
+function PrivacyPostureChip({
+  retentionClass,
+  sentence,
+}: {
+  retentionClass: RetentionClass;
+  sentence: string;
+}) {
+  const copy = RETENTION_COPY[retentionClass];
+  return (
+    <span
+      data-testid="statusline-privacy-chip"
+      aria-label={sentence}
+      title={sentence}
+      // F5 budget (below sm): no more fixed w-9 — 云端·可能留存 (7 CJK-
+      // width glyphs) can't fit a 36px box. Content-sized with a
+      // slimmer px-0.5 instead; see the row-width budget comment above
+      // StatusLine's own return for the worst-case pixel accounting.
+      className={`flex h-full shrink-0 items-center justify-center whitespace-nowrap px-0.5 font-bold sm:hidden ${copy.textClass}`}
+    >
+      {copy.label}
+    </span>
+  );
+}
+
+// TASK 4 (D2 fold, <sm only): DetectModeChip + AiStatusChip +
+// TranslateStatusChip have no room at phone widths (the S14 field-fix
+// history further up this file already documents this exact trio eating
+// past a 375px viewport on its own) — this one square "⋯" chip replaces
+// them below sm; ≥sm keeps rendering the same three inline, unchanged
+// (see the sm:flex group in StatusLine's own return below). The popover
+// stacks the SAME three components — no forked copy of their logic —
+// mounted only while open, mirroring AiStatusChip's own on-demand
+// AiStatusPanel mount just above.
+function OverflowChip() {
+  const status = useApp((s) => s.status);
+  const segments = useApp((s) => s.segments);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  // F4 fix round (HIGH): routed through useOverlayA11y — containerRef on
+  // the popover panel itself, onClose closes it, and focus returns to
+  // this ⋯ trigger via the hook's own restore-on-close (it's whatever
+  // was document.activeElement right before `open` flips true, i.e. the
+  // trigger the user just clicked). Modal (default): this is the
+  // OUTERMOST overlay when open below sm, so aria-modal is correct here
+  // — AiStatusChip's own NESTED popover is the one that opts out (modal:
+  // false) once stacked inside this one.
+  const dialogProps = useOverlayA11y({
+    open,
+    onClose: () => setOpen(false),
+    containerRef: popoverRef,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative flex h-full sm:hidden">
+      <button
+        type="button"
+        data-testid="statusline-overflow-chip"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label="更多状态"
+        title="更多状态"
+        className="flex h-full w-9 shrink-0 items-center justify-center hover:bg-panel3 hover:text-fg"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div
+          ref={popoverRef}
+          {...dialogProps}
+          data-testid="statusline-overflow-popover"
+          className="scroll-thin fixed inset-x-2 bottom-[calc(2rem+env(safe-area-inset-bottom))] z-30 flex max-h-[60vh] flex-col gap-2 overflow-y-auto border border-edge bg-panel2 glassable p-3 shadow-lg"
+        >
+          <DetectModeChip />
+          <AiStatusChip />
+          {(status !== "idle" || segments.length > 0) && <TranslateStatusChip />}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface StatusLineProps {
   onOpenTaskCenter: () => void;
 }
@@ -568,14 +810,10 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
   const segments = useApp((s) => s.segments);
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
-  const detectMode = useApp((s) => s.detectMode);
   const engine = useApp((s) => s.settings.engine);
   const sttEngineMode = useApp((s) => s.sttEngineMode);
-  const aiDetect = useApp((s) => s.settings.aiDetect);
   const sidecarMode = useApp((s) => s.settings.sidecarMode);
   const sidecarUp = useApp((s) => s.sidecarUp);
-  const updateSettings = useApp((s) => s.updateSettings);
-  const setDetectMode = useApp((s) => s.setDetectMode);
   const lagMs = useLatencyStats((s) => s.lagMs);
   // S10 field-fix #8 (LOW, adversarial review): the ON/OFF hysteresis
   // (3 consecutive smoothed samples >2000ms to show, one sample
@@ -649,13 +887,51 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
 
   const count = cards.length + terms.length;
 
+  // F5 fix round (HIGH): below-sm row-width budget. With an active
+  // TaskTray + long engine labels this row used to exceed 375px (the
+  // page's own overflow-hidden root then just clips whatever falls off
+  // the right edge — TaskTray, the last/ml-auto element, is the first
+  // casualty). Worst-case sum of every element visible below sm, at
+  // text-xs/font-mono (≈7px per ASCII glyph — SF Mono's ~0.6em advance;
+  // ≈12px per CJK glyph — full-width East Asian glyphs render at a full
+  // 1em, not the ASCII ratio):
+  //   mode block   "--LIVE--" (8 ascii) + px-2×2         ≈  72px
+  //   ⋯ trigger    w-9 fixed                              =  36px
+  //   |            1 glyph, no padding                    ≈   7px
+  //   privacy chip "云端·可能留存" (7 CJK, F7) + px-0.5×2  ≈  90px
+  //   音源 select  max-w-[7rem] hard cap                  = 112px
+  //   引擎 select  max-w-[8.5rem] hard cap                = 136px
+  //   延迟 chip    "延迟 ~15s" (listening only) + px-2×2   ≈  80px
+  //   TaskTray     icon+gap+2-digit count + px-2×2        ≈  48px
+  // idle/paused/stopped/connecting (no 延迟 chip): ≈501px.
+  // listening + sustained lag (延迟 chip shown):   ≈581px.
+  // The two hard-capped selects alone already claim 248px — this fix's
+  // real, bounded lever — down from an unbounded worst case before any
+  // cap existed. Neither total clears a literal 320px floor (eight
+  // required elements, two of them multi-rem selects, simply can't fit
+  // that narrow at once), so 320px stays the aspirational target these
+  // two cap values were sized against; TaskTray staying the LAST element
+  // (not shrink-0) means it degrades by losing its own padding first,
+  // not by vanishing off-screen the way it could pre-fix.
   return (
     <div
       data-testid="statusline"
       className="flex h-9 shrink-0 items-center border-t border-edge bg-panel2 font-mono text-xs text-mut sm:h-7"
     >
+      {/* TASK 3 root cause (mode block clipping mid-token at 375px): this
+          span was the one major status chip in this row WITHOUT
+          shrink-0 (every other leading segment — AudioSourceDropdown,
+          EngineDropdown — already carries it defensively). Nested
+          flex-in-flex (this span is itself `flex`, wrapping two
+          complementary hidden/sm:hidden label spans) plus a crowded
+          375px row is exactly the shape where a flex item's automatic
+          minimum-size flooring is least reliable cross-browser —
+          shrink-0 removes the ambiguity outright instead of relying on
+          it. role="status" (implicit aria-live="polite") so a screen
+          reader announces LISTENING/PAUSED/STOPPED/IDLE transitions. */}
       <span
-        className={`flex h-full items-center whitespace-nowrap px-2 font-bold tracking-wide sm:px-3 ${
+        role="status"
+        className={`flex h-full shrink-0 items-center whitespace-nowrap px-2 font-bold tracking-wide sm:px-3 ${
           isListening
             ? "bg-lab-green text-ink"
             : isPaused
@@ -666,53 +942,36 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
         <span className="hidden sm:inline">{modeLabel}</span>
         <span className="sm:hidden">{modeLabelShort}</span>
       </span>
-      {detectMode === "off" ? (
-        <span className="whitespace-nowrap px-2 sm:px-3">
-          {DETECT_MODE_LABEL.off}
-        </span>
-      ) : (
-        // Clickable (E2E feedback): flips settings.aiDetect. The label
-        // derives from detectMode (the scheduler's runtime state, see
-        // detect/scheduler.ts), which the scheduler only re-reads on its
-        // next segment/batch — so the click ALSO echoes the expected
-        // mode synchronously, or an idle meeting would show a dead
-        // button. The scheduler's own onModeChange remains authoritative
-        // and corrects the echo if reality differs (e.g. key-less
-        // fallback downgrades llm back to dictionary).
-        <button
-          type="button"
-          data-testid="statusline-detect-toggle"
-          onClick={() => {
-            const next = !aiDetect;
-            updateSettings({ aiDetect: next });
-            setDetectMode(next ? "llm" : "dictionary");
-          }}
-          title="点击切换 AI 模式（词典模式始终开启）"
-          className="flex h-full items-center whitespace-nowrap px-2 hover:bg-panel3 hover:text-fg sm:px-3"
-        >
-          {DETECT_MODE_LABEL[detectMode]}
-        </button>
-      )}
+      {/* TASK 4 (D2 fold): this exact trio, byte-identical to before the
+          fold, now only at sm+ — <sm it's replaced by the one
+          OverflowChip immediately below (its own popover renders the
+          SAME three components). */}
+      <span className="hidden h-full items-center sm:flex" data-testid="statusline-detect-group">
+        <DetectModeChip />
+        <span className="text-mut2">|</span>
+        <AiStatusChip />
+        {/* Translation-rework wave 2: same "visible whenever there's a
+            transcript to plausibly translate" gate as the rest of this
+            bar's transcript-scoped chips — a live/connecting meeting, OR
+            segments already on screen from one that just ended. */}
+        {(status !== "idle" || segments.length > 0) && <TranslateStatusChip />}
+      </span>
+      <OverflowChip />
       <span className="text-mut2">|</span>
-      <AiStatusChip />
-      {/* Translation-rework wave 2: same "visible whenever there's a
-          transcript to plausibly translate" gate as the rest of this
-          bar's transcript-scoped chips — a live/connecting meeting, OR
-          segments already on screen from one that just ended. */}
-      {(status !== "idle" || segments.length > 0) && <TranslateStatusChip />}
       {/* S14 mobile-preview field-fix: at 375px this segment's own
           neighbors (mode chip, detect toggle, AI status chip, engine
           dropdown) already eat past the viewport width on their own,
           leaving no room for the privacy sentence to truncate into —
-          hidden below sm (its preceding "|" separator too, so none
-          dangles on its own), unchanged at sm+. */}
-      <span className="hidden text-mut2 sm:inline">|</span>
+          hidden below sm, unchanged at sm+. TASK 2: the sentence must
+          never be the ONLY carrier of this bar's privacy promise below
+          sm though — PrivacyPostureChip (sm:hidden) replaces it there. */}
       <span
         title={sidecarDownHint}
         className={`hidden min-w-0 truncate px-2 sm:inline sm:px-3 ${privacyCopy.textClass}`}
       >
         {privacyCopy.hint}
       </span>
+      <PrivacyPostureChip retentionClass={retentionClass} sentence={privacyCopy.hint} />
       {/* Audio source stays reachable even after ModeSelector's idle-only
           overlay disappears. The native option itself carries the honest
           system-audio/mic caveat; this does not invent a capture state. */}

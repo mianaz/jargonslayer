@@ -424,7 +424,8 @@ describe("SettingsDialog — 转录引擎 sidecar status line", () => {
     await flush();
 
     expect(container!.textContent).toContain("未检测到本地服务");
-    expect(container!.textContent).toContain("README「本地版安装」");
+    expect(container!.textContent).toContain("安装说明");
+    expect(container!.textContent).not.toContain("README");
     expect(useApp.getState().sidecarUp).toBe(false);
 
     const btn = Array.from(container!.querySelectorAll("button")).find(
@@ -1889,7 +1890,7 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: 本地模型 card names 
     expect(card.textContent).toContain("麦克风");
     expect(card.textContent).toContain("系统/标签页音频");
     expect(card.textContent).toContain("音源");
-    expect(card.textContent).toContain("系统音频仅捕获对方声音、不含你的麦克风");
+    expect(card.textContent).toContain("系统音频仅捕获对方声音，不录你自己的声音");
   });
 });
 
@@ -3405,8 +3406,9 @@ describe("SettingsDialog — primary API Key hint stays the pre-migration web co
     });
 
     expect(container!.textContent).toContain(
-      "仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）",
+      "仅存于本机浏览器；调用时经本站服务转发、不落盘",
     );
+    expect(container!.textContent).not.toContain("env-first");
     expect(container!.textContent).not.toContain("系统钥匙串");
   });
 });

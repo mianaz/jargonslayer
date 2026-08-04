@@ -25,8 +25,8 @@ export { presetIdFor };
 export type { ProviderPreset, ProviderPresetId };
 
 // S14 credential-health chip text color per KeyStatus — PreviewLockedBadge's
-// own square-corner/muted-border framing (border-edge, px-1.5 py-0.5,
-// text-[10px]), just swapping its fixed text-mut2 for a status-keyed
+// own square-corner/muted-border framing (border-edge, px-2 py-1,
+// text-xs), just swapping its fixed text-mut2 for a status-keyed
 // color: muted grey (unconfigured) -> dim (configured) -> lab-green
 // (active) -> red (error), matching this app's existing color idiom for
 // those states (e.g. AiStatusPanel's own 上次失败 line uses the same
@@ -47,7 +47,7 @@ export function KeyStatusChip({ status }: { status: KeyStatus }) {
   return (
     <span
       data-testid="key-status-chip"
-      className={`border border-edge px-1.5 py-0.5 text-[10px] whitespace-nowrap ${KEY_STATUS_CHIP_CLASS[status]}`}
+      className={`border border-edge px-2 py-1 text-xs whitespace-nowrap ${KEY_STATUS_CHIP_CLASS[status]}`}
     >
       {KEY_STATUS_LABEL[status]}
     </span>
@@ -90,7 +90,7 @@ export function SecretKeyRow({
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <label className="text-xs text-mut">{label}</label>
-          <div className="text-[10px] leading-[1.6] text-mut2">{purpose}</div>
+          <div className="text-xs leading-[1.6] text-mut">{purpose}</div>
         </div>
         <KeyStatusChip status={status} />
       </div>

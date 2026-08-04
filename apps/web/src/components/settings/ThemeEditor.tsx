@@ -459,7 +459,7 @@ export default function ThemeEditor({
           );
         })}
         <div className="text-xs leading-[1.7] text-mut2">
-          对比度提示仅供参考，不会阻止保存——你的主题、你的取舍
+          对比度提示仅供参考，不会阻止保存：你的主题，你的取舍
         </div>
       </div>
 

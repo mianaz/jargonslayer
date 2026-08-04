@@ -24,8 +24,6 @@ import { useApp } from "@/lib/store";
 import { getPackName } from "@jargonslayer/core/detect/packs";
 import { handleButtonKeyDown } from "@/lib/a11y";
 import { CATEGORY_LABELS, TERM_TYPE_LABELS } from "@/lib/cardLabels";
-import { BitCameo } from "@/components/PixelDragon";
-import { resolveBitCostume } from "@/lib/bitCostumes";
 import { toUnified, type UnifiedItem } from "@/lib/cards/unified";
 import {
   cardToCustomEntry,
@@ -418,7 +416,7 @@ function AddToGlossaryAction({
       type="button"
       onClick={() => void handleAdd()}
       disabled={saved || saving}
-      className="btn-tactile mt-1 inline-flex h-10 items-center px-1 text-xs text-act hover:text-fg disabled:cursor-default disabled:text-mut2"
+      className="btn-tactile mt-1 inline-flex h-10 items-center px-1 text-xs text-act hover:text-fg disabled:cursor-default disabled:text-mut"
     >
       {saving ? "保存中…" : saved ? "已在词典" : "加入我的词典"}
     </button>
@@ -579,7 +577,7 @@ function ExpressionCardRow({
       )}
 
       <div className="mt-2 flex items-baseline gap-2">
-        <span className="font-mono text-xs text-mut2">直白说法</span>
+        <span className="font-mono text-xs text-mut">直白说法</span>
         {editing ? (
           <input
             type="text"
@@ -780,24 +778,12 @@ function TermCardRow({
 function EmptyState() {
   const detectMode = useApp((s) => s.detectMode);
   const status = useApp((s) => s.status);
-  // Two-field primitive read (no useShallow needed — neither selector
-  // derives a new object) feeding resolveBitCostume for the empty-state
-  // cameo below.
-  const bitCostumeSetting = useApp((s) => s.settings.bitCostume);
-  const themeId = useApp((s) => s.settings.themeId);
-
   if (status === "idle") {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-        <BitCameo
-          pose="sleep"
-          height={56}
-          className="mx-auto mb-2 opacity-80"
-          costume={resolveBitCostume(bitCostumeSetting, themeId)}
-        />
         <div className="text-sm font-medium text-fg">还没有开始会议</div>
         <div className="mt-2 max-w-xs text-xs leading-[1.7] text-mut">
-          点击右上角菜单里的「演示」立即体验，无需麦克风也无需配置 API Key。
+          点击 ▷ 先看演示，或选好收听方式后点 开始监听。卡片会随会议自动出现。
         </div>
       </div>
     );
@@ -978,7 +964,7 @@ export default function CardsPanel() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="筛选表达或术语…"
-          className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+          className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut focus:outline-none"
         />
 
         <div className="flex items-center gap-2">
