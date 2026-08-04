@@ -99,13 +99,14 @@ describe("ReviewDashboard — IA reorder + skeleton/stat-numeral primitives (UI 
     expect(numeral!.textContent).toBe("1");
   });
 
-  it("all six stat tiles set their numerals in .stat-numeral", async () => {
+  it("all five stat tiles set their numerals in .stat-numeral (今日待复习 lives on ReviewLead alone)", async () => {
     await act(async () => {
       root!.render(<ReviewDashboard cache={{}} loading={false} />);
     });
 
     const stats = container!.querySelector('[data-testid="stats-strip"]');
-    expect(stats!.querySelectorAll(".stat-numeral").length).toBe(6);
+    expect(stats!.querySelectorAll(".stat-numeral").length).toBe(5);
+    expect(stats!.textContent).not.toContain("今日待复习");
   });
 
   it("renders static .skeleton placeholders (not the old 加载中… text) while the session cache is loading", async () => {

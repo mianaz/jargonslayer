@@ -135,11 +135,12 @@ function StatsStrip() {
 
   return (
     <div data-testid="stats-strip" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      {/* 今日待复习 deliberately absent: ReviewLead above owns that fact
+          (law: each fact appears once per screen). */}
       <StatCard label="会议场次" value={stats.meetingCount} />
       <StatCard label="累计表达" value={stats.cardCount} />
       <StatCard label="累计术语" value={stats.termCount} />
       <StatCard label="本周新增会议" value={stats.newThisWeek} />
-      <StatCard label="今日待复习" value={stats.dueToday} />
       <StatCard label="连续复习天数" value={stats.streak} />
     </div>
   );
