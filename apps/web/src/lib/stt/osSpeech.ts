@@ -197,6 +197,14 @@ export class OsSpeechEngine implements STTEngine {
   // actually consumes.
   private sessionStartEpoch: number | null = null;
   private finalCount = 0;
+  // Dual capture v1: true when THIS session started with a source that
+  // captures the microphone (mic or dual) — set in start(), read only by
+  // the silent-session hint in handleStatus, which must not tell a user
+  // who deliberately picked 麦克风/麦克风+系统 that this engine "doesn't
+  // capture the microphone". Defaults false so a legacy/system-audio
+  // session (and every pre-dual-capture code path) behaves exactly as
+  // before.
+  private sessionCapturedMic = false;
 
   async start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void> {
     diagLog("info", "stt-osspeech", "系统识别引擎启动请求");
@@ -209,6 +217,12 @@ export class OsSpeechEngine implements STTEngine {
     this.assetDownloadingNoticeShown = false;
     this.sessionStartEpoch = null;
     this.finalCount = 0;
+    // Reset beside its sibling session fields, not only at the assignment
+    // further down: a start() that throws before reaching that line (caps
+    // probe, permission) must not leave the PREVIOUS session's value
+    // latched — a dual session followed by a failed one would otherwise
+    // suppress the hint for a later system-audio session.
+    this.sessionCapturedMic = false;
     const myGeneration = ++this.generation;
 
     // Mirrors appAudio.ts's F2 fix exactly (see this file's header
@@ -298,6 +312,13 @@ export class OsSpeechEngine implements STTEngine {
       // "system" when the param is absent).
       const source =
         IS_DESKTOP && (settings.mode === "mic" || settings.mode === "dual") ? settings.mode : undefined;
+      // The silent-session hint in handleStatus steers a user who picked
+      // 系统 expecting mic capture — copy that is only TRUE for a
+      // system-audio session. Latch what this session actually started
+      // with (undefined source === the Rust default, "system") so that
+      // hint can suppress itself on mic/dual, where the very confusion
+      // it addresses cannot arise.
+      this.sessionCapturedMic = source === "mic" || source === "dual";
       await invoke("start_os_speech", {
         locale: settings.language,
         contextualJson,
@@ -392,19 +413,36 @@ export class OsSpeechEngine implements STTEngine {
       if (payload.kind !== "asset-failed") this.assetTracker?.settle();
     }
 
-    // Silent-session hint (2026-08-02 field report): desktop osspeech is
-    // hard-paired to system-audio (store.ts modeForPersistedEngine) and
-    // taps ONLY system OUTPUT — a user who picked 系统 expecting mic
-    // capture sees a session that "runs" fine (framesOut advancing) yet
-    // transcribes nothing. A clean end with zero finals, a session that
-    // actually reached "capturing", and an explicitly-false `sawAudio`
-    // (the Rust side's whole-session peak==0 verdict — see the payload
-    // field's own doc comment for why `=== false`, and why this can
-    // never fire on iOS) is exactly that confusion: steer once, here
-    // BEFORE the `stopping` branch below, because the common shape of
-    // this failure IS the user giving up and pressing stop — the
-    // "ended" then arrives mid-stop and would never reach the switch.
-    if (payload.kind === "ended" && payload.sawAudio === false && this.finalCount === 0 && this.sessionStartEpoch !== null) {
+    // Silent-session hint (2026-08-02 field report): a desktop osspeech
+    // session whose source is 系统声音 taps ONLY system OUTPUT — a user
+    // who picked 系统 expecting mic capture sees a session that "runs"
+    // fine (framesOut advancing) yet transcribes nothing. A clean end
+    // with zero finals, a session that actually reached "capturing", and
+    // an explicitly-false `sawAudio` (the Rust side's whole-session
+    // peak==0 verdict — see the payload field's own doc comment for why
+    // `=== false`, and why this can never fire on iOS) is exactly that
+    // confusion: steer once, here BEFORE the `stopping` branch below,
+    // because the common shape of this failure IS the user giving up and
+    // pressing stop — the "ended" then arrives mid-stop and would never
+    // reach the switch.
+    //
+    // Dual capture v1 amends the condition, not the copy: this engine is
+    // no longer system-audio-only, and on a 麦克风/麦克风+系统 session the
+    // copy's whole premise ("只采集系统播放的音频，不采集麦克风") is FALSE —
+    // that session really is capturing the mic, so a silent one means
+    // something else entirely (muted input, wrong input device) and
+    // deserves its own diagnosis, not this steer. `sessionCapturedMic`
+    // suppresses it there. A silent MIC channel inside a dual session is
+    // worth its own future hint, but that needs per-channel silence from
+    // the Rust latch (today's `saw_nonzero_peak` is session-wide across
+    // both channels) — a separate, larger change.
+    if (
+      payload.kind === "ended" &&
+      payload.sawAudio === false &&
+      this.finalCount === 0 &&
+      this.sessionStartEpoch !== null &&
+      !this.sessionCapturedMic
+    ) {
       this.events?.onNotice?.(
         "未检测到系统声音——系统引擎只采集系统播放的音频，不采集麦克风；要转写麦克风请切换到本地模型或云端引擎",
       );

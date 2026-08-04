@@ -605,6 +605,51 @@ describe("OsSpeechEngine", () => {
         "未检测到系统声音——系统引擎只采集系统播放的音频，不采集麦克风；要转写麦克风请切换到本地模型或云端引擎",
       );
     });
+
+    it.each(["mic", "dual"] as const)(
+      "a silent %s session does NOT get the system-audio steer — that copy's premise is false when the mic IS being captured",
+      async (mode) => {
+        const { emit } = wireFakes();
+        const engine = new OsSpeechEngine();
+        const onNotice = vi.fn();
+        await engine.start(
+          { ...noopEvents(), onNotice } as unknown as STTEvents,
+          { ...OSSPEECH_SETTINGS, mode } as unknown as typeof OSSPEECH_SETTINGS,
+        );
+        emit("osspeech://status", { kind: "capturing", source: "session" });
+
+        // Identical wire shape to the system-audio case above — same
+        // zero finals, same explicitly-false sawAudio. Only the session's
+        // own source differs, and that alone must suppress the steer.
+        emit("osspeech://status", { kind: "ended", source: "session", sawAudio: false });
+
+        expect(onNotice).not.toHaveBeenCalledWith(
+          "未检测到系统声音——系统引擎只采集系统播放的音频，不采集麦克风；要转写麦克风请切换到本地模型或云端引擎",
+        );
+      },
+    );
+
+    it("a system-audio session AFTER a dual one still gets the steer — the latch never survives into the next session", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      const onNotice = vi.fn();
+
+      await engine.start(
+        { ...noopEvents(), onNotice } as unknown as STTEvents,
+        { ...OSSPEECH_SETTINGS, mode: "dual" } as unknown as typeof OSSPEECH_SETTINGS,
+      );
+      emit("osspeech://status", { kind: "capturing", source: "session" });
+      emit("osspeech://status", { kind: "ended", source: "session", sawAudio: false });
+      expect(onNotice).not.toHaveBeenCalled();
+
+      await engine.start({ ...noopEvents(), onNotice } as unknown as STTEvents, OSSPEECH_SETTINGS);
+      emit("osspeech://status", { kind: "capturing", source: "session" });
+      emit("osspeech://status", { kind: "ended", source: "session", sawAudio: false });
+
+      expect(onNotice).toHaveBeenCalledWith(
+        "未检测到系统声音——系统引擎只采集系统播放的音频，不采集麦克风；要转写麦克风请切换到本地模型或云端引擎",
+      );
+    });
   });
 
   // ---------------------------------------------------------------
