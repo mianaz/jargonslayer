@@ -232,6 +232,50 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
     expect(container!.querySelector('[data-testid="active-speaker-latch"]')).toBeTruthy();
   });
 
+  // Long-session hardening item 5: hasDiarizedSpeakers now latches once
+  // true (perf fix — see TranscriptPanel.tsx's own doc comment) instead
+  // of re-scanning segments.some() on every final — this pins the ONE
+  // observable behavior change that comes with it: the latch picker
+  // must stay hidden even if the diarized speaker's segment is later
+  // reassigned to a manual/locked one, not flicker back on.
+  it("latch picker, once hidden by a diarized speaker, stays hidden even if that segment is later reassigned to a manual/locked speaker (sticky)", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1", speaker: "SPEAKER_1" })],
+      status: "listening",
+      settings: makeSettings(),
+    });
+    await renderPanel();
+    expect(container!.querySelector('[data-testid="active-speaker-latch"]')).toBeNull();
+
+    await act(async () => {
+      useApp.setState({
+        segments: [seg({ id: "s1", speaker: "Alice", speakerLocked: true })],
+      });
+    });
+    expect(container!.querySelector('[data-testid="active-speaker-latch"]')).toBeNull();
+  });
+
+  // A FRESH meeting must not inherit a PREVIOUS one's latch — beginMeeting
+  // resets segments to [] before the first final of the new meeting ever
+  // arrives (store.ts), which is the signal this cache resets on.
+  it("a fresh meeting (segments reset to []) is not stuck by a previous meeting's latched hasDiarizedSpeakers", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1", speaker: "SPEAKER_1" })],
+      status: "listening",
+      settings: makeSettings(),
+    });
+    await renderPanel();
+    expect(container!.querySelector('[data-testid="active-speaker-latch"]')).toBeNull();
+
+    await act(async () => {
+      useApp.setState({ segments: [] }); // beginMeeting's own reset shape
+    });
+    await act(async () => {
+      useApp.setState({ segments: [seg({ id: "s2" })] }); // new meeting's first final, no diarized speaker yet
+    });
+    expect(container!.querySelector('[data-testid="active-speaker-latch"]')).toBeTruthy();
+  });
+
   it("+ 新建… in the latch picker calls addSpeakerToRoster and setActiveSpeaker with the resolved name", async () => {
     useApp.setState({ segments: [seg({ id: "s1" })], status: "listening", settings: makeSettings() });
     await renderPanel();

@@ -53,13 +53,27 @@ export interface TranslateQueueOptions {
   // "busy"/"done" again, but a lane that has failed EVERY batch this
   // meeting just oscillates stalled<->busy forever, which reads to a
   // user as "working, occasionally hiccuping" rather than the truth —
-  // see MAX_CONSECUTIVE_FAILED_BATCHES_DEAD below): no translation has
-  // ever landed AND consecutiveFailedBatches has reached that
-  // threshold. Sticky by construction — emitState checks it BEFORE
-  // stalled/busy/done below, so it keeps winning on every later retry
-  // (never flips back to "busy") until a batch actually lands, which
-  // resets the counter and leaves hasLandedTranslation permanently
-  // true, so "dead" can never re-trigger for the rest of the meeting.
+  // see MAX_CONSECUTIVE_FAILED_BATCHES_DEAD below):
+  // consecutiveFailedBatches has reached that threshold, OR
+  // finalsSinceLastLanding has reached MAX_FINALS_SINCE_LANDING_DEAD
+  // (long-session hardening item 2 — a lane whose batches keep
+  // "succeeding" with an empty response is, from this chip's
+  // perspective, exactly as dead as one that's erroring outright).
+  // Long-session hardening item 1 fix:
+  // deliberately NOT gated on "nothing has ever landed" — a lane that
+  // translates happily for an hour and then dies for good must still
+  // reach "dead", not silently retry forever just because
+  // hasLandedTranslation flipped true once, ~50 minutes ago (the v0.7.5
+  // lesson: that gate made this a unit-tested escape hatch that could
+  // never actually fire in production, since real sessions land at
+  // least one translation almost immediately). Sticky by construction —
+  // emitState checks it BEFORE stalled/busy/done below, so it keeps
+  // winning on every later retry (never flips back to "busy") until a
+  // batch actually lands, which resets BOTH counters (see
+  // attemptTranslate's own success branch) — a LATER streak of 3
+  // failures (or 8 empty-response finals) can still re-trigger "dead"
+  // after that, this just isn't stuck FOREVER the way hasLandedTranslation
+  // itself is.
   // The caller still separately derives its OWN "off" from
   // Settings.bilingualTranscript being off (this queue keeps running
   // even while the toggle is off, just no-opping every enqueue — see
@@ -121,14 +135,27 @@ const SYSTEM_UNAVAILABLE_PAUSE_MS = 60_000;
 // batch (segments stay English-only) so the queue can move on.
 const MAX_CONSECUTIVE_RATE_LIMITS = 5;
 // FT-11 fix: a "dead" lane (see onState's own doc above) — 3 straight
-// batch failures of ANY kind, with nothing yet landed this meeting.
-// Deliberately independent of MAX_CONSECUTIVE_RATE_LIMITS/
-// MAX_RETRIES_PER_SEGMENT (which govern what happens to the DATA — drop
-// vs re-queue) — this one only ever governs what the status chip says.
-// 3 lines up with the field report's own timeline: at SYSTEM_UNAVAILABLE_
-// PAUSE_MS (60s), 3 failures is ~2min of silently-stuck translation
-// before the user is told anything is wrong.
+// batch failures of ANY kind. Deliberately independent of
+// MAX_CONSECUTIVE_RATE_LIMITS/MAX_RETRIES_PER_SEGMENT (which govern
+// what happens to the DATA — drop vs re-queue) — this one only ever
+// governs what the status chip says. 3 lines up with the field report's
+// own timeline: at SYSTEM_UNAVAILABLE_PAUSE_MS (60s), 3 failures is
+// ~2min of silently-stuck translation before the user is told anything
+// is wrong. Long-session hardening item 1: no longer gated on "nothing
+// has ever landed this meeting" — see onState's own doc above for why
+// that gate made this threshold unreachable in production for a lane
+// that dies partway through a long session.
 const MAX_CONSECUTIVE_FAILED_BATCHES_DEAD = 3;
+// Long-session hardening item 2: a lane whose batches keep resolving
+// with an EMPTY response (see attemptTranslate's own "partial/empty
+// response is failed-soft by design" comment below) never increments
+// consecutiveFailedBatches at all — it's not an error, so a provider
+// that quietly returns [] forever would never reach "dead" even after
+// the item-1 fix above. Counts finalized segments PUSHED since the
+// last actual landing instead (finalsSinceLastLanding) — 8 is a bit
+// north of BATCH_MAX*2 so a couple of genuinely-empty (but real)
+// responses don't false-trigger before a persistent problem is clear.
+const MAX_FINALS_SINCE_LANDING_DEAD = 8;
 // S14.1 field fix (item 8a, real owner report): "翻译 missing some
 // middle parts if we pause-restart-pause." pushSegment/onFinal have no
 // status gate and nothing resets `pending` on pause (verified by
@@ -197,6 +224,23 @@ export class TranslateQueue {
   // consecutiveRateLimits above but never reset by a mere
   // retry-eligible failure.
   private consecutiveFailedBatches = 0;
+  // Long-session hardening item 2: counts finalized segments PUSHED
+  // (pushSegment only — NOT backfill's own catch-up burst, which would
+  // false-trigger this on a single toggle-on click) since the last
+  // landed translation — feeds "dead" the same way consecutiveFailed
+  // Batches does (see MAX_FINALS_SINCE_LANDING_DEAD's own doc above),
+  // but for the OTHER failure shape that counter can't see: a batch
+  // that "succeeds" with an empty response increments nothing there.
+  // Reset to 0 the moment a batch actually lands, same call site as
+  // consecutiveFailedBatches above.
+  // ponytail: counts pushes, not confirmed empty responses — a burst of
+  // 8+ real finals arriving faster than a single debounce/batch cycle
+  // can resolve would (rarely, real speech doesn't finalize that fast)
+  // flag "dead" a beat before any batch has actually been attempted.
+  // Self-corrects on the next real landing either way; upgrade path if
+  // this ever proves too eager is gating the increment on a batch
+  // actually having been DISPATCHED for that segment, not merely queued.
+  private finalsSinceLastLanding = 0;
   // Per-segment generic-error retry attempts so far (S14.1 field fix,
   // item 8a — see MAX_RETRIES_PER_SEGMENT's own doc above for why this
   // replaced a one-shot Set). Not cleared on success for an id that
@@ -229,6 +273,10 @@ export class TranslateQueue {
     if (seg.text.length > MAX_TEXT_CHARS) return;
 
     this.pending.push({ id: seg.id, text: seg.text });
+    // Long-session hardening item 2 — see finalsSinceLastLanding's own
+    // doc above for why this lives here (not backfill) and what it
+    // feeds.
+    this.finalsSinceLastLanding++;
     this.armDebounce();
     this.emitState();
   }
@@ -326,12 +374,17 @@ export class TranslateQueue {
     // batch still counts (see inflightCount's own doc above).
     const pending = this.pending.length + this.inflightCount;
     // FT-11 fix: "dead" is checked FIRST, ahead of stalled/busy/done —
-    // this is what makes it sticky (onState's own doc): as long as
-    // nothing has landed and the failure streak stays at/above the
-    // threshold, a later retry's own busy/stalled emission is
-    // pre-empted by this same branch instead of flipping back.
+    // this is what makes it sticky (onState's own doc): as long as the
+    // failure streak stays at/above the threshold, a later retry's own
+    // busy/stalled emission is pre-empted by this same branch instead of
+    // flipping back. Long-session hardening items 1/2: no longer gated
+    // on "nothing has landed" (item 1), and now also fires off a run of
+    // empty-but-successful responses (item 2) — see onState's own doc
+    // and MAX_CONSECUTIVE_FAILED_BATCHES_DEAD/MAX_FINALS_SINCE_LANDING_
+    // DEAD above for both.
     let state: "off" | "busy" | "done" | "stalled" | "dead" =
-      !this.hasLandedTranslation && this.consecutiveFailedBatches >= MAX_CONSECUTIVE_FAILED_BATCHES_DEAD
+      this.consecutiveFailedBatches >= MAX_CONSECUTIVE_FAILED_BATCHES_DEAD ||
+      this.finalsSinceLastLanding >= MAX_FINALS_SINCE_LANDING_DEAD
         ? "dead"
         : this.isPaused()
           ? "stalled"
@@ -465,6 +518,10 @@ export class TranslateQueue {
         // FT-11 fix: a genuine landing clears the "dead" failure streak —
         // see MAX_CONSECUTIVE_FAILED_BATCHES_DEAD's own doc above.
         this.consecutiveFailedBatches = 0;
+        // Long-session hardening item 2: same reset, for the OTHER
+        // counter that can drive "dead" — see finalsSinceLastLanding's
+        // own doc above.
+        this.finalsSinceLastLanding = 0;
         this.opts.onTranslations(map, batch.gen);
       }
       // A partial/empty response is failed-soft by design (see route
@@ -504,7 +561,13 @@ export class TranslateQueue {
     // so reaching this point at all is, from the status chip's
     // perspective, a failure regardless of which specific error it was.
     this.consecutiveFailedBatches++;
-    if (this.consecutiveFailedBatches === MAX_CONSECUTIVE_FAILED_BATCHES_DEAD && !this.hasLandedTranslation) {
+    // Long-session hardening item 1: no longer also gated on
+    // !this.hasLandedTranslation — this diagLog must fire for a partial-
+    // death (some translations landed earlier this meeting, then 3
+    // straight failures) exactly as it does for a lane that never
+    // landed anything, or the chip would flip to "dead" with zero trail
+    // in the one scenario item 1 exists to catch.
+    if (this.consecutiveFailedBatches === MAX_CONSECUTIVE_FAILED_BATCHES_DEAD) {
       // S14.1-style visibility fix, same motivation as the rate-limit/
       // generic-error diagLogs below: a field session with no devtools
       // needs 复制诊断信息 to carry this out, not just a chip flip nobody
@@ -512,7 +575,7 @@ export class TranslateQueue {
       diagLog(
         "error",
         "translate-queue",
-        "translate queue has failed every batch so far this meeting — reporting 'dead' to the status chip",
+        "translate queue has hit its consecutive-failure threshold — reporting 'dead' to the status chip",
         `consecutiveFailedBatches=${this.consecutiveFailedBatches}`,
       );
     }

@@ -892,9 +892,17 @@ export default function TranscriptPanel({
   // v0.7.1 translation train-2, Chamber B (post-meeting gap-fill entry
   // point): a stopped session's residual untranslated-segment count.
   // Primitive number selector — no useShallow needed (repo rule only
-  // requires it for array/object-returning selectors).
-  const untranslatedCount = useApp(
-    (s) => untranslatedSegments(s.segments, s.translations).length,
+  // requires it for array/object-returning selectors). Long-session
+  // hardening item 4: short-circuit to a constant 0 while listening —
+  // zustand v5 has no selector caching, so this used to run a full O(n)
+  // scan of segments on EVERY store write, including per-partial
+  // setInterim (~6.7/s) — even though the result is only ever consumed
+  // via showGapFill below, which already requires status === "stopped".
+  // Reads s.status (the selector's own snapshot), not the `status`
+  // const above — this callback can be invoked between renders, so it
+  // must never close over a value from a stale render.
+  const untranslatedCount = useApp((s) =>
+    s.status !== "stopped" ? 0 : untranslatedSegments(s.segments, s.translations).length,
   );
   const bilingualTranscript = useApp((s) => s.settings.bilingualTranscript);
   const translateLanguage = useApp((s) => s.settings.language);
@@ -1087,14 +1095,42 @@ export default function TranscriptPanel({
   // (shouldn't happen once a meeting/session is loaded, but keeps this
   // from ever computing a bogus negative elapsed against a null zero).
   const elapsedZero = startedAt ?? segments[0]?.startedAt ?? 0;
-  const segmentTimeLabels = useMemo(
-    () =>
-      segments.map((seg) => ({
+  // Long-session hardening item 5: this used to rebuild all n labels
+  // (each a segmentElapsedMs walk + new Date + toLocaleTimeString, both
+  // inside formatElapsedClock/formatTime) on every new final, even
+  // though a segment's own startedAt never changes once created (see
+  // store.ts's addFinal — the only place it's ever set) — so a label,
+  // once computed for a given seg.id, stays correct until elapsedZero/
+  // pauseIntervals themselves change, at which point EVERY label needs
+  // recomputing (both feed segmentElapsedMs for every segment) and the
+  // id-keyed cache below is invalidated wholesale.
+  const segmentTimeLabelsCacheRef = useRef<{
+    elapsedZero: number;
+    pauseIntervals: typeof pauseIntervals;
+    map: Map<string, { elapsed: string; absolute: string }>;
+  }>({ elapsedZero, pauseIntervals, map: new Map() });
+  const segmentTimeLabels = useMemo(() => {
+    const cache = segmentTimeLabelsCacheRef.current;
+    // ponytail: append-only otherwise (an id already cached is never
+    // re-verified) — also cleared on a fresh meeting's own segments:[]
+    // (store.ts's beginMeeting) so this doesn't grow unbounded across a
+    // full day of back-to-back meetings in one tab.
+    if (segments.length === 0 || cache.elapsedZero !== elapsedZero || cache.pauseIntervals !== pauseIntervals) {
+      cache.map = new Map();
+      cache.elapsedZero = elapsedZero;
+      cache.pauseIntervals = pauseIntervals;
+    }
+    return segments.map((seg) => {
+      const cached = cache.map.get(seg.id);
+      if (cached) return cached;
+      const computed = {
         elapsed: formatElapsedClock(segmentElapsedMs(elapsedZero, seg.startedAt, pauseIntervals)),
         absolute: formatTime(seg.startedAt),
-      })),
-    [segments, elapsedZero, pauseIntervals],
-  );
+      };
+      cache.map.set(seg.id, computed);
+      return computed;
+    });
+  }, [segments, elapsedZero, pauseIntervals]);
   const cardsById = useMemo(() => {
     const map = new Map<string, ExpressionCard>();
     for (const c of cards) map.set(c.id, c);
@@ -1118,13 +1154,35 @@ export default function TranscriptPanel({
   termsByIdRef.current = termsById;
 
   // Segment count per speaker, for the rename popover's hint copy.
+  // Long-session hardening item 5: same O(n)-per-final shape as
+  // segmentTimeLabels above, but this one has to stay correct across a
+  // speaker RENAME/reassignment too (renameSpeakerInSegments/
+  // applySpeakerUpdateToSegments etc. give an EXISTING id a NEW speaker
+  // — unlike segmentTimeLabels' startedAt, which never changes post-
+  // creation) — so the cache tracks each id's last-COUNTED speaker, not
+  // just "have we seen this id", and only adjusts the running totals for
+  // an id whose speaker actually changed since the last render (a rare,
+  // manual action — never the ~6.7/s per-final hot path this exists to
+  // fix). Reset alongside a fresh meeting's own segments:[], same
+  // rationale as segmentTimeLabelsCacheRef above.
+  const speakerCountsCacheRef = useRef<{
+    counts: Map<string, number>;
+    lastSpeakerById: Map<string, string | undefined>;
+  }>({ counts: new Map(), lastSpeakerById: new Map() });
   const speakerCounts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const s of segments) {
-      if (!s.speaker) continue;
-      map.set(s.speaker, (map.get(s.speaker) ?? 0) + 1);
+    const cache = speakerCountsCacheRef.current;
+    if (segments.length === 0) {
+      cache.counts = new Map();
+      cache.lastSpeakerById = new Map();
     }
-    return map;
+    for (const s of segments) {
+      const last = cache.lastSpeakerById.get(s.id);
+      if (last === s.speaker) continue; // unchanged since last time — nothing to adjust
+      if (last) cache.counts.set(last, (cache.counts.get(last) ?? 1) - 1);
+      if (s.speaker) cache.counts.set(s.speaker, (cache.counts.get(s.speaker) ?? 0) + 1);
+      cache.lastSpeakerById.set(s.id, s.speaker);
+    }
+    return cache.counts;
   }, [segments]);
 
   // v0.5 Wave-1 Feature 1 (live latch visibility, §1 F1 item 4): "no
@@ -1135,10 +1193,24 @@ export default function TranscriptPanel({
   // meeting (demo/soniox/deepgram label at finalize time; whisper/
   // tabaudio's realtime diarization labels asynchronously via
   // speaker_update) — this one check covers all of them uniformly.
-  const hasDiarizedSpeakers = useMemo(
-    () => segments.some((s) => s.speaker && !s.speakerLocked),
-    [segments],
-  );
+  // Long-session hardening item 5: segments.some() short-circuits on the
+  // FIRST diarized speaker it finds, so this is only a real O(n) scan
+  // per final in the worst case (no diarized speaker at all yet) — once
+  // it's found one, that answer is latched in a ref and never re-scanned
+  // (showLatch only ever cares about "has this shown up AT ALL", not
+  // "right this instant"). The latch itself is scoped to one meeting —
+  // cleared alongside a fresh meeting's own segments:[] (store.ts's
+  // beginMeeting) so an earlier meeting that had diarized speakers can't
+  // suppress THIS one's own live-latch hint before its first final ever
+  // arrives.
+  const hasDiarizedSpeakersRef = useRef(false);
+  const hasDiarizedSpeakers = useMemo(() => {
+    if (segments.length === 0) hasDiarizedSpeakersRef.current = false;
+    if (hasDiarizedSpeakersRef.current) return true;
+    const found = segments.some((s) => s.speaker && !s.speakerLocked);
+    if (found) hasDiarizedSpeakersRef.current = true;
+    return found;
+  }, [segments]);
   const showLatch = status === "listening" && !hasDiarizedSpeakers;
 
   // Focus-mode hover gloss: one card at a time, hover shows it after a
