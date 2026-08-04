@@ -425,8 +425,8 @@ describe("CardsPanel — v0.5 Wave-1 Feature 7 inline card/term edit", () => {
     });
   });
 
-  describe("EmptyState — Bit cameo (v0.5.1 Bit sprint, Lane B)", () => {
-    it("renders the sleep-pose BitCameo above the 还没有开始会议 copy, costume resolved from settings", async () => {
+  describe("EmptyState — canonical idle path", () => {
+    it("keeps the idle panel free of a mascot and points to the ModeSelector path", async () => {
       useApp.setState({
         cards: [],
         terms: [],
@@ -438,14 +438,9 @@ describe("CardsPanel — v0.5 Wave-1 Feature 7 inline card/term edit", () => {
         root!.render(<CardsPanel />);
       });
 
-      const cameo = container!.querySelector('[data-testid="bit-cameo-stub"]');
-      expect(cameo).not.toBeNull();
-      expect(cameo!.getAttribute("data-pose")).toBe("sleep");
-      // themeId "shuimo" + bitCostume "auto" resolves via THEME_COSTUME
-      // (bitCostumes.ts) to "douli" — proves the store values actually
-      // thread through resolveBitCostume into the rendered cameo.
-      expect(cameo!.getAttribute("data-costume")).toBe("douli");
+      expect(container!.querySelector('[data-testid="bit-cameo-stub"]')).toBeNull();
       expect(container!.textContent).toContain("还没有开始会议");
+      expect(container!.textContent).toContain("点击 ▷ 先看演示，或选好收听方式后点 开始监听。卡片会随会议自动出现。");
     });
   });
 });

@@ -36,7 +36,7 @@ function StripCardContent({ item }: { item: UnifiedItem }) {
         <span className="truncate text-sm font-medium text-fg">{c.expression}</span>
         <span className="line-clamp-2 text-xs text-mut">{c.chinese_explanation}</span>
         {c.plain_english && (
-          <span className="truncate text-[11px] text-mut2">{c.plain_english}</span>
+          <span className="truncate text-xs text-mut">{c.plain_english}</span>
         )}
       </>
     );
