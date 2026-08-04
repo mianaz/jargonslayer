@@ -200,7 +200,7 @@ export const SERVICE_KEY_CATALOG: SettingsKeyCatalogEntry[] = [
     field: "agentToken",
     label: "连接码",
     purpose: "订阅直连 · 本机代理服务",
-    placeholder: "从代理服务启动日志复制粘贴",
+    placeholder: "粘贴启动日志中的连接码",
     inputType: "text",
     subscriptionDirectOnly: true,
   },

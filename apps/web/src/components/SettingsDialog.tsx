@@ -239,8 +239,8 @@ const ALL_ENGINE_CARDS: {
     // 音源 lives in StatusLine's bottom bar on every platform that shows
     // this card (iOS filters whisper out of ENGINE_CARDS entirely).
     hint: IS_DESKTOP
-      ? "本地转录服务运行 Whisper/Parakeet 模型（在下方选择型号），音频不出设备；听麦克风还是系统/标签页音频由底部状态栏的「音源」决定，系统音频仅捕获对方声音、不含你的麦克风"
-      : "本地转录服务运行 Whisper/Parakeet 模型，音频不出设备；听麦克风还是系统/标签页音频由底部状态栏的「音源」决定，系统音频仅捕获对方声音、不含你的麦克风",
+      ? "本地运行 Whisper/Parakeet 模型（在下方选择），音频不出设备。听麦克风还是系统/标签页音频由底部状态栏「音源」决定；系统音频仅捕获对方声音，不录你自己的声音。"
+      : "本地运行 Whisper/Parakeet 模型，音频不出设备。听麦克风还是系统/标签页音频由底部状态栏「音源」决定；系统音频仅捕获对方声音，不录你自己的声音。",
     sidecarOnly: true,
     sidecarFamily: true,
   },
@@ -308,8 +308,8 @@ const ALL_ENGINE_CARDS: {
           // three-source axis — iOS osspeech stays mic-only v1
           // (unaffected), so its copy is untouched.
           hint: IS_IOS
-            ? "无需下载模型，音频不离开本机；不支持说话人分离，需要 iOS 26 或更高版本"
-            : "无需下载模型，音频不离开本机；听麦克风、系统声音还是麦克风+系统由底部状态栏的「音源」决定，不支持说话人分离，需要 macOS 26 或更高版本",
+            ? "无需下载模型，音频不离开本机。不支持说话人分离。需要 iOS 26。"
+            : "无需下载模型，音频不离开本机。收听方式由底部状态栏「音源」决定，不支持说话人分离。需要 macOS 26。",
         },
       ]
     : []),
@@ -4465,7 +4465,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       ? "Key 存入 macOS 系统钥匙串，不再明文保存在应用存储中；其他 App 未经许可无法读取"
                       : IS_IOS
                         ? "在电脑浏览器完成 OpenRouter 授权后，把 API Key 粘贴到这里；仅存本机，不上传"
-                        : "仅存于本机浏览器；调用时经应用接口内存转发，不落盘"
+                        : "仅存于本机浏览器；调用时经本站服务转发、不落盘"
                   }
                   // BYOK preview sprint (2026-07-21): the chip used to be
                   // suppressed wholesale under PREVIEW_TIER (a key field
@@ -6236,7 +6236,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             >
               <SectionHeading>订阅直连（实验性）</SectionHeading>
               <div className="text-xs leading-[1.7] text-mut2">
-                用你自己机器上已登录的 Claude / ChatGPT，通过本机代理服务直接调用。凭据不经过任何服务器，仅检测与解释两个场景生效；依官方政策可能变化，随时可关闭。
+                用你自己机器上已登录的 Claude / ChatGPT，通过本机代理服务直接调用。凭据不经过任何服务器，仅用于检测与解释；依官方政策可能变化，随时可关闭。
               </div>
 
               <label className="flex items-center justify-between gap-3 py-1">
@@ -6354,7 +6354,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       type="text"
                       value={draft.agentToken}
                       onChange={(e) => patch({ agentToken: e.target.value })}
-                      placeholder="从代理服务启动日志复制粘贴"
+                      placeholder="粘贴启动日志中的连接码"
                       className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                     />
                     <div className="mt-1 text-xs leading-[1.7] text-mut2">
