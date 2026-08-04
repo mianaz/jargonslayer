@@ -12,10 +12,31 @@
 
 import type { MeetingLexicon, STTEvents, Settings } from "@jargonslayer/core/types";
 import { withBase } from "../basePath";
+import { diagLog } from "../diag/log";
 import { pushLagSample } from "./latencyStats";
 import { projectForInitialPrompt } from "./lexicon";
 
 const RECONNECT_DELAY_MS = 1000;
+// Long-session hardening item 6a: exponential backoff cap for
+// handleConnectionFailure's reconnect scheduling — see
+// reconnectDelayMs's own doc below. Without a cap, a sidecar down for
+// the whole back half of a 90-minute seminar would otherwise keep
+// doubling into an absurd wait.
+const MAX_RECONNECT_DELAY_MS = 30_000;
+// Long-session hardening item 6a: a connection has to stay OPEN this
+// long before it counts as a real recovery (see openedAt/
+// handleConnectionFailure below) — NOT merely reaching onopen, which an
+// accept-then-close sidecar fires every single cycle regardless of
+// whether the connection ever did anything useful. That was the actual
+// bug: the old reconnectAttempted boolean reset itself right there in
+// onopen, so the backoff never engaged and the loop free-ran at a flat
+// 1s cadence.
+const HEALTHY_CONNECTION_MS = 10_000;
+// Long-session hardening item 6c: this many CONSECUTIVE failed
+// reconnect cycles (since the last proven-healthy connection) before
+// the user is told anything at all — below this, a flap is exactly the
+// kind of transient hiccup this class already self-heals silently.
+const FLAP_NOTICE_THRESHOLD = 5;
 
 // STT protocol v2: stop() sends {"type":"stop"} and waits for the
 // sidecar's drain ack ({"type":"stopped"}, sent once its tail final —
@@ -142,7 +163,37 @@ export class WsTransport {
   private muteNode: GainNode | null = null;
 
   private userStopped = false;
-  private reconnectAttempted = false;
+  // Long-session hardening item 6a (replaces the old plain
+  // reconnectAttempted boolean): the backoff delay to use for the NEXT
+  // reconnect attempt — doubles (capped at MAX_RECONNECT_DELAY_MS) on
+  // every consecutive failure in handleConnectionFailure, and is reset
+  // back to RECONNECT_DELAY_MS only once openedAt proves a connection
+  // actually stuck around (see that field's own doc below), never
+  // merely on onopen.
+  private reconnectDelayMs = RECONNECT_DELAY_MS;
+  // Long-session hardening item 6a/6c: consecutive failed reconnect
+  // cycles since the last proven-healthy connection — drives both the
+  // backoff above and the flap notice (flapNoticeShown/
+  // FLAP_NOTICE_THRESHOLD) below.
+  private consecutiveFailures = 0;
+  // Long-session hardening item 6a: Date.now() at the most recent
+  // onopen; read back (and always zeroed) by handleConnectionFailure to
+  // decide whether THIS connection survived HEALTHY_CONNECTION_MS
+  // before dying. Checked lazily at failure time rather than resetting
+  // eagerly off a separate timer — 0 whenever no currently-open
+  // connection has yet to fail (the initial state, and immediately
+  // after every handleConnectionFailure call consumes it).
+  private openedAt = 0;
+  // Long-session hardening item 6b: PCM frames pushPcm() silently
+  // dropped because the ws wasn't OPEN, accumulated since the last
+  // flap-cycle diagLog — see pushPcm/handleConnectionFailure below.
+  private droppedFrameCount = 0;
+  // Long-session hardening item 6c: onNotice fires at most once per
+  // failure streak — reset alongside consecutiveFailures/
+  // reconnectDelayMs the moment a connection proves itself healthy
+  // again, so a LATER, separate flap later in a long meeting still gets
+  // its own notice instead of going silent for the rest of the session.
+  private flapNoticeShown = false;
   private stopping = false;
 
   // FB6 (S12b fix round B): mirrors userStopped/stopping's own idiom —
@@ -305,6 +356,15 @@ export class WsTransport {
     if (this.stopping) return;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(data);
+    } else {
+      // Long-session hardening item 6b: this used to be a silent drop —
+      // no counter, no diagLog, so a flapping connection lost audio for
+      // however long it took to reconnect with zero visibility (the
+      // chip's own status still flips connecting/listening each cycle,
+      // but that says nothing about the PCM lost in between). Summarized
+      // once per flap cycle by handleConnectionFailure below, never
+      // logged per-frame — this can fire many times a second.
+      this.droppedFrameCount++;
     }
   }
 
@@ -359,7 +419,13 @@ export class WsTransport {
       const initialPrompt = projectForInitialPrompt(this.lexicon ?? { terms: [] });
       if (initialPrompt) config.initial_prompt = initialPrompt;
       ws.send(JSON.stringify(config));
-      this.reconnectAttempted = false;
+      // Long-session hardening item 6a: replaces the old
+      // reconnectAttempted=false reset here, which fired (and wrongly
+      // counted as "recovered") on every single onopen, even one
+      // immediately followed by a close — see openedAt's own doc above
+      // for why the actual reset lives in handleConnectionFailure
+      // instead, gated on HEALTHY_CONNECTION_MS.
+      this.openedAt = Date.now();
       events.onStatus("listening");
     };
 
@@ -481,19 +547,59 @@ export class WsTransport {
   private handleConnectionFailure(): void {
     if (this.userStopped || this.stopping || this.terminalFailure) return;
 
-    if (!this.reconnectAttempted) {
-      this.reconnectAttempted = true;
-      setTimeout(() => {
-        if (this.userStopped || this.stopping || this.terminalFailure) return;
-        this.connect();
-      }, RECONNECT_DELAY_MS);
-      return;
+    // Long-session hardening item 6a: the connection that just died
+    // proved itself healthy if it stayed OPEN for at least
+    // HEALTHY_CONNECTION_MS — treat this failure as the start of a
+    // fresh streak, same as the very first failure of the session.
+    // Deliberately checked HERE (at failure time) rather than resetting
+    // eagerly off a separate timer — the two are observably identical
+    // (these fields are only ever read at the next failure) and this
+    // way needs no extra timer to arm/cancel.
+    if (this.openedAt > 0 && Date.now() - this.openedAt >= HEALTHY_CONNECTION_MS) {
+      this.reconnectDelayMs = RECONNECT_DELAY_MS;
+      this.consecutiveFailures = 0;
+      this.flapNoticeShown = false;
+    }
+    this.openedAt = 0;
+    this.consecutiveFailures++;
+
+    // Long-session hardening item 6b: summarize this outage's dropped-
+    // PCM-frame count once per flap cycle instead of ever logging per-
+    // frame (pushPcm's own doc above) — the 300-entry diag ring would
+    // drown in per-frame entries on a real outage otherwise.
+    if (this.droppedFrameCount > 0) {
+      diagLog(
+        "warn",
+        "stt-ws-transport",
+        "dropped PCM frames while the ws was down — reconnecting",
+        `droppedFrames=${this.droppedFrameCount} consecutiveFailures=${this.consecutiveFailures} nextDelayMs=${this.reconnectDelayMs}`,
+      );
+      this.droppedFrameCount = 0;
     }
 
-    this.events.onStatus(
-      "error",
-      this.connectFailureMessage(this.settings.whisperUrl),
-    );
+    // Long-session hardening item 6c: advisory only, via onNotice
+    // (STTEvents' own doc: "MUST NOT stop the meeting... the engine
+    // keeps retrying on its own backoff") — never onStatus("error"),
+    // which useMeeting.ts's onStatus handler treats as fatal and runs
+    // the full stop flow. A flapping sidecar must not itself end an
+    // otherwise-recoverable long session. Reuses the exact message this
+    // transport already shows for a dead connection (connectFailureMessage)
+    // through this non-fatal channel instead; fires at most once per
+    // streak (flapNoticeShown resets alongside the counters above).
+    if (this.consecutiveFailures >= FLAP_NOTICE_THRESHOLD && !this.flapNoticeShown) {
+      this.flapNoticeShown = true;
+      this.events.onNotice?.(this.connectFailureMessage(this.settings.whisperUrl));
+    }
+
+    // Keep retrying at the (capped) backoff regardless of the notice
+    // above — never permanently give up on a session that could still
+    // recover once the sidecar comes back.
+    const delay = this.reconnectDelayMs;
+    this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS);
+    setTimeout(() => {
+      if (this.userStopped || this.stopping || this.terminalFailure) return;
+      this.connect();
+    }, delay);
   }
 
   /** Soft pause (STT protocol v2, tabaudio/appaudio only): stop

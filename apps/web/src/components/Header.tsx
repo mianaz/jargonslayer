@@ -502,8 +502,14 @@ function useMobileToolbarState(selectMode: boolean) {
   const aiConfigured = useApp(
     (s) => PREVIEW_TIER || !!resolveTaskCreds(s.settings, "detect").apiKey,
   );
-  const untranslatedCount = useApp(
-    (s) => untranslatedSegments(s.segments, s.translations).length,
+  // Long-session hardening item 4: short-circuit to a constant 0 while
+  // listening — this hook is instantiated TWICE (HamburgerMenu and
+  // IosMenuSheet below), so the old bare O(n) scan on every store write
+  // (zustand v5, no selector caching) ran twice per write. Reads
+  // s.status (the selector's own snapshot), not the `status` const
+  // above — see TranscriptPanel.tsx's own identical selector for why.
+  const untranslatedCount = useApp((s) =>
+    s.status !== "stopped" ? 0 : untranslatedSegments(s.segments, s.translations).length,
   );
   const bilingualTranscript = useApp((s) => s.settings.bilingualTranscript);
   const translateLanguage = useApp((s) => s.settings.language);

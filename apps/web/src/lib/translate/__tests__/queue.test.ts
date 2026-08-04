@@ -744,4 +744,76 @@ describe("TranslateQueue — onState / drain", () => {
     await vi.advanceTimersByTimeAsync(5_000); // #4 dispatches — would read "busy" without the fix
     expect(onState).toHaveBeenLastCalledWith(expect.objectContaining({ state: "dead" }));
   });
+
+  // Long-session hardening item 1: the old "dead" condition also
+  // required !hasLandedTranslation — unreachable in production once a
+  // lane had landed even a single translation (the v0.7.5 lesson: a
+  // unit-tested escape hatch a real session could never actually hit,
+  // since it lands at least one translation almost immediately). A
+  // 90-minute seminar that translates fine for an hour and then dies
+  // for good must still show "dead".
+  it("a lane that already landed 5 translations still goes 'dead' after 3 consecutive failures, diagLogs the transition, and a later landing clears it (long-session hardening item 1)", async () => {
+    for (let i = 1; i <= 5; i++) {
+      mockTranslateApi.mockResolvedValueOnce({ translations: [{ id: `seg-${i}`, text: `第${i}句` }] });
+    }
+    for (let i = 1; i <= 5; i++) {
+      queue.pushSegment(makeSegment(`landed ${i}`));
+      await vi.advanceTimersByTimeAsync(800);
+    }
+    expect(mockTranslateApi).toHaveBeenCalledTimes(5);
+    expect(onState).not.toHaveBeenCalledWith(expect.objectContaining({ state: "dead" }));
+
+    const diagSpy = vi.spyOn(diagLogModule, "diagLog");
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 #1"));
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 #2"));
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 #3"));
+
+    queue.pushSegment(makeSegment("starts failing"));
+    await vi.advanceTimersByTimeAsync(800); // attempt #1 fails (1 consecutive)
+    expect(onState).not.toHaveBeenCalledWith(expect.objectContaining({ state: "dead" }));
+    await vi.advanceTimersByTimeAsync(5_000); // attempt #2 fails (2 consecutive)
+    expect(onState).not.toHaveBeenCalledWith(expect.objectContaining({ state: "dead" }));
+    await vi.advanceTimersByTimeAsync(5_000); // attempt #3 fails (3 consecutive) -> dead, even with 5 already landed
+    expect(onState).toHaveBeenCalledWith(expect.objectContaining({ state: "dead" }));
+    // The visibility fix (queue.ts's own diagLog gate) must also fire
+    // here — not just the OLD "never landed" case.
+    expect(diagSpy).toHaveBeenCalledWith(
+      "error",
+      "translate-queue",
+      expect.stringContaining("consecutive-failure threshold"),
+      "consecutiveFailedBatches=3",
+    );
+
+    // A subsequent landing clears it.
+    mockTranslateApi.mockResolvedValueOnce({ translations: [{ id: "seg-6", text: "六" }] });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(onState).toHaveBeenLastCalledWith({ state: "done", pending: 0, reason: undefined });
+  });
+
+  // Long-session hardening item 2: attemptTranslate's own empty-response
+  // branch is a deliberate no-op (failed-soft — see that comment) that
+  // never touches consecutiveFailedBatches at all, so a provider that
+  // quietly returns [] forever would never reach "dead" via item 1's fix
+  // above either.
+  it("8 finals with the provider returning an empty (but successful) response every time also goes 'dead'; a subsequent real landing resets it (long-session hardening item 2)", async () => {
+    mockTranslateApi.mockResolvedValue({ translations: [] });
+
+    for (let i = 1; i <= 8; i++) {
+      queue.pushSegment(makeSegment(`empty ${i}`));
+      await vi.advanceTimersByTimeAsync(800);
+      if (i < 8) {
+        expect(onState).not.toHaveBeenCalledWith(expect.objectContaining({ state: "dead" }));
+      }
+    }
+    expect(onState).toHaveBeenCalledWith(expect.objectContaining({ state: "dead" }));
+    // Confirms this run alone (no thrown errors, ever) is what tripped
+    // it — consecutiveFailedBatches never moved off 0.
+    expect(onState).not.toHaveBeenCalledWith(expect.objectContaining({ state: "stalled" }));
+
+    // A real landing resets finalsSinceLastLanding.
+    mockTranslateApi.mockResolvedValueOnce({ translations: [{ id: "seg-9", text: "好" }] });
+    queue.pushSegment(makeSegment("real landing"));
+    await vi.advanceTimersByTimeAsync(800);
+    expect(onState).toHaveBeenLastCalledWith({ state: "done", pending: 0, reason: undefined });
+  });
 });

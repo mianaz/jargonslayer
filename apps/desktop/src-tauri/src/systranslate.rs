@@ -589,10 +589,30 @@ pub async fn system_translate_prepare(
         Ok(Ok(Ok(()))) => Ok(generation),
         Ok(Ok(Err(message))) => Err(message),
         Ok(Err(_)) => Err("jargonslayer-audiocap --translate exited before becoming ready".to_string()),
-        Err(_) => Err(format!(
-            "timed out after {}s waiting for jargonslayer-audiocap --translate to become ready",
-            TRANSLATE_TIMEOUT.as_secs()
-        )),
+        Err(_) => {
+            // Long-session hardening item 3: unlike system_translate's own
+            // per-request timeout arm below (MEDIUM-3 fix), this arm used
+            // to return the timeout string WITHOUT killing the child —
+            // register_running_child above already put it in state.running
+            // by this point, so a child that never becomes ready would
+            // stay registered there, keep passing THIS function's own
+            // reuse check (source/target only, above) on the caller's next
+            // prepare() call, AND never produce the exact string
+            // ("no --translate child is running", system_translate's own
+            // None arm below) the JS-side respawn compensator keys on —
+            // wedging translation for the rest of the meeting. Same
+            // invariant as MEDIUM-3: a prepare timeout must never leave a
+            // registered child behind.
+            kill_running_if_generation(
+                &state,
+                generation,
+                "system_translate_prepare: timed out waiting for jargonslayer-audiocap --translate to become ready",
+            );
+            Err(format!(
+                "timed out after {}s waiting for jargonslayer-audiocap --translate to become ready",
+                TRANSLATE_TIMEOUT.as_secs()
+            ))
+        }
     }
 }
 

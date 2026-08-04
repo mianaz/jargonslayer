@@ -7,6 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type STTEvents, type Settings } from "@jargonslayer/core/types";
+import * as diagLogModule from "../../diag/log";
 import {
   FakeWebSocket,
   fakeMediaStream,
@@ -25,6 +26,12 @@ import { useLatencyStats } from "../latencyStats";
 const STOP_DRAIN_TIMEOUT_MS = 8000;
 const RECONNECT_DELAY_MS = 1000;
 const POST_STOP_LINGER_MS = 12000;
+// Long-session hardening item 6 mirrors — see wsTransport.ts's own doc
+// comments on MAX_RECONNECT_DELAY_MS/HEALTHY_CONNECTION_MS/
+// FLAP_NOTICE_THRESHOLD.
+const MAX_RECONNECT_DELAY_MS = 30_000;
+const HEALTHY_CONNECTION_MS = 10_000;
+const FLAP_NOTICE_THRESHOLD = 5;
 
 describe("WsTransport — protocol v2", () => {
   let wsInstances: FakeWebSocket[];
@@ -55,6 +62,10 @@ describe("WsTransport — protocol v2", () => {
     uninstallFakeWebSocket();
     uninstallFakeAudioGraph();
     vi.useRealTimers();
+    // Item 6 tests spy on diagLogModule.diagLog — without this, an
+    // un-restored spy's call history bleeds into the next test (same
+    // convention as translate/__tests__/queue.test.ts's own afterEach).
+    vi.restoreAllMocks();
   });
 
   function makeTransport(overrides: Partial<Settings> = {}): WsTransport {
@@ -759,6 +770,166 @@ describe("WsTransport — protocol v2", () => {
       // truly never touches AudioContext/AudioWorkletNode.
       expect(contexts.length).toBe(0);
       expect(workletNodes.length).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Long-session hardening item 6: reconnect backoff, dropped-frame
+  // counter, and the flap notice — a 90-minute seminar shouldn't free-
+  // run an unthrottled 1s reconnect loop against a flapping sidecar,
+  // silently lose audio with no trail, or ever permanently strand a
+  // session that could still recover.
+  // ---------------------------------------------------------------
+
+  describe("reconnect backoff (item 6)", () => {
+    it("backs off exponentially (1s, 2s, 4s, 8s, 16s) then caps at 30s across repeated failures with no healthy connection in between", async () => {
+      vi.useFakeTimers();
+      const transport = makeTransport();
+      await transport.attachStream(fakeMediaStream());
+      let ws = wsInstances[wsInstances.length - 1];
+
+      const delays = [1000, 2000, 4000, 8000, 16000, MAX_RECONNECT_DELAY_MS, MAX_RECONNECT_DELAY_MS];
+      for (const delay of delays) {
+        const before = wsInstances.length;
+        ws.simulateServerClose(); // never opened — an immediate connection failure
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        expect(wsInstances.length).toBe(before); // not yet — still waiting out this delay
+        await vi.advanceTimersByTimeAsync(1);
+        expect(wsInstances.length).toBe(before + 1); // fires right at the boundary
+        ws = wsInstances[wsInstances.length - 1];
+      }
+    });
+
+    it("an accept-then-close sidecar (opens, then closes almost immediately) still backs off — onopen alone is not proof of recovery", async () => {
+      vi.useFakeTimers();
+      const transport = makeTransport();
+      await transport.attachStream(fakeMediaStream());
+      let ws = wsInstances[wsInstances.length - 1];
+
+      // Cycle 1: opens, then closes well under HEALTHY_CONNECTION_MS —
+      // this is the exact pre-fix bug shape.
+      ws.simulateOpen();
+      ws.simulateServerClose();
+      await vi.advanceTimersByTimeAsync(1000); // first-ever failure: base delay
+      expect(wsInstances.length).toBe(2);
+      ws = wsInstances[1];
+
+      // Cycle 2: same accept-then-close shape again.
+      ws.simulateOpen();
+      ws.simulateServerClose();
+
+      // The pre-fix bug: reconnectAttempted reset in onopen meant this
+      // ALSO reconnected at the flat base delay forever. Post-fix, this
+      // must be the doubled 2s delay instead.
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(wsInstances.length).toBe(2); // still not yet
+      await vi.advanceTimersByTimeAsync(1);
+      expect(wsInstances.length).toBe(3);
+    });
+
+    it("resets the backoff to the base delay once a connection survives the healthy window, not merely on onopen", async () => {
+      vi.useFakeTimers();
+      const transport = makeTransport();
+      await transport.attachStream(fakeMediaStream());
+      let ws = wsInstances[wsInstances.length - 1];
+
+      // First failure, never opened — backs off to 2s for the next attempt.
+      ws.simulateServerClose();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(wsInstances.length).toBe(2);
+      ws = wsInstances[1];
+
+      // This one opens and survives the full healthy window before dying.
+      ws.simulateOpen();
+      await vi.advanceTimersByTimeAsync(HEALTHY_CONNECTION_MS);
+      ws.simulateServerClose();
+
+      // Next reconnect must use the BASE delay again (1000ms), not the
+      // 4000ms this streak would otherwise have climbed to.
+      await vi.advanceTimersByTimeAsync(999);
+      expect(wsInstances.length).toBe(2); // not yet
+      await vi.advanceTimersByTimeAsync(1);
+      expect(wsInstances.length).toBe(3);
+    });
+
+    it("pushPcm() drops while disconnected are counted and diagLog'd once per flap cycle, not per frame", async () => {
+      vi.useFakeTimers();
+      const diagSpy = vi.spyOn(diagLogModule, "diagLog");
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+      const ws1 = wsInstances[wsInstances.length - 1];
+
+      transport.pushPcm(new ArrayBuffer(8));
+      transport.pushPcm(new ArrayBuffer(8));
+      transport.pushPcm(new ArrayBuffer(8));
+      ws1.simulateServerClose(); // logs synchronously, then schedules the retry
+
+      expect(diagSpy).toHaveBeenCalledWith(
+        "warn",
+        "stt-ws-transport",
+        expect.any(String),
+        expect.stringContaining("droppedFrames=3"),
+      );
+      diagSpy.mockClear();
+
+      await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+      const ws2 = wsInstances[wsInstances.length - 1];
+      expect(ws2).not.toBe(ws1);
+
+      // A single drop during the SECOND outage is logged on its own —
+      // the counter reset to 0 right after the first summary, so this
+      // must read 1, not 4.
+      transport.pushPcm(new ArrayBuffer(8));
+      ws2.simulateServerClose();
+      expect(diagSpy).toHaveBeenCalledWith(
+        "warn",
+        "stt-ws-transport",
+        expect.any(String),
+        expect.stringContaining("droppedFrames=1"),
+      );
+    });
+
+    it("a healthy connection with no drops never diagLogs a flap summary", async () => {
+      vi.useFakeTimers();
+      const diagSpy = vi.spyOn(diagLogModule, "diagLog");
+      const transport = makeTransport();
+      const ws = await attachAndOpen(transport);
+
+      transport.pushPcm(new ArrayBuffer(8)); // forwarded, not dropped — ws is OPEN
+      ws.simulateServerClose();
+
+      expect(diagSpy).not.toHaveBeenCalledWith("warn", "stt-ws-transport", expect.any(String), expect.any(String));
+    });
+
+    it("after FLAP_NOTICE_THRESHOLD consecutive failed cycles, surfaces the connect-failure message via onNotice — never onStatus('error') — and keeps retrying at the 30s cap afterward", async () => {
+      vi.useFakeTimers();
+      const onNotice = vi.fn();
+      events.onNotice = onNotice;
+      const transport = makeTransport();
+      await transport.attachStream(fakeMediaStream());
+      let ws = wsInstances[wsInstances.length - 1];
+
+      const delays = [1000, 2000, 4000, 8000, 16000];
+      expect(delays.length).toBe(FLAP_NOTICE_THRESHOLD);
+      for (const delay of delays) {
+        ws.simulateServerClose();
+        await vi.advanceTimersByTimeAsync(delay);
+        ws = wsInstances[wsInstances.length - 1];
+      }
+
+      expect(onNotice).toHaveBeenCalledTimes(1);
+      expect(onNotice).toHaveBeenCalledWith(`failed: ${DEFAULT_SETTINGS.whisperUrl}`);
+      // Advisory only — never routed through the fatal onStatus("error")
+      // path (that would end the whole meeting via useMeeting.ts's stop
+      // flow, directly contradicting "keep retrying regardless").
+      expect(onStatus).not.toHaveBeenCalledWith("error", expect.anything());
+
+      // A 6th failure must not re-fire the one-shot notice...
+      ws.simulateServerClose();
+      await vi.advanceTimersByTimeAsync(MAX_RECONNECT_DELAY_MS); // capped by now
+      expect(onNotice).toHaveBeenCalledTimes(1);
+      // ...but it keeps retrying regardless — never strands the session.
+      expect(wsInstances.length).toBe(7);
     });
   });
 });
