@@ -66,8 +66,8 @@ targets:
         # regen template's copy. Release-train bump = Cargo.toml [package]
         # + tauri.conf.json "version" + here, and check-ios-plist.mjs
         # fails the build if the generated plist drifts from Cargo.toml.
-        CFBundleShortVersionString: 0.7.5
-        CFBundleVersion: "0.7.5"
+        CFBundleShortVersionString: 0.7.6
+        CFBundleVersion: "0.7.6"
         # TestFlight export compliance, declared once (ASC would otherwise
         # ask per-build): the app uses ONLY standard HTTPS/system TLS —
         # exempt encryption, so false is the honest value. With this key
