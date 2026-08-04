@@ -1,7 +1,7 @@
 {
   "name": "jargonslayer",
   "private": true,
-  "description": "Real-time English-meeting comprehension assistant for non-native speakers — transparent by default, fully local when you choose (英文会议实时理解助手)",
+  "description": "Private, fully local bilingual meeting engine for the Mac — dual mic+system capture, live 中英 transcript, vault export (私有、全本地的 Mac 双语会议引擎)",
   "license": "AGPL-3.0-only",
   "author": "Miana Zeng",
   "repository": {

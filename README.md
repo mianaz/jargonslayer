@@ -38,7 +38,7 @@ JargonSlayer captures both sides of an English meeting at once — system audio 
 
 ## Features
 
-- **Dual capture** — system audio and microphone recorded together, echo-cancelled (AEC) so your mic doesn't also pick up what's playing from your speakers; no virtual audio device (desktop, macOS 14.4+).
+- **Dual capture** — system audio and microphone recorded together, echo-cancelled (AEC) so your mic doesn't also pick up what's playing from your speakers; no virtual audio device (desktop, macOS 26+).
 - **Fully local** — local Whisper, Apple's on-device speech recognition, and on-device translation; zero bytes leave your Mac.
 - **Bilingual live transcript** — English audio, Chinese translation, side by side as people talk.
 - **我/对方 speaker attribution** — dual capture tags your mic and the meeting audio as 我 (you) and 对方 (them) automatically; pyannote diarization (optional one-click install) breaks out individual speakers live or from an imported recording.
