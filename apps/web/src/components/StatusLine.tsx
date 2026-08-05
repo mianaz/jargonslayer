@@ -898,6 +898,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
   // below fires exactly once per activation, never doubled.
   const livenessArmed = useAudioLiveness((s) => s.armed);
   const livenessVerdicts = useAudioLiveness((s) => s.verdicts);
+  const livenessNoticeTick = useAudioLiveness((s) => s.noticeTick);
   const showToast = useApp((s) => s.showToast);
 
   const isListening = status === "listening";
@@ -930,10 +931,11 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
   // flap-notice shape (lastNoticeAt null until the first firing, then
   // re-armed no more often than RENOTICE_INTERVAL_MS) — diagLog + toast
   // fire once per activation, reset the moment the warning clears (a
-  // LATER, separate stall gets its own first notice again). Runs off
-  // `livenessVerdicts`'s own object identity, which changes on every
-  // push/noteResult/sentinel recompute while armed (~5-15s cadence),
-  // giving this frequent-enough wall-clock checks without its own timer.
+  // LATER, separate stall gets its own first notice again). Fix E made
+  // `livenessVerdicts` identity-STABLE while a verdict is unchanged, so
+  // identity churn no longer re-runs this effect; `noticeTick` (bumped
+  // by the sentinel each tick while a warning persists) is the heartbeat
+  // that gives this its wall-clock re-checks without its own timer.
   // Info-only (silentChannel) never toasts — see LivenessChip's own "no
   // new visual vocabulary" doc comment for why that one stays quiet.
   const livenessNoticeAtRef = useRef<number | null>(null);
@@ -965,7 +967,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
       );
       showToast("转写疑似停滞：有声音但持续无转写结果。可尝试暂停后继续，或结束会话保存已有内容。");
     }
-  }, [isListening, livenessArmed, livenessVerdicts, showToast]);
+  }, [isListening, livenessArmed, livenessVerdicts, livenessNoticeTick, showToast]);
 
   // v0.4.7 Lane C (tri-state privacy label, doc §4/§9 D5-D7): posture's
   // richer replacement. resolveEngineRetentionClass (lib/stt/

@@ -332,6 +332,24 @@ describe("audioLiveness", () => {
       vi.advanceTimersByTime(STATS_STALE_MS + 1000);
       expect(useAudioLiveness.getState().verdicts.statsStale).toBe(false);
     });
+
+    it("noticeTick: bumped by the sentinel each tick WHILE a warning persists (StatusLine's re-notice heartbeat), untouched while idle or after recovery", () => {
+      const idleTick = useAudioLiveness.getState().noticeTick;
+      vi.advanceTimersByTime(30_000); // two sentinel ticks, no verdict yet
+      expect(useAudioLiveness.getState().noticeTick).toBe(idleTick);
+
+      vi.advanceTimersByTime(STATS_STALE_MS); // statsStale active from here
+      const activeTick = useAudioLiveness.getState().noticeTick;
+      expect(activeTick).toBeGreaterThan(idleTick);
+
+      vi.advanceTimersByTime(30_000); // two more ticks, still stale
+      expect(useAudioLiveness.getState().noticeTick).toBeGreaterThanOrEqual(activeTick + 2);
+
+      pushAudioWindow("default", 0); // fresh stats line — statsStale clears
+      const recoveredTick = useAudioLiveness.getState().noticeTick;
+      vi.advanceTimersByTime(30_000); // safely under a fresh STATS_STALE_MS
+      expect(useAudioLiveness.getState().noticeTick).toBe(recoveredTick);
+    });
   });
 
   describe("silentChannel hint (3): dual-capture osspeech only", () => {

@@ -108,6 +108,14 @@ export interface AudioLivenessState {
   armed: boolean;
   channels: Record<AudioChannel, ChannelLivenessState>;
   verdicts: AudioLivenessVerdicts;
+  /** Bumped by the sentinel on each tick WHILE a warning verdict stays
+   *  active. Fix E made `verdicts` identity-stable for an unchanged
+   *  verdict, which severed the re-run cadence StatusLine's re-notice
+   *  effect used to inherit from identity churn — a persistent stall
+   *  would toast once and never again. This counter is the replacement
+   *  heartbeat: a changing primitive the effect can depend on, driven
+   *  only while there is something to re-notice about. */
+  noticeTick: number;
 }
 
 // lastResultAt/lastStatsAt seed to the arm timestamp (never null) — a
@@ -129,6 +137,7 @@ export const useAudioLiveness = create<AudioLivenessState>(() => ({
   armed: false,
   channels: freshChannels(Date.now()),
   verdicts: EMPTY_VERDICTS,
+  noticeTick: 0,
 }));
 
 /** Pre-tag fix round (Fix E): plain value equality for the two small
@@ -294,7 +303,14 @@ export function disarmLiveness(): void {
 function evaluateSentinel(): void {
   useAudioLiveness.setState((s) => {
     if (!s.armed) return s;
-    return { verdicts: computeVerdicts(s.channels, Date.now(), s.verdicts) };
+    const verdicts = computeVerdicts(s.channels, Date.now(), s.verdicts);
+    // While a WARNING verdict persists, each tick bumps noticeTick so
+    // StatusLine's re-notice effect keeps re-running against the (now
+    // identity-stable, Fix E) verdicts object — its internal
+    // RENOTICE_INTERVAL_MS gate decides whether a re-toast is actually
+    // due. Info-only verdicts never toast, so they don't drive the tick.
+    const warning = verdicts.statsStale || verdicts.watchdogChannels.length > 0;
+    return warning ? { verdicts, noticeTick: s.noticeTick + 1 } : { verdicts };
   });
 }
 

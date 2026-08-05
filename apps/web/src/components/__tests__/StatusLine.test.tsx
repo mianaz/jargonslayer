@@ -1898,20 +1898,23 @@ describe("StatusLine — liveness chip (Lane W)", () => {
       });
       expect(useApp.getState().toast).toContain("转写疑似停滞");
 
-      // Clear + re-trigger the SAME still-active verdict (a fresh object
-      // reference, same as a real recompute would produce) well before
+      // Same still-active verdict, identity-STABLE (Fix E: computeVerdicts
+      // returns prev by reference for an unchanged verdict) — so the
+      // effect's only re-run driver is the sentinel's noticeTick
+      // heartbeat, which is exactly what production provides. Well before
       // RENOTICE_INTERVAL_MS — must NOT re-fire yet.
       useApp.setState({ toast: null });
       await act(async () => {
         vi.advanceTimersByTime(RENOTICE_INTERVAL_MS - 1000);
-        useAudioLiveness.setState({ verdicts: { statsStale: true, watchdogChannels: [], silentChannels: [] } });
+        useAudioLiveness.setState((s) => ({ noticeTick: s.noticeTick + 1 }));
       });
       expect(useApp.getState().toast).toBeNull();
 
-      // Crossing RENOTICE_INTERVAL_MS while STILL active re-arms it.
+      // Crossing RENOTICE_INTERVAL_MS while STILL active re-arms it —
+      // again via the heartbeat alone, the verdicts object untouched.
       await act(async () => {
         vi.advanceTimersByTime(1001);
-        useAudioLiveness.setState({ verdicts: { statsStale: true, watchdogChannels: [], silentChannels: [] } });
+        useAudioLiveness.setState((s) => ({ noticeTick: s.noticeTick + 1 }));
       });
       expect(useApp.getState().toast).toContain("转写疑似停滞");
 
