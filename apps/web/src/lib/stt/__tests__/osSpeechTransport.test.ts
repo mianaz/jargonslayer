@@ -14,7 +14,7 @@ vi.mock("../../desktop/tauriApi", () => ({
   getListen: () => Promise.resolve(currentListen),
 }));
 
-import { listenOsSpeechStatus, listenOsSpeechTranscript } from "../osSpeechTransport";
+import { listenOsSpeechAudioStats, listenOsSpeechStatus, listenOsSpeechTranscript } from "../osSpeechTransport";
 
 function makeFakeListen(): {
   listen: ListenFn;
@@ -80,6 +80,38 @@ describe("listenOsSpeechTranscript/listenOsSpeechStatus — desktop branch (IS_I
     expect(activeCount("osspeech://transcript")).toBe(0);
 
     emit("osspeech://transcript", { final: false, seq: 2, startMs: 0, endMs: 50, text: "late" });
+    expect(cb).not.toHaveBeenCalled();
+  });
+});
+
+// Lane W (mid-session STT liveness watchdog, audioLiveness.ts) —
+// "osspeech://audio-stats" rides the SAME desktop global-event path as
+// the other two, just a dedicated event name (never plugin-scoped on
+// iOS at all — see osSpeechTransport.ios.test.ts for that branch).
+describe("listenOsSpeechAudioStats — desktop branch (IS_IOS false)", () => {
+  it('subscribes to the macOS global "osspeech://audio-stats" event via getListen()', async () => {
+    const { listen, emit } = makeFakeListen();
+    currentListen = listen;
+    const cb = vi.fn();
+
+    await listenOsSpeechAudioStats(cb);
+    emit("osspeech://audio-stats", { channel: "mic", windowPeak: 0.05 });
+
+    expect(cb.mock.calls[0][0].payload).toEqual({ channel: "mic", windowPeak: 0.05 });
+  });
+
+  it("the returned UnlistenFn tears down the underlying getListen() subscription", async () => {
+    const { listen, emit, activeCount } = makeFakeListen();
+    currentListen = listen;
+    const cb = vi.fn();
+
+    const unlisten = await listenOsSpeechAudioStats(cb);
+    expect(activeCount("osspeech://audio-stats")).toBe(1);
+
+    unlisten();
+    expect(activeCount("osspeech://audio-stats")).toBe(0);
+
+    emit("osspeech://audio-stats", { windowPeak: 0.1 });
     expect(cb).not.toHaveBeenCalled();
   });
 });

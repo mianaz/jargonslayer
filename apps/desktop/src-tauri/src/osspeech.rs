@@ -452,6 +452,16 @@ struct RawOsSpeechLine {
     #[serde(rename = "droppedFrames")]
     dropped_frames: Option<u64>,
     peak: Option<f64>,
+    /// Lane W (mid-session STT liveness watchdog, apps/web's
+    /// audioLiveness.ts): the SAME windowed-max-since-last-emission value
+    /// StatusEvents.swift's own `windowPeak` already carries (Writer's
+    /// stats cadence resets it right after each emission) — unlike `peak`
+    /// above, this one goes back down, which is what lets a reader tell a
+    /// genuinely QUIET recent window apart from a loud session's stale
+    /// running max. `Option` for the same reason `peak` is: an
+    /// older/foreign stats line may omit it.
+    #[serde(rename = "windowPeak")]
+    window_peak: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -496,22 +506,28 @@ enum ParsedOsSpeechLine {
         code: String,
         message: String,
     },
-    /// Forwarded to the log lane only (no status event) — same posture
-    /// as audiocap's own `ParsedAudiocapLine::Stats`. `peak` (the
-    /// helper's running max |sample| since SESSION START, StatusEvents
-    /// .emitStats — monotone, never reset) is the ONE counter the
-    /// session task now reads: its silent-session latch
-    /// (`saw_nonzero_peak`) feeds the final status event's `sawAudio`
-    /// field. `Option` because older/foreign stats lines may omit it —
-    /// absent must degrade to "no audio evidence", never `Unrecognized`
-    /// (the four counters below stay the shape's required fields).
+    /// `peak` (the helper's running max |sample| since SESSION START,
+    /// StatusEvents.emitStats — monotone, never reset) still only ever
+    /// feeds the session-wide silent-session latch (`saw_nonzero_peak`),
+    /// itself carried out on the final status event's `sawAudio` field —
+    /// no dedicated webview event of its own. `Option` because
+    /// older/foreign stats lines may omit it — absent must degrade to "no
+    /// audio evidence", never `Unrecognized` (the four counters below
+    /// stay the shape's required fields).
     ///
-    /// The dual-capture `channel` field a stats record may now also
-    /// carry is deliberately NOT extracted here: the raw line's log copy
-    /// already includes it verbatim, and the latch below is
-    /// session-wide on purpose (see its own comment for why a
-    /// per-channel latch would be a different, larger feature).
-    Stats { peak: Option<f64> },
+    /// Lane W (mid-session STT liveness watchdog + per-channel silence
+    /// hint, apps/web's audioLiveness.ts): `window_peak`/`channel` ARE now
+    /// extracted — this is the "different, larger feature" a prior
+    /// revision of this comment deferred them to. Forwarded (only when
+    /// `window_peak` is `Some`) through a dedicated, generation-guarded
+    /// `osspeech://audio-stats` event (see `emit_audio_stats_for_session`
+    /// below) — a per-channel/per-window signal, unlike `peak`'s
+    /// session-wide monotone latch above.
+    Stats {
+        peak: Option<f64>,
+        window_peak: Option<f64>,
+        channel: Option<String>,
+    },
     /// Not valid JSON, valid JSON with an unrecognized/missing "type", or
     /// a known "type" missing the fields that shape requires — never a
     /// panic, always falls back here (mirrors audiocap's own posture for
@@ -574,7 +590,11 @@ fn parse_osspeech_line(line: &str) -> ParsedOsSpeechLine {
             _ => ParsedOsSpeechLine::Unrecognized,
         },
         "stats" => match (raw.overflows, raw.ring_high_water, raw.frames_out, raw.dropped_frames) {
-            (Some(_), Some(_), Some(_), Some(_)) => ParsedOsSpeechLine::Stats { peak: raw.peak },
+            (Some(_), Some(_), Some(_), Some(_)) => ParsedOsSpeechLine::Stats {
+                peak: raw.peak,
+                window_peak: raw.window_peak,
+                channel: raw.channel,
+            },
             _ => ParsedOsSpeechLine::Unrecognized,
         },
         _ => ParsedOsSpeechLine::Unrecognized,
@@ -1243,6 +1263,24 @@ struct OsSpeechTranscriptEvent {
     channel: Option<String>,
 }
 
+/// Lane W (mid-session STT liveness watchdog + per-channel silence hint,
+/// apps/web's audioLiveness.ts): a dedicated, generation-guarded event for
+/// the stats lane's windowed peak — see `ParsedOsSpeechLine::Stats`'s own
+/// doc comment for why this is a SEPARATE event from `osspeech://status`
+/// rather than another field bolted onto it (this fires every stats
+/// cadence, `osspeech://status` only on lifecycle transitions). Only ever
+/// constructed/emitted when the wire's `windowPeak` was actually present —
+/// see `emit_audio_stats_for_session`'s only call site.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OsSpeechAudioStatsEvent {
+    /// Same "absent, never null" convention as `OsSpeechTranscriptEvent`
+    /// .channel above — `None` on a legacy/default-system run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    channel: Option<String>,
+    window_peak: f64,
+}
+
 /// §2.5 R2 — PINNED CROSS-LANE CONTRACT: every `osspeech://status` payload
 /// carries a `source` provenance tag distinguishing the two independent
 /// Rust tasks that can both emit on this one shared, app-global event lane
@@ -1355,6 +1393,16 @@ fn emit_transcript_for_session(app: &tauri::AppHandle, generation: u64, event: O
         return;
     }
     let _ = app.emit("osspeech://transcript", event);
+}
+
+/// Same generation-guard posture as `emit_transcript_for_session` above —
+/// a late stats line from a superseded session's own task must never feed
+/// a newer session's audioLiveness.ts store.
+fn emit_audio_stats_for_session(app: &tauri::AppHandle, generation: u64, event: OsSpeechAudioStatsEvent) {
+    if !app.state::<OsSpeechState>().is_current(generation) {
+        return;
+    }
+    let _ = app.emit("osspeech://audio-stats", event);
 }
 
 // ---- durable session log (mirrors audiocap.rs's own SessionLog
@@ -1555,9 +1603,20 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                             ParsedOsSpeechLine::Error { code, message } => {
                                 last_error = Some((code, message));
                             }
-                            ParsedOsSpeechLine::Stats { peak } => {
+                            ParsedOsSpeechLine::Stats { peak, window_peak, channel } => {
                                 if peak.unwrap_or(0.0) > 0.0 {
                                     saw_nonzero_peak = true;
+                                }
+                                // Lane W: only when the wire actually
+                                // carried one — an older/foreign helper
+                                // build omitting windowPeak must not feed
+                                // a bogus 0.0 into the liveness watchdog.
+                                if let Some(window_peak) = window_peak {
+                                    emit_audio_stats_for_session(
+                                        &app,
+                                        generation,
+                                        OsSpeechAudioStatsEvent { channel, window_peak },
+                                    );
                                 }
                             }
                             ParsedOsSpeechLine::Probe { .. } | ParsedOsSpeechLine::Unrecognized => {}
@@ -2048,16 +2107,22 @@ mod tests {
 
     #[test]
     fn parses_a_stats_line() {
-        // A peak-less stats line (older helper) still parses — `peak`
-        // degrades to None ("no audio evidence"), never Unrecognized.
+        // A peak/windowPeak-less stats line (older helper) still parses —
+        // both degrade to None ("no audio evidence"), never Unrecognized.
         let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0}"#;
-        assert_eq!(parse_osspeech_line(line), ParsedOsSpeechLine::Stats { peak: None });
+        assert_eq!(
+            parse_osspeech_line(line),
+            ParsedOsSpeechLine::Stats { peak: None, window_peak: None, channel: None }
+        );
     }
 
     #[test]
-    fn a_stats_line_carries_its_peak_through() {
-        let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0,"peak":0.351,"windowPeak":0.0}"#;
-        assert_eq!(parse_osspeech_line(line), ParsedOsSpeechLine::Stats { peak: Some(0.351) });
+    fn a_stats_line_carries_its_peak_and_window_peak_through() {
+        let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0,"peak":0.351,"windowPeak":0.042}"#;
+        assert_eq!(
+            parse_osspeech_line(line),
+            ParsedOsSpeechLine::Stats { peak: Some(0.351), window_peak: Some(0.042), channel: None }
+        );
     }
 
     #[test]
@@ -2067,21 +2132,23 @@ mod tests {
     }
 
     #[test]
-    fn a_stats_line_with_a_channel_field_still_classifies_as_stats() {
-        // Dual-capture wire fact: stats records may now carry an optional
-        // `channel` field too — `Stats` never extracts it (see its own
-        // doc comment: the raw line's log copy already has it verbatim),
-        // but the extra field must not break classification, and must
-        // not disturb the silent-session `peak` the variant DOES carry.
-        let line = r#"{"type":"stats","channel":"mic","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0}"#;
-        assert_eq!(parse_osspeech_line(line), ParsedOsSpeechLine::Stats { peak: None });
+    fn a_stats_line_with_a_channel_field_is_now_extracted() {
+        // Lane W: unlike before this feature, `channel` (and `windowPeak`)
+        // ARE now extracted onto the Stats variant — see that variant's
+        // own doc comment for why this is no longer "deliberately not
+        // extracted here".
+        let line = r#"{"type":"stats","channel":"mic","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0,"windowPeak":0.04}"#;
+        assert_eq!(
+            parse_osspeech_line(line),
+            ParsedOsSpeechLine::Stats { peak: None, window_peak: Some(0.04), channel: Some("mic".to_string()) }
+        );
     }
 
     #[test]
     fn a_stats_line_with_a_channel_field_is_still_logged_verbatim() {
-        // Stats has no dedicated webview event (log lane only) — its
-        // "channel round-trip" is exactly this: the raw line, channel
-        // field and all, reaches the log unchanged.
+        // log_line_for's own "channel round-trip" is unrelated to the new
+        // osspeech://audio-stats event above — this asserts the raw line,
+        // channel field and all, still reaches the log lane unchanged.
         let raw = r#"{"type":"stats","channel":"mic","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0}"#;
         let parsed = parse_osspeech_line(raw);
         assert_eq!(log_line_for(raw, &parsed), raw);
@@ -2682,5 +2749,25 @@ mod tests {
     fn transcript_event_carries_channel_on_the_wire_when_some() {
         let json = serde_json::to_value(sample_transcript_event(Some("mic".to_string()))).unwrap();
         assert_eq!(json.get("channel").and_then(|v| v.as_str()), Some("mic"));
+    }
+
+    // ---- Lane W: osspeech://audio-stats event shape (windowPeak/channel) ----
+
+    #[test]
+    fn audio_stats_event_omits_channel_from_the_wire_when_none() {
+        let json = serde_json::to_value(OsSpeechAudioStatsEvent { channel: None, window_peak: 0.04 }).unwrap();
+        assert!(json.get("channel").is_none(), "None must serialize as an absent key, not null: {json}");
+        assert_eq!(json.get("windowPeak").and_then(|v| v.as_f64()), Some(0.04));
+    }
+
+    #[test]
+    fn audio_stats_event_carries_channel_and_window_peak_on_the_wire_when_some() {
+        let json = serde_json::to_value(OsSpeechAudioStatsEvent {
+            channel: Some("system".to_string()),
+            window_peak: 0.5,
+        })
+        .unwrap();
+        assert_eq!(json.get("channel").and_then(|v| v.as_str()), Some("system"));
+        assert_eq!(json.get("windowPeak").and_then(|v| v.as_f64()), Some(0.5));
     }
 }

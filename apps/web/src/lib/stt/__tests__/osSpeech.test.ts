@@ -53,6 +53,14 @@ vi.mock("../../desktop/jobsBridge", () => ({
   },
 }));
 
+// Lane W (mid-session STT liveness watchdog): this engine is a dumb
+// forwarder onto audioLiveness.ts's own store (see handleAudioStats's own
+// doc comment) — mocked here so "osspeech://audio-stats mapping" below
+// can assert the forwarding call directly, same posture as jobsBridge's
+// mock above (that module's OWN behavior is somebody else's test file).
+const pushAudioWindow = vi.fn();
+vi.mock("../audioLiveness", () => ({ pushAudioWindow: (...args: unknown[]) => pushAudioWindow(...args) }));
+
 import { OsSpeechEngine } from "../osSpeech";
 import { createEngine } from "../index";
 import { CH_MIC_SPEAKER, CH_SYS_SPEAKER } from "../../store";
@@ -131,6 +139,7 @@ describe("OsSpeechEngine", () => {
   beforeEach(() => {
     assetTrackers = [];
     clearDiag();
+    pushAudioWindow.mockClear();
   });
 
   afterEach(() => {
@@ -400,6 +409,45 @@ describe("OsSpeechEngine", () => {
       });
 
       expect(onInterim).toHaveBeenCalledWith("partial");
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Lane W (mid-session STT liveness watchdog): "osspeech://audio-stats"
+  // -> pushAudioWindow mapping. This engine is a dumb forwarder — the
+  // verdict/threshold logic itself is audioLiveness.test.ts's own job.
+  // ---------------------------------------------------------------
+
+  describe("osspeech://audio-stats mapping (Lane W)", () => {
+    it("forwards channel + windowPeak verbatim", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      await engine.start(noopEvents(), OSSPEECH_SETTINGS);
+
+      emit("osspeech://audio-stats", { channel: "mic", windowPeak: 0.05 });
+
+      expect(pushAudioWindow).toHaveBeenCalledWith("mic", 0.05);
+    });
+
+    it("an absent channel (legacy/single-source session) maps to 'default'", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      await engine.start(noopEvents(), OSSPEECH_SETTINGS);
+
+      emit("osspeech://audio-stats", { windowPeak: 0.02 });
+
+      expect(pushAudioWindow).toHaveBeenCalledWith("default", 0.02);
+    });
+
+    it("drops an audio-stats event that arrives after stop() has already settled (listener unregistered)", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      await engine.start(noopEvents(), OSSPEECH_SETTINGS);
+      await stopViaEnded(engine, emit);
+
+      emit("osspeech://audio-stats", { channel: "mic", windowPeak: 0.05 });
+
+      expect(pushAudioWindow).not.toHaveBeenCalled();
     });
   });
 

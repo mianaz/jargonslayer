@@ -13,6 +13,7 @@
 import type { MeetingLexicon, STTEvents, Settings } from "@jargonslayer/core/types";
 import { withBase } from "../basePath";
 import { diagLog } from "../diag/log";
+import { pushAudioWindow } from "./audioLiveness";
 import { pushLagSample } from "./latencyStats";
 import { projectForInitialPrompt } from "./lexicon";
 
@@ -68,6 +69,16 @@ const STOP_DRAIN_TIMEOUT_MS = 8000;
 // mid-pass, an old server build predating this) is allowed to hold the
 // connection open for.
 const POST_STOP_LINGER_MS = 12000;
+
+// Lane W (mid-session STT liveness watchdog, audioLiveness.ts): every
+// whisper-family engine (mic/tabaudio/appaudio) feeds this ONE transport,
+// which has no per-channel distinction of its own — every sample folds
+// into audioLiveness.ts's "default" channel key. 16000 samples @ 16kHz
+// mono (pcm-processor.js's own wire format, matching appAudio.ts's native
+// PCM feed too) is ~5s of audio time — the same emission cadence
+// osSpeechTransport.ts's own stats lane uses, so pushAudioWindow's own
+// "~5s window" doc comment holds for both producers.
+const AUDIO_LIVENESS_WINDOW_SAMPLES = 16000 * 5;
 
 /** Why stop()'s drain wait resolved — see stopDrainResolve's own doc
  *  and stop() below (only the "ack" case starts a post-stop linger). */
@@ -239,6 +250,17 @@ export class WsTransport {
   // paused, not silently resume sending audio.
   private feedPaused = false;
 
+  // Lane W: rolling max-abs amplitude fold across the current
+  // AUDIO_LIVENESS_WINDOW_SAMPLES-sized window, plus how many samples
+  // have accumulated into it so far — see pushPcm's own doc comment for
+  // the fold/reset cadence. Reset to 0 every time a window flushes into
+  // pushAudioWindow(); never reset on reconnect/pause — a window
+  // straddling either boundary just folds in whatever real samples DID
+  // arrive either side of it (feedPaused already gates pushPcm from ever
+  // reaching this fold in the first place).
+  private livenessWindowMax = 0;
+  private livenessWindowSamples = 0;
+
   // stop()'s drain wait (STT protocol v2): resolved by the "stopped"
   // ack (see connect()'s onmessage), by the ws closing on its own
   // during the wait (see connect()'s onclose), or by STOP_DRAIN_
@@ -376,6 +398,32 @@ export class WsTransport {
     // draining, enqueuing behind (or, on an old server predating
     // protocol v2, getting transcribed after) the stop sentinel.
     if (this.stopping) return;
+    // Lane W: fold this chunk's max-abs amplitude (Int16 -> linear 0..1,
+    // matching pcm-processor.js's own wire format — see
+    // AUDIO_LIVENESS_WINDOW_SAMPLES's own doc comment) into the current
+    // window; every ~5s of audio time, flush it into audioLiveness.ts's
+    // "default" channel and start a fresh window. Runs on every chunk
+    // that reaches this point (both feedPaused and stopping above
+    // already gated it out) — independent of whether ws.send below
+    // actually succeeds, since a reconnect-stalled outgoing frame is
+    // still real incoming audio for the watchdog's purposes. Floored to
+    // an even sample count — appAudio.ts's own defensive JSON-array
+    // fallback (normalizeChannelPayload's degraded-Channel-payload path)
+    // can hand back an odd byteLength that would otherwise throw
+    // constructing an Int16Array; a stray trailing byte is simply
+    // dropped from this fold, same as it already is from ws.send below.
+    const sampleCount = Math.floor(data.byteLength / 2);
+    const samples = new Int16Array(data, 0, sampleCount);
+    for (let i = 0; i < samples.length; i++) {
+      const abs = Math.abs(samples[i]) / 0x8000;
+      if (abs > this.livenessWindowMax) this.livenessWindowMax = abs;
+    }
+    this.livenessWindowSamples += samples.length;
+    if (this.livenessWindowSamples >= AUDIO_LIVENESS_WINDOW_SAMPLES) {
+      pushAudioWindow("default", this.livenessWindowMax);
+      this.livenessWindowMax = 0;
+      this.livenessWindowSamples = 0;
+    }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(data);
     } else {

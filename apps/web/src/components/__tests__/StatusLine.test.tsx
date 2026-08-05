@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { useLatencyStats } from "../../lib/stt/latencyStats";
+import { RENOTICE_INTERVAL_MS, useAudioLiveness, type AudioChannel } from "../../lib/stt/audioLiveness";
 import { ENGINE_OPTIONS, RETENTION_COPY } from "../../lib/stt/engineOptions";
 import { ENGINE_CAPABILITIES } from "../../lib/stt/engineCapabilities";
 import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
@@ -1705,6 +1706,230 @@ describe("StatusLine — privacy posture chip (task 2: never fully hidden)", () 
     expect(chip().textContent).toBe(RETENTION_COPY["cloud-stored"].label);
     expect(chip().textContent).not.toBe(RETENTION_COPY["cloud-transient"].label);
     expect(chip().className).toContain("text-warn-soft");
+  });
+});
+
+// ---------------------------------------------------------------
+// Lane W (mid-session STT liveness watchdog + per-channel silence hint):
+// LivenessChip's OWN rendering — audioLiveness.ts's verdict logic itself
+// is audioLiveness.test.ts's job; this only pins the chip's gating/
+// styling/testid contract, mirroring the 延迟 chip's own test shape
+// above and 翻译失败's dual-surface (sm:flex group + overflow popover)
+// coverage below.
+// ---------------------------------------------------------------
+
+describe("StatusLine — liveness chip (Lane W)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  const EMPTY_VERDICTS = {
+    watchdogChannels: [] as AudioChannel[],
+    statsStale: false,
+    silentChannels: [] as AudioChannel[],
+  };
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({ status: "idle", toast: null, settings: { ...s.settings, engine: "demo" } }));
+    useAudioLiveness.setState({ armed: false, verdicts: EMPTY_VERDICTS });
+    vi.unstubAllGlobals();
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  function chip(): Element | null {
+    return container!.querySelector('[data-testid="statusline-liveness-chip"]');
+  }
+
+  it("hidden by default — unarmed, no verdict active", async () => {
+    useApp.setState({ status: "listening" });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("hidden while armed but no verdict is active", async () => {
+    useApp.setState({ status: "listening" });
+    useAudioLiveness.setState({ armed: true, verdicts: EMPTY_VERDICTS });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("hidden while not listening (e.g. paused), even with an active watchdog verdict", async () => {
+    useApp.setState({ status: "paused" });
+    useAudioLiveness.setState({
+      armed: true,
+      verdicts: { ...EMPTY_VERDICTS, watchdogChannels: ["default"] },
+    });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("watchdog verdict: warning styling, 转写停滞 label, title names the channel", async () => {
+    useApp.setState({ status: "listening" });
+    useAudioLiveness.setState({
+      armed: true,
+      verdicts: { ...EMPTY_VERDICTS, watchdogChannels: ["system"] },
+    });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).not.toBeNull();
+    expect(chip()!.textContent).toBe("转写停滞");
+    expect(chip()!.className).toContain("text-lab-yellow");
+    expect(chip()!.getAttribute("title")).toContain("对方声道");
+  });
+
+  it("statsStale verdict: also warning styling/label, distinct pipeline-stalled title", async () => {
+    useApp.setState({ status: "listening" });
+    useAudioLiveness.setState({ armed: true, verdicts: { ...EMPTY_VERDICTS, statsStale: true } });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()!.textContent).toBe("转写停滞");
+    expect(chip()!.className).toContain("text-lab-yellow");
+    expect(chip()!.getAttribute("title")).toBe("音频统计中断，转写管线可能已停止");
+  });
+
+  it("silentChannel verdict (info-only): neutral/muted styling, 单路无声 label — never reads as a warning", async () => {
+    useApp.setState({ status: "listening" });
+    useAudioLiveness.setState({
+      armed: true,
+      verdicts: { ...EMPTY_VERDICTS, silentChannels: ["mic"] },
+    });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()!.textContent).toBe("单路无声");
+    expect(chip()!.className).not.toContain("text-lab-yellow");
+    expect(chip()!.className).toContain("text-mut");
+    expect(chip()!.getAttribute("title")).toContain("我方声道");
+  });
+
+  it("severity: a warning verdict wins over a simultaneously-active info verdict", async () => {
+    useApp.setState({ status: "listening" });
+    useAudioLiveness.setState({
+      armed: true,
+      verdicts: { watchdogChannels: ["default"], statsStale: false, silentChannels: ["mic"] },
+    });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()!.textContent).toBe("转写停滞");
+    expect(chip()!.className).toContain("text-lab-yellow");
+  });
+
+  it("appears in OverflowChip's popover too — MUST NOT vanish below sm", async () => {
+    useApp.setState({ status: "listening" });
+    useAudioLiveness.setState({
+      armed: true,
+      verdicts: { ...EMPTY_VERDICTS, statsStale: true },
+    });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const overflowChip = container!.querySelector(
+      '[data-testid="statusline-overflow-chip"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      overflowChip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const popover = container!.querySelector('[data-testid="statusline-overflow-popover"]');
+    expect(popover).not.toBeNull();
+    expect(popover!.querySelector('[data-testid="statusline-liveness-chip"]')).not.toBeNull();
+  });
+
+  it("one-shot notice: toast fires once on activation, re-arms only after RENOTICE_INTERVAL_MS while still active, resets immediately on recovery", async () => {
+    vi.useFakeTimers();
+    try {
+      useApp.setState({ status: "listening", toast: null });
+      renderStatusLine();
+      await act(async () => {
+        root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+      });
+
+      await act(async () => {
+        useAudioLiveness.setState({ armed: true, verdicts: { ...EMPTY_VERDICTS, statsStale: true } });
+      });
+      expect(useApp.getState().toast).toContain("转写疑似停滞");
+
+      // Clear + re-trigger the SAME still-active verdict (a fresh object
+      // reference, same as a real recompute would produce) well before
+      // RENOTICE_INTERVAL_MS — must NOT re-fire yet.
+      useApp.setState({ toast: null });
+      await act(async () => {
+        vi.advanceTimersByTime(RENOTICE_INTERVAL_MS - 1000);
+        useAudioLiveness.setState({ verdicts: { statsStale: true, watchdogChannels: [], silentChannels: [] } });
+      });
+      expect(useApp.getState().toast).toBeNull();
+
+      // Crossing RENOTICE_INTERVAL_MS while STILL active re-arms it.
+      await act(async () => {
+        vi.advanceTimersByTime(1001);
+        useAudioLiveness.setState({ verdicts: { statsStale: true, watchdogChannels: [], silentChannels: [] } });
+      });
+      expect(useApp.getState().toast).toContain("转写疑似停滞");
+
+      // Recovery (verdict clears) resets the one-shot guard — a LATER
+      // activation fires immediately, without waiting out another full
+      // RENOTICE_INTERVAL_MS.
+      useApp.setState({ toast: null });
+      await act(async () => {
+        useAudioLiveness.setState({ armed: true, verdicts: EMPTY_VERDICTS });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(1000); // well under RENOTICE_INTERVAL_MS
+        useAudioLiveness.setState({ verdicts: { ...EMPTY_VERDICTS, statsStale: true } });
+      });
+      expect(useApp.getState().toast).toContain("转写疑似停滞");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

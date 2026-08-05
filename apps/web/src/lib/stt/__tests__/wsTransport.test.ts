@@ -8,6 +8,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type STTEvents, type Settings } from "@jargonslayer/core/types";
 import * as diagLogModule from "../../diag/log";
+
+// Lane W (mid-session STT liveness watchdog): wsTransport.ts's own PCM
+// fold is a dumb forwarder onto audioLiveness.ts's store (see pushPcm's
+// own doc comment) — mocked here so the "PCM amplitude fold ->
+// pushAudioWindow" describe block below can assert the forwarding call
+// directly; audioLiveness.ts's own verdict logic is audioLiveness.test.
+// ts's job.
+const pushAudioWindow = vi.fn();
+vi.mock("../audioLiveness", () => ({ pushAudioWindow: (...args: unknown[]) => pushAudioWindow(...args) }));
 import {
   FakeWebSocket,
   fakeMediaStream,
@@ -37,6 +46,9 @@ const FLAP_NOTICE_THRESHOLD = 5;
 // Fix round v0.7.7 (F3c) mirror — see wsTransport.ts's own doc comment
 // on FLAP_RENOTICE_INTERVAL_MS.
 const FLAP_RENOTICE_INTERVAL_MS = 5 * 60 * 1000;
+// Lane W mirror — see wsTransport.ts's own doc comment on
+// AUDIO_LIVENESS_WINDOW_SAMPLES.
+const AUDIO_LIVENESS_WINDOW_SAMPLES = 16000 * 5;
 
 describe("WsTransport — protocol v2", () => {
   let wsInstances: FakeWebSocket[];
@@ -61,6 +73,7 @@ describe("WsTransport — protocol v2", () => {
       onStatus,
       onSpeakerUpdate,
     } as unknown as STTEvents;
+    pushAudioWindow.mockClear();
   });
 
   afterEach(() => {
@@ -775,6 +788,104 @@ describe("WsTransport — protocol v2", () => {
       // truly never touches AudioContext/AudioWorkletNode.
       expect(contexts.length).toBe(0);
       expect(workletNodes.length).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Lane W (mid-session STT liveness watchdog, audioLiveness.ts): the
+  // rolling max-abs amplitude fold over outgoing PCM — see pushPcm's own
+  // doc comment for the fold/reset cadence. pushAudioWindow itself is
+  // mocked at the top of this file; audioLiveness.ts's own verdict logic
+  // is audioLiveness.test.ts's job, this only pins the fold/cadence/
+  // pause-respecting behavior wsTransport.ts is actually responsible for.
+  // ---------------------------------------------------------------
+
+  describe("PCM amplitude fold -> pushAudioWindow (Lane W)", () => {
+    /** Int16Array -> ArrayBuffer, matching pcm-processor.js's own wire
+     *  format (16kHz mono Int16) — same shape pushPcm() actually receives
+     *  in production, from both feed sources. */
+    function int16Buffer(samples: number[]): ArrayBuffer {
+      return new Int16Array(samples).buffer;
+    }
+
+    function silentSamples(count: number): number[] {
+      return new Array(count).fill(0);
+    }
+
+    it("does not flush before AUDIO_LIVENESS_WINDOW_SAMPLES worth of PCM has arrived", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+
+      transport.pushPcm(int16Buffer(silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES - 1)));
+
+      expect(pushAudioWindow).not.toHaveBeenCalled();
+    });
+
+    it("flushes pushAudioWindow('default', normalizedMax) exactly once the window fills, folding across MULTIPLE pushPcm() calls", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+
+      const firstHalf = silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES / 2);
+      firstHalf[10] = 16384; // 0.5 normalized (16384 / 32768)
+      transport.pushPcm(int16Buffer(firstHalf));
+      expect(pushAudioWindow).not.toHaveBeenCalled();
+
+      transport.pushPcm(int16Buffer(silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES / 2)));
+
+      expect(pushAudioWindow).toHaveBeenCalledTimes(1);
+      expect(pushAudioWindow).toHaveBeenCalledWith("default", 0.5);
+    });
+
+    it("takes the max-abs sample in the window, including a negative (trough) sample", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+
+      const samples = silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES);
+      samples[5] = -24576; // |−24576| / 32768 = 0.75
+      transport.pushPcm(int16Buffer(samples));
+
+      expect(pushAudioWindow).toHaveBeenCalledWith("default", 0.75);
+    });
+
+    it("resets the fold after each flush — a later window's max never carries over from the previous one", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+
+      const loud = silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES);
+      loud[0] = 32767;
+      transport.pushPcm(int16Buffer(loud));
+      expect(pushAudioWindow).toHaveBeenNthCalledWith(1, "default", expect.closeTo(1, 3));
+
+      transport.pushPcm(int16Buffer(silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES)));
+      expect(pushAudioWindow).toHaveBeenNthCalledWith(2, "default", 0);
+    });
+
+    it("pauseFeed() suppresses the fold entirely — pushPcm() returns before ever reaching it", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+      transport.pauseFeed();
+
+      const loud = silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES * 2);
+      loud[0] = 32767;
+      transport.pushPcm(int16Buffer(loud));
+
+      expect(pushAudioWindow).not.toHaveBeenCalled();
+    });
+
+    it("stopping suppresses the fold entirely, same as pauseFeed()", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+      const ws = wsInstances[wsInstances.length - 1];
+      ws.simulateOpen();
+
+      const stopP = transport.stop();
+      await Promise.resolve();
+
+      transport.pushPcm(int16Buffer(silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES)));
+      expect(pushAudioWindow).not.toHaveBeenCalled();
+
+      ws.simulateMessage({ type: "stopped" });
+      await stopP;
     });
   });
 
