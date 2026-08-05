@@ -1,6 +1,6 @@
 {
   "name": "@jargonslayer/web",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "private": true,
   "description": "Private, fully local bilingual meeting engine for the Mac — dual mic+system capture, live 中英 transcript, vault export (私有、全本地的 Mac 双语会议引擎)",
   "license": "AGPL-3.0-only",
