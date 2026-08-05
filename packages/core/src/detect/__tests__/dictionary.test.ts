@@ -201,6 +201,119 @@ describe("scanDictionary — Bug A fix: a term ending in a non-word character ca
   });
 });
 
+// Queued lookaround polish (decision record, v0.7.2 review round,
+// docs/ROADMAP.md): the Bug A fix above dropped the boundary assertion
+// entirely at a non-word edge, which fixed the false NEGATIVE (a
+// legitimate match rejected) but reopened a false POSITIVE — a glued
+// word-char suffix right after/before the non-word edge went
+// undetected ("mode (statistics)abc", "401(k)x"). boundaryFor now emits
+// `(?<!\w)` / `(?!\w)` instead of "" at a non-word edge, which rejects
+// only an adjacent WORD character — CJK, punctuation, and end-of-string
+// (the cases the Bug A fix exists for) are untouched. Every assertion
+// below fails against the no-assertion (empty string) behavior.
+describe("scanDictionary — lookaround polish: a non-word edge rejects a glued word-char suffix", () => {
+  it("term 'mode (statistics)' matches with ordinary trailing context", () => {
+    const res = scanDictionary("The mode (statistics) is 7.", null);
+    expect(res.terms.some((t) => t.term === "mode (statistics)")).toBe(true);
+  });
+
+  it("term 'mode (statistics)' matches before CJK with no separating space", () => {
+    const res = scanDictionary("这里的mode (statistics)了解一下。", null);
+    expect(res.terms.some((t) => t.term === "mode (statistics)")).toBe(true);
+  });
+
+  it("term 'mode (statistics)' matches directly abutting punctuation", () => {
+    const res = scanDictionary("Compute the mode (statistics), then move on.", null);
+    expect(res.terms.some((t) => t.term === "mode (statistics)")).toBe(true);
+  });
+
+  it("term 'mode (statistics)' does NOT match when glued to a following word-char suffix", () => {
+    const res = scanDictionary("Some text mode (statistics)abc more text.", null);
+    expect(res.terms.some((t) => t.term === "mode (statistics)")).toBe(false);
+  });
+
+  it("variant '401(k)' still matches plain and before '.'", () => {
+    const res1 = scanDictionary("Do you contribute to your 401(k) every month?", null);
+    const res2 = scanDictionary("Contributions go to a 401(k).", null);
+    expect(res1.terms.some((t) => t.term === "401k")).toBe(true);
+    expect(res2.terms.some((t) => t.term === "401k")).toBe(true);
+  });
+
+  it("variant '401(k)' does NOT match when glued to a following word-char suffix ('401(k)x')", () => {
+    const res = scanDictionary("Some plan called 401(k)x is not a real thing.", null);
+    expect(res.terms.some((t) => t.term === "401k")).toBe(false);
+  });
+
+  it("an expression with a non-word edge ('100%') matches before CJK, end-of-string, and punctuation", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWith100Percent()]);
+    const beforeCjk = scanDictionary("我们达到了100%了。");
+    expect(beforeCjk.expressions.some((e) => e.expression === "100%")).toBe(true);
+
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWith100Percent()]);
+    const atEnd = scanDictionary("We are at 100%");
+    expect(atEnd.expressions.some((e) => e.expression === "100%")).toBe(true);
+
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWith100Percent()]);
+    const beforePunct = scanDictionary("We hit 100%.");
+    expect(beforePunct.expressions.some((e) => e.expression === "100%")).toBe(true);
+  });
+
+  it("an expression with a non-word edge ('100%') does NOT match glued to a following word character", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWith100Percent()]);
+    const res = scanDictionary("We are at 100%complete.");
+    expect(res.expressions.some((e) => e.expression === "100%")).toBe(false);
+  });
+
+  function remotePackWith100Percent() {
+    return {
+      id: "__test_symbol_pack__",
+      name: "symbol pack",
+      version: 1,
+      expressions: [
+        {
+          expression: "100%",
+          category: "phrase" as const,
+          meaning: "entirely",
+          chinese_explanation: "百分之百",
+          plain_english: "completely",
+          tone: "neutral",
+          confidence: 0.9,
+          pack: "__test_symbol_pack__",
+        },
+      ],
+      terms: [],
+    };
+  }
+
+  it("a leading non-word edge rejects a glued PRECEDING word character (left lookbehind)", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      {
+        id: "__test_leading_pack__",
+        name: "leading symbol pack",
+        version: 1,
+        expressions: [
+          {
+            expression: "$99 plan",
+            category: "phrase" as const,
+            meaning: "the ninety-nine dollar plan",
+            chinese_explanation: "九十九美元套餐",
+            plain_english: "the $99 plan",
+            tone: "neutral",
+            confidence: 0.9,
+            pack: "__test_leading_pack__",
+          },
+        ],
+        terms: [],
+      },
+    ]);
+    const glued = scanDictionary("Theonly$99 plan we offer.");
+    expect(glued.expressions.some((e) => e.expression === "$99 plan")).toBe(false);
+
+    const ungl = scanDictionary("Only the $99 plan we offer.");
+    expect(ungl.expressions.some((e) => e.expression === "$99 plan")).toBe(true);
+  });
+});
+
 // Variants enrichment pass (conservative alias sweep, field report):
 // "get the ball rolling" gained explicit keep-family variants since the
 // FIRST word is the light-verb here and buildExpressionRegex only ever
