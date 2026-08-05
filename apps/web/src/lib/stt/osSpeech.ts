@@ -52,8 +52,9 @@ import { trackOsSpeechAsset, type OsSpeechAssetTracker } from "../desktop/jobsBr
 import { diagLog } from "../diag/log";
 import { IS_IOS } from "../platform/ios";
 import { IS_DESKTOP } from "../platform/desktop";
-import { listenOsSpeechStatus, listenOsSpeechTranscript } from "./osSpeechTransport";
+import { listenOsSpeechAudioStats, listenOsSpeechStatus, listenOsSpeechTranscript } from "./osSpeechTransport";
 import { projectForOsSpeechContextualJson } from "./lexicon";
+import { pushAudioWindow } from "./audioLiveness";
 // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
 // the two channel-tagged stable speaker ids — store.ts owns the
 // speakerAliases/seedChannelAlias machinery these feed, so the literals
@@ -104,6 +105,18 @@ export interface OsSpeechStatusPayload {
   // older Rust side — which is why handleStatus checks `=== false`,
   // never mere falsiness.
   sawAudio?: boolean;
+}
+
+// Lane W (mid-session STT liveness watchdog + per-channel silence hint,
+// lib/stt/audioLiveness.ts): the dedicated "osspeech://audio-stats" event
+// (osspeech.rs's own emit_audio_stats_for_session) — a windowed peak per
+// stats cadence (~5s, TranscribeConsumer.swift), distinct from the
+// transcript/status lanes above. Desktop-only, same as dual capture
+// itself — osSpeechTransport.ts's own listener never subscribes on iOS
+// (no equivalent Rust event exists there).
+export interface OsSpeechAudioStatsPayload {
+  channel?: "mic" | "system";
+  windowPeak: number;
 }
 
 export interface OsSpeechTranscriptPayload {
@@ -159,6 +172,10 @@ export class OsSpeechEngine implements STTEngine {
 
   private unlistenTranscript: UnlistenFn | null = null;
   private unlistenStatus: UnlistenFn | null = null;
+  // Lane W (mid-session STT liveness watchdog, audioLiveness.ts): a
+  // third, independent lane — see listenOsSpeechAudioStats's own doc
+  // comment for why it's desktop-only (a no-op unlisten on iOS).
+  private unlistenAudioStats: UnlistenFn | null = null;
 
   // True once start_os_speech has been successfully invoked for the
   // CURRENT generation — guards pause()/resume() from firing on a
@@ -231,6 +248,7 @@ export class OsSpeechEngine implements STTEngine {
     // abandoned OLD call can never clobber a NEWER start()'s own state.
     let unlistenTranscript: UnlistenFn | null = null;
     let unlistenStatus: UnlistenFn | null = null;
+    let unlistenAudioStats: UnlistenFn | null = null;
     let helperStarted = false;
 
     const superseded = () => myGeneration !== this.generation || this.stopping;
@@ -243,6 +261,10 @@ export class OsSpeechEngine implements STTEngine {
       if (unlistenStatus) {
         unlistenStatus();
         unlistenStatus = null;
+      }
+      if (unlistenAudioStats) {
+        unlistenAudioStats();
+        unlistenAudioStats = null;
       }
       if (helperStarted) {
         const invokeFn = await getInvoke();
@@ -283,6 +305,19 @@ export class OsSpeechEngine implements STTEngine {
         this.handleStatus(myGeneration, event.payload);
       });
       this.unlistenStatus = unlistenStatus;
+      if (superseded()) {
+        await abandonStart();
+        return;
+      }
+
+      // Lane W: third, independent lane — a no-op subscription on iOS
+      // (listenOsSpeechAudioStats's own doc comment), so this never
+      // widens the F6 fix-round concern above (there is nothing to leak
+      // there when IS_IOS is true).
+      unlistenAudioStats = await listenOsSpeechAudioStats((event) => {
+        this.handleAudioStats(myGeneration, event.payload);
+      });
+      this.unlistenAudioStats = unlistenAudioStats;
       if (superseded()) {
         await abandonStart();
         return;
@@ -380,6 +415,18 @@ export class OsSpeechEngine implements STTEngine {
     }
   }
 
+  // Lane W (mid-session STT liveness watchdog): forwarded straight into
+  // audioLiveness.ts's own store — this engine carries no verdict/UI
+  // logic of its own, same "dumb producer" posture handleTranscript/
+  // handleStatus already have toward their own consumers. `channel`
+  // absent (a legacy/single-source session) maps to "default" — the
+  // same fallback key wsTransport.ts's whisper-family PCM fold uses,
+  // since there is equally no per-channel signal to carry there.
+  private handleAudioStats(myGeneration: number, payload: OsSpeechAudioStatsPayload): void {
+    if (myGeneration !== this.generation) return; // stale session
+    pushAudioWindow(payload.channel ?? "default", payload.windowPeak);
+  }
+
   private handleStatus(myGeneration: number, payload: OsSpeechStatusPayload): void {
     diagLog("info", "stt-osspeech", `osspeech://status 收到: ${payload.kind}`, payload.message);
 
@@ -432,10 +479,15 @@ export class OsSpeechEngine implements STTEngine {
     // that session really is capturing the mic, so a silent one means
     // something else entirely (muted input, wrong input device) and
     // deserves its own diagnosis, not this steer. `sessionCapturedMic`
-    // suppresses it there. A silent MIC channel inside a dual session is
-    // worth its own future hint, but that needs per-channel silence from
-    // the Rust latch (today's `saw_nonzero_peak` is session-wide across
-    // both channels) — a separate, larger change.
+    // suppresses it there. A silent MIC channel inside a dual session got
+    // its own hint (Lane W's silentChannel verdict, audioLiveness.ts) —
+    // the separate, larger change this comment used to defer to: it needs
+    // PER-CHANNEL silence, unlike this session-wide `sawAudio` steer,
+    // which the windowPeak/channel-tagged stats event above now carries.
+    // Deliberately a DIFFERENT surface (StatusLine's 单路无声 chip, info-
+    // severity, mid-session) rather than folded into this end-of-session
+    // onNotice — the two conditions/audiences don't overlap enough to share
+    // one steer.
     if (
       payload.kind === "ended" &&
       payload.sawAudio === false &&
@@ -625,6 +677,10 @@ export class OsSpeechEngine implements STTEngine {
     const unlistenStatus = this.unlistenStatus;
     this.unlistenStatus = null;
     unlistenStatus?.();
+
+    const unlistenAudioStats = this.unlistenAudioStats;
+    this.unlistenAudioStats = null;
+    unlistenAudioStats?.();
 
     this.running = false;
     this.events = null;

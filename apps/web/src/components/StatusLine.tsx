@@ -18,6 +18,13 @@ import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
 import { useLatencyStats } from "@/lib/stt/latencyStats";
 import {
+  RENOTICE_INTERVAL_MS,
+  WATCHDOG_WALL_FLOOR_MS,
+  useAudioLiveness,
+  type AudioChannel,
+} from "@/lib/stt/audioLiveness";
+import { diagLog } from "@/lib/diag/log";
+import {
   ENGINE_OPTIONS,
   RETENTION_COPY,
   deriveEngineForMode,
@@ -691,6 +698,69 @@ function TranslateStatusChip() {
   );
 }
 
+// Lane W (mid-session STT liveness watchdog + per-channel silence hint,
+// lib/stt/audioLiveness.ts) — zh channel labels for this chip's title
+// only (a static "我方/对方" pairing, distinct from store.ts's own
+// speakerAliases display names); "default" (every whisper-family
+// engine, single-lane) carries no channel prefix at all.
+const LIVENESS_CHANNEL_LABEL: Record<AudioChannel, string> = { mic: "我方声道", system: "对方声道", default: "" };
+// WATCHDOG_WALL_FLOOR_MS is 90_000 (1.5min) — rounded UP for the title's
+// copy so it never understates how long this has actually been going on.
+const LIVENESS_WATCHDOG_MINUTES = Math.ceil(WATCHDOG_WALL_FLOOR_MS / 60_000);
+
+// Same flat-design law as TranslateStatusChip's own 翻译失败 comment
+// above: no new visual vocabulary. Warning verdicts (watchdog/statsStale)
+// share the SAME text-lab-yellow styling every other warning chip in
+// this bar already uses; the info-only verdict (silentChannel) gets
+// neutral/muted styling instead — a seminar where the user legitimately
+// never speaks must never read as a warning. Rendered from TWO mount
+// points (StatusLine's own sm:flex group + OverflowChip's <sm popover),
+// same dual-surface pattern as TranslateStatusChip — this component is
+// pure rendering only; the one-shot notice/re-arm side effect lives
+// ONCE, in the default-exported StatusLine below, so mounting this twice
+// can never double-toast.
+function LivenessChip() {
+  const armed = useAudioLiveness((s) => s.armed);
+  const verdicts = useAudioLiveness((s) => s.verdicts);
+  const isListening = useApp((s) => s.status === "listening");
+
+  if (!armed || !isListening) return null;
+
+  const warning = verdicts.statsStale || verdicts.watchdogChannels.length > 0;
+  if (!warning && verdicts.silentChannels.length === 0) return null;
+
+  if (warning) {
+    const title = verdicts.statsStale
+      ? "音频统计中断，转写管线可能已停止"
+      : verdicts.watchdogChannels
+          .map((c) => {
+            const prefix = LIVENESS_CHANNEL_LABEL[c] ? `${LIVENESS_CHANNEL_LABEL[c]}：` : "";
+            return `${prefix}有声音但 ${LIVENESS_WATCHDOG_MINUTES} 分钟无转写`;
+          })
+          .join("；");
+    return (
+      <span
+        data-testid="statusline-liveness-chip"
+        title={title}
+        className="flex h-full items-center whitespace-nowrap px-2 text-lab-yellow sm:px-3"
+      >
+        转写停滞
+      </span>
+    );
+  }
+
+  const title = `${verdicts.silentChannels.map((c) => LIVENESS_CHANNEL_LABEL[c]).join("、")}开场至今未检测到声音——检查麦克风输入，或忽略（本场不发言）`;
+  return (
+    <span
+      data-testid="statusline-liveness-chip"
+      title={title}
+      className="flex h-full items-center whitespace-nowrap px-2 text-mut sm:px-3"
+    >
+      单路无声
+    </span>
+  );
+}
+
 // TASK 2 (privacy visible at every breakpoint): the color-coded privacy
 // SENTENCE below (privacyCopy.hint) is `hidden sm:inline` — this app's
 // one privacy promise must never fully disappear below that width. This
@@ -795,6 +865,7 @@ function OverflowChip() {
           <DetectModeChip />
           <AiStatusChip />
           {(status !== "idle" || segments.length > 0) && <TranslateStatusChip />}
+          <LivenessChip />
         </div>
       )}
     </div>
@@ -821,6 +892,13 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
   // latencyStats.ts's own sustained doc comment) lives entirely in
   // latencyStats.ts; this component just reads the derived flag.
   const latencySustained = useLatencyStats((s) => s.sustained);
+  // Lane W (mid-session STT liveness watchdog): read here (not inside
+  // LivenessChip, which mounts TWICE — the sm:flex group AND
+  // OverflowChip's <sm popover) so the one-shot notice/re-arm effect
+  // below fires exactly once per activation, never doubled.
+  const livenessArmed = useAudioLiveness((s) => s.armed);
+  const livenessVerdicts = useAudioLiveness((s) => s.verdicts);
+  const showToast = useApp((s) => s.showToast);
 
   const isListening = status === "listening";
   const isPaused = status === "paused";
@@ -847,6 +925,42 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
           : status === "connecting"
             ? "--CONN--"
             : "--IDLE--";
+
+  // Lane W: one-shot notice + re-arm, mirroring wsTransport.ts's own
+  // flap-notice shape (lastNoticeAt null until the first firing, then
+  // re-armed no more often than RENOTICE_INTERVAL_MS) — diagLog + toast
+  // fire once per activation, reset the moment the warning clears (a
+  // LATER, separate stall gets its own first notice again). Runs off
+  // `livenessVerdicts`'s own object identity, which changes on every
+  // push/noteResult/sentinel recompute while armed (~5-15s cadence),
+  // giving this frequent-enough wall-clock checks without its own timer.
+  // Info-only (silentChannel) never toasts — see LivenessChip's own "no
+  // new visual vocabulary" doc comment for why that one stays quiet.
+  const livenessNoticeAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    const warningActive =
+      isListening &&
+      livenessArmed &&
+      (livenessVerdicts.statsStale || livenessVerdicts.watchdogChannels.length > 0);
+    if (!warningActive) {
+      livenessNoticeAtRef.current = null;
+      return;
+    }
+    const now = Date.now();
+    if (
+      livenessNoticeAtRef.current === null ||
+      now - livenessNoticeAtRef.current >= RENOTICE_INTERVAL_MS
+    ) {
+      livenessNoticeAtRef.current = now;
+      diagLog(
+        "warn",
+        "stt-liveness",
+        "转写疑似停滞——有声音但持续无转写结果",
+        `watchdogChannels=${livenessVerdicts.watchdogChannels.join(",")} statsStale=${livenessVerdicts.statsStale}`,
+      );
+      showToast("转写疑似停滞：有声音但持续无转写结果。可尝试暂停后继续，或结束会话保存已有内容。");
+    }
+  }, [isListening, livenessArmed, livenessVerdicts, showToast]);
 
   // v0.4.7 Lane C (tri-state privacy label, doc §4/§9 D5-D7): posture's
   // richer replacement. resolveEngineRetentionClass (lib/stt/
@@ -955,6 +1069,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
             bar's transcript-scoped chips — a live/connecting meeting, OR
             segments already on screen from one that just ended. */}
         {(status !== "idle" || segments.length > 0) && <TranslateStatusChip />}
+        <LivenessChip />
       </span>
       <OverflowChip />
       <span className="text-mut2">|</span>

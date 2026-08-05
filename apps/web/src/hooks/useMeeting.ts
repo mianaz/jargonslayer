@@ -4,12 +4,13 @@
 // the detection scheduler. Owns the lifecycle of both per meeting.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useApp, currentSessionSnapshot, getMeetingDomainTracker } from "../lib/store";
+import { CH_MIC_SPEAKER, CH_SYS_SPEAKER, useApp, currentSessionSnapshot, getMeetingDomainTracker } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
 import { langPairFromSettings, resolveTranslationProvider, stopSystemTranslator } from "../lib/translate/providers";
 import { diagLog } from "../lib/diag/log";
+import { armLiveness, disarmLiveness, noteResult, resetLiveness, type AudioChannel } from "../lib/stt/audioLiveness";
 import { resetLagStats } from "../lib/stt/latencyStats";
 import { probeSidecar } from "../lib/stt/sidecarHealth";
 import { isConventionalSidecarUrl } from "../lib/stt/upload";
@@ -95,6 +96,21 @@ function ridesManagedSidecar(engine: STTEngineKind): boolean {
  *  exists there to prevent a raw socket failure. */
 function needsManagedSidecarPreflight(settings: Settings): boolean {
   return IS_DESKTOP && settings.sidecarMode !== "external" && ridesManagedSidecar(settings.engine);
+}
+
+/** Lane W (mid-session STT liveness watchdog): maps a final's stable
+ *  sttSpeaker id onto audioLiveness.ts's own channel key — CH_MIC_
+ *  SPEAKER/CH_SYS_SPEAKER are dual-capture osspeech's own two
+ *  channel-tagged ids (store.ts), the ONE producer of a channel-bearing
+ *  sttSpeaker today. Anything else (a realtime-diarization SPEAKER_n id,
+ *  or no sttSpeaker at all) maps to `undefined` — noteResult's own
+ *  contract for "unknown channel" clears every channel, which is exactly
+ *  right here: a non-dual-capture final carries no channel signal at
+ *  all, so there is nothing to single out. */
+function channelFromSttSpeaker(sttSpeaker: string | undefined): AudioChannel | undefined {
+  if (sttSpeaker === CH_MIC_SPEAKER) return "mic";
+  if (sttSpeaker === CH_SYS_SPEAKER) return "system";
+  return undefined;
 }
 
 /** Field-test fix B (verified root cause): whisper/appaudio ride the
@@ -521,6 +537,11 @@ export function useMeeting(): UseMeetingResult {
       // set (the M7 reopen fix).
       if (engineRef.current === engine) engineRef.current = null;
       await engine.stop();
+      // Lane W: this terminal teardown (engine error / demo natural end /
+      // capture_ended) ends the engine session the watchdog was armed
+      // for — disarmLiveness() is idempotent, so a racing doStop() that
+      // also calls it is harmless.
+      disarmLiveness();
       // v0.6: tear down the native Apple-translate child alongside the
       // STT engine's own — see providers.ts's own doc comment for why
       // this is safe/idempotent to call unconditionally (no-op outside
@@ -585,6 +606,12 @@ export function useMeeting(): UseMeetingResult {
           diagLog("info", "stt-lifecycle", "忽略非监听状态下到达的插字");
           return;
         }
+        // Lane W (mid-session STT liveness watchdog): an interim carries
+        // no channel of its own (osspeech's channel tagging only ever
+        // rides a FINAL, see channelFromSttSpeaker's own doc comment) —
+        // `undefined` clears every channel, which is exactly right: any
+        // interim at all is still evidence the pipeline is alive.
+        noteResult(undefined);
         // Honest interim contract (fix #A4): the engine layer now
         // forwards `""` (a genuine retraction) instead of swallowing
         // it — map that to `null` here so InterimLine doesn't render
@@ -594,6 +621,10 @@ export function useMeeting(): UseMeetingResult {
         useApp.getState().setInterim(text ? { text, speaker } : null);
       },
       onFinal: (text, opts) => {
+        // Lane W: cleared BEFORE addFinal/scheduler work below — purely
+        // independent bookkeeping, no reason to make it wait on anything
+        // else this handler does.
+        noteResult(channelFromSttSpeaker(opts?.sttSpeaker));
         const seg = useApp.getState().addFinal(text, opts);
         useApp.getState().setInterim(null);
         // S5 fix (v0.6 round-2 review): apply the sense-selection
@@ -801,6 +832,11 @@ export function useMeeting(): UseMeetingResult {
       activeDomains,
     });
     await engine.start(events, settings, lexicon);
+    // Lane W: arms for every attachEngine() call (a fresh meeting start,
+    // a mid-meeting engine switch, or resume()'s own teardown-reattach)
+    // — armLiveness() itself no-ops for a non-qualifying engine kind
+    // (webSpeech/cloud), so this is safe to call unconditionally here.
+    armLiveness(engine.kind);
     return !attachFailed;
   }, []);
 
@@ -826,6 +862,9 @@ export function useMeeting(): UseMeetingResult {
     const scheduler = schedulerRef.current;
     if (engine) {
       await engine.stop();
+      // Lane W: manual End — same disarm as runStopFlow's own terminal
+      // teardown above (idempotent either way).
+      disarmLiveness();
     }
     // v0.7 translation-posture: bounded drain so the tail segments'
     // translations land before the translator/session teardown below.
@@ -956,6 +995,11 @@ export function useMeeting(): UseMeetingResult {
     // resume()'s soft/teardown-resume paths below — those continue the
     // SAME session (a pause never counts as "the next" one).
     resetLagStats();
+    // Lane W: same per-session-start seam as resetLagStats() just above —
+    // a fresh meeting must never show a stale watchdog/hint carried over
+    // from a previous one. armLiveness() itself (attachEngine below) is
+    // what actually starts the watchdog once the engine is known.
+    resetLiveness();
     useApp.getState().beginMeeting();
     // Captured once, right after beginMeeting() bumps meetingGen —
     // this is "this engine session's gen" for the meeting-boundary
@@ -1053,6 +1097,12 @@ export function useMeeting(): UseMeetingResult {
     engineRef.current = null;
     useApp.getState().pauseMeeting();
     await engine?.stop();
+    // Lane W: a teardown pause genuinely stops the engine (unlike the
+    // soft-pause branch above, which keeps it — and the watchdog armed —
+    // alive) — e.g. "whisper" (mic-only, no .pause()) takes this branch.
+    // resume()'s own attachEngine() re-arms for whatever engine it
+    // reattaches.
+    disarmLiveness();
     useApp.getState().setInterim(null);
   }), [withLifecycleGate]);
 
@@ -1134,6 +1184,10 @@ export function useMeeting(): UseMeetingResult {
     if (engine && engine.kind !== settings.engine) {
       engineRef.current = null;
       await engine.stop();
+      // Lane W: the OLD engine's own watchdog run ends here — the
+      // attachEngine() call below (this function's own teardown-resume
+      // path) re-arms for whatever engine settings.engine now names.
+      disarmLiveness();
       engine = null;
     }
     if (engine?.resume) {
@@ -1233,6 +1287,10 @@ export function useMeeting(): UseMeetingResult {
       void engineRef.current?.stop();
       schedulerRef.current?.stop();
       translateQueueRef.current?.stop();
+      // Lane W: stops the sentinel interval alongside the scheduler/
+      // queue above — same "this hook's whole lifetime is ending"
+      // teardown, not a per-meeting one.
+      disarmLiveness();
       // React effect cleanups can't be async — same fire-and-forget
       // posture as engineRef.current?.stop() above (unlike
       // runStopFlow/doStop, which now await this).

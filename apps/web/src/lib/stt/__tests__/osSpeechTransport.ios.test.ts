@@ -14,7 +14,7 @@ vi.mock("../../desktop/tauriApi", () => ({
   getAddPluginListener: () => Promise.resolve(currentAddPluginListener),
 }));
 
-import { listenOsSpeechStatus, listenOsSpeechTranscript } from "../osSpeechTransport";
+import { listenOsSpeechAudioStats, listenOsSpeechStatus, listenOsSpeechTranscript } from "../osSpeechTransport";
 
 function makeFakeAddPluginListener(unregisterSpy: () => void): {
   addPluginListener: AddPluginListenerFn;
@@ -116,5 +116,26 @@ describe("listenOsSpeechTranscript/listenOsSpeechStatus — iOS branch (S13 §2/
     }
 
     expect(onUnhandledRejection).not.toHaveBeenCalled();
+  });
+});
+
+// Lane W (mid-session STT liveness watchdog): "osspeech://audio-stats"
+// has no iOS equivalent at all (no dual capture there — see
+// listenOsSpeechAudioStats's own doc comment) — an early no-op, never
+// touching getAddPluginListener().
+describe("listenOsSpeechAudioStats — iOS branch: early no-op, never subscribes", () => {
+  it("never calls getAddPluginListener() on iOS", async () => {
+    const addPluginListenerSpy = vi.fn();
+    const handle: PluginListenerHandle = { unregister: async () => {} };
+    currentAddPluginListener = (async () => {
+      addPluginListenerSpy();
+      return handle;
+    }) as AddPluginListenerFn;
+
+    const unlisten = await listenOsSpeechAudioStats(vi.fn());
+
+    expect(addPluginListenerSpy).not.toHaveBeenCalled();
+    expect(typeof unlisten).toBe("function");
+    expect(unlisten()).toBeUndefined(); // sync no-op UnlistenFn
   });
 });

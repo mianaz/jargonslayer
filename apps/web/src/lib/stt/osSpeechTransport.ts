@@ -20,7 +20,7 @@
 
 import { IS_IOS } from "../platform/ios";
 import { getAddPluginListener, getListen, type UnlistenFn } from "../desktop/tauriApi";
-import type { OsSpeechStatusPayload, OsSpeechTranscriptPayload } from "./osSpeech";
+import type { OsSpeechAudioStatsPayload, OsSpeechStatusPayload, OsSpeechTranscriptPayload } from "./osSpeech";
 
 // §2: iOS plugin name, pinned.
 const OS_SPEECH_PLUGIN = "os-speech";
@@ -57,4 +57,19 @@ export function listenOsSpeechTranscript(
 
 export function listenOsSpeechStatus(cb: (e: { payload: OsSpeechStatusPayload }) => void): Promise<UnlistenFn> {
   return listenOsSpeech<OsSpeechStatusPayload>("osspeech://status", "status", cb);
+}
+
+// Lane W (mid-session STT liveness watchdog, lib/stt/audioLiveness.ts):
+// "osspeech://audio-stats" is desktop-only — dual capture itself is
+// IS_DESKTOP-gated (osSpeech.ts's own start(), `source` param), and iOS's
+// Rust command (osspeech_ios.rs) never emits this event at all. Early
+// no-op on iOS rather than routing through listenOsSpeech's shared
+// plugin-listener path above (there is no "audio-stats" plugin event to
+// subscribe to in the first place).
+export async function listenOsSpeechAudioStats(
+  cb: (e: { payload: OsSpeechAudioStatsPayload }) => void,
+): Promise<UnlistenFn> {
+  if (IS_IOS) return () => {};
+  const listen = await getListen();
+  return listen<OsSpeechAudioStatsPayload>("osspeech://audio-stats", cb);
 }
