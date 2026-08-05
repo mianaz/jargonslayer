@@ -44,6 +44,17 @@ public enum StatusEvents {
         /// even in an otherwise loud session (`peak` alone can't: it
         /// only ever goes up).
         let windowPeak: Double
+        /// Pre-tag fix round (Fix C, sustained-audio predicate): milliseconds
+        /// of speech-level audio (PeakMeter.speechSampleFloor) within the
+        /// SAME window as `windowPeak`, distinct from it — `windowPeak` is a
+        /// single-sample max (one keystroke/cough can set it), this is a
+        /// DURATION. `nil` (omitted, via Swift's synthesized
+        /// `encodeIfPresent`, same as `channel` below) for Writer's own
+        /// capture-mode stats — Writer.swift is Must-NOT-TOUCH and its stats
+        /// don't feed the mid-session STT liveness watchdog this field
+        /// exists for; only TranscribeConsumer's transcribe-mode stats ever
+        /// pass a real value.
+        let windowLoudMs: UInt32?
         /// Dual-capture mic producer — "mic" | "system" | nil (omitted
         /// via Swift's synthesized `encodeIfPresent` for an Optional
         /// stored property, same as every other optional field in this
@@ -92,7 +103,8 @@ public enum StatusEvents {
         droppedFrames: UInt64,
         peak: Float,
         windowPeak: Float,
-        channel: String? = nil
+        channel: String? = nil,
+        windowLoudMs: UInt32? = nil
     ) {
         write(statsBytes(
             overflows: overflows,
@@ -101,7 +113,8 @@ public enum StatusEvents {
             droppedFrames: droppedFrames,
             peak: peak,
             windowPeak: windowPeak,
-            channel: channel
+            channel: channel,
+            windowLoudMs: windowLoudMs
         ))
     }
 
@@ -124,7 +137,8 @@ public enum StatusEvents {
         droppedFrames: UInt64,
         peak: Float,
         windowPeak: Float,
-        channel: String? = nil
+        channel: String? = nil,
+        windowLoudMs: UInt32? = nil
     ) -> Data {
         guard var data = try? sortedEncoder.encode(StatsRecord(
             overflows: overflows,
@@ -133,6 +147,7 @@ public enum StatusEvents {
             droppedFrames: droppedFrames,
             peak: round3(peak),
             windowPeak: round3(windowPeak),
+            windowLoudMs: windowLoudMs,
             channel: channel
         )) else { return Data() }
         data.append(0x0A) // "\n" — one record per line, NDJSON (matches emit(_:) below)

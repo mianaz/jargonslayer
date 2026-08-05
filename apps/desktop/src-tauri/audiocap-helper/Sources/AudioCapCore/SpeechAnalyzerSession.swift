@@ -246,7 +246,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
             // ---- producer thread (§Q1: "a dedicated producer Thread") ----
             let consumer = TranscribeConsumer(
                 ring: ring, channels: channels, isNonInterleaved: isNonInterleaved,
-                sink: sink, isPaused: isPaused, channel: channel
+                sink: sink, isPaused: isPaused, channel: channel, sampleRate: sampleRate
             )
             let durationDeadline = durationSeconds.map { Date().addingTimeInterval($0) }
             func shouldStopProducing() -> Bool {

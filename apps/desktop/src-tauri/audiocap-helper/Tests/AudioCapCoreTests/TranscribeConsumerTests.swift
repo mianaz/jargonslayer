@@ -275,9 +275,76 @@ final class TranscribeConsumerTests: XCTestCase {
         }
         consumer.drainRemaining() // drains the quiet sample, THEN notices statsInterval elapsed and resets windowPeak
 
-        let (peak, windowPeak) = consumer.debugPeakAndWindowPeak
+        let (peak, windowPeak, _) = consumer.debugPeakAndWindowPeak
         XCTAssertEqual(peak, 0.5, accuracy: 0.0001, "session-lifetime peak must still remember the earlier loud sample")
         XCTAssertEqual(windowPeak, 0, "windowPeak must be reset once a periodic emission has happened")
+    }
+
+    // ---- windowLoudMs (Fix C, pre-tag fix round) ----
+
+    func testWindowLoudMsAccumulatesLoudSamplesAsMilliseconds() {
+        let ring = SPSCByteRing(capacity: 1024)
+        let sink = FakeFrameSink()
+        // 16kHz mono: 16 loud samples (all above the 0.05 speech floor) is
+        // exactly 1ms of loud audio.
+        let consumer = TranscribeConsumer(ring: ring, channels: 1, isNonInterleaved: false, sink: sink, sampleRate: 16000)
+
+        withSingleBufferList(floatBytes([Float32](repeating: 0.5, count: 16))) { bufferList in
+            _ = ring.tryPush(frameCount: 16, buffers: bufferList)
+        }
+        consumer.drainRemaining()
+        XCTAssertEqual(consumer.debugPeakAndWindowPeak.windowLoudMs, 1)
+    }
+
+    func testWindowLoudMsIgnoresSamplesAtOrBelowTheSpeechFloor() {
+        let ring = SPSCByteRing(capacity: 1024)
+        let sink = FakeFrameSink()
+        let consumer = TranscribeConsumer(ring: ring, channels: 1, isNonInterleaved: false, sink: sink, sampleRate: 16000)
+
+        withSingleBufferList(floatBytes([Float32](repeating: 0.05, count: 100))) { bufferList in
+            _ = ring.tryPush(frameCount: 100, buffers: bufferList)
+        }
+        consumer.drainRemaining()
+        XCTAssertEqual(consumer.debugPeakAndWindowPeak.windowLoudMs, 0, "exactly at the floor (strict >) must not count as loud")
+    }
+
+    func testWindowLoudMsAccountsForChannelCount() {
+        let ring = SPSCByteRing(capacity: 1024)
+        let sink = FakeFrameSink()
+        // Stereo: 32 loud raw samples (16 frames * 2 channels) is still
+        // only 1ms of audio TIME at 16kHz — the raw sample count must be
+        // divided by channels, not treated as if it were mono.
+        let consumer = TranscribeConsumer(ring: ring, channels: 2, isNonInterleaved: false, sink: sink, sampleRate: 16000)
+
+        withSingleBufferList(floatBytes([Float32](repeating: 0.5, count: 32))) { bufferList in
+            _ = ring.tryPush(frameCount: 16, buffers: bufferList)
+        }
+        consumer.drainRemaining()
+        XCTAssertEqual(consumer.debugPeakAndWindowPeak.windowLoudMs, 1)
+    }
+
+    func testWindowLoudMsResetsAfterAPeriodicStatsEmission() {
+        let ring = SPSCByteRing(capacity: 1024)
+        var now = Date(timeIntervalSince1970: 1_000)
+        let sink = FakeFrameSink()
+        let consumer = TranscribeConsumer(
+            ring: ring, channels: 1, isNonInterleaved: false, sink: sink,
+            statsInterval: 5.0, clock: { now }, sampleRate: 16000
+        )
+
+        withSingleBufferList(floatBytes([Float32](repeating: 0.5, count: 16))) { bufferList in
+            _ = ring.tryPush(frameCount: 16, buffers: bufferList)
+        }
+        consumer.drainRemaining()
+        XCTAssertEqual(consumer.debugPeakAndWindowPeak.windowLoudMs, 1)
+
+        now = now.addingTimeInterval(6) // past the 5s statsInterval
+        withSingleBufferList(floatBytes([0.01])) { bufferList in
+            _ = ring.tryPush(frameCount: 1, buffers: bufferList)
+        }
+        consumer.drainRemaining() // notices statsInterval elapsed, resets windowLoudSamples
+
+        XCTAssertEqual(consumer.debugPeakAndWindowPeak.windowLoudMs, 0, "windowLoudMs must reset once a periodic emission has happened, same cadence as windowPeak")
     }
 
     func testPeakNeverDecreasesAcrossMultipleDrainsEvenAfterAQuieterOne() {

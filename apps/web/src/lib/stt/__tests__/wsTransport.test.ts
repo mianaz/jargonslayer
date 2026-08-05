@@ -16,7 +16,14 @@ import * as diagLogModule from "../../diag/log";
 // directly; audioLiveness.ts's own verdict logic is audioLiveness.test.
 // ts's job.
 const pushAudioWindow = vi.fn();
-vi.mock("../audioLiveness", () => ({ pushAudioWindow: (...args: unknown[]) => pushAudioWindow(...args) }));
+// Fix C (pre-tag fix round): SPEECH_SAMPLE_FLOOR is a real, read constant
+// (not a mock target) — wsTransport.ts's own fold compares raw samples
+// against it directly, so the mock must still export the real value, not
+// stub it out like pushAudioWindow above.
+vi.mock("../audioLiveness", () => ({
+  pushAudioWindow: (...args: unknown[]) => pushAudioWindow(...args),
+  SPEECH_SAMPLE_FLOOR: 0.05,
+}));
 import {
   FakeWebSocket,
   fakeMediaStream,
@@ -821,19 +828,21 @@ describe("WsTransport — protocol v2", () => {
       expect(pushAudioWindow).not.toHaveBeenCalled();
     });
 
-    it("flushes pushAudioWindow('default', normalizedMax) exactly once the window fills, folding across MULTIPLE pushPcm() calls", async () => {
+    it("flushes pushAudioWindow('default', normalizedMax, windowLoudMs) exactly once the window fills, folding across MULTIPLE pushPcm() calls", async () => {
       const transport = makeTransport();
       transport.attachPcmFeed();
 
       const firstHalf = silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES / 2);
-      firstHalf[10] = 16384; // 0.5 normalized (16384 / 32768)
+      firstHalf[10] = 16384; // 0.5 normalized (16384 / 32768) — ONE loud sample
       transport.pushPcm(int16Buffer(firstHalf));
       expect(pushAudioWindow).not.toHaveBeenCalled();
 
       transport.pushPcm(int16Buffer(silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES / 2)));
 
       expect(pushAudioWindow).toHaveBeenCalledTimes(1);
-      expect(pushAudioWindow).toHaveBeenCalledWith("default", 0.5);
+      // Fix C: a single loud sample is 1/16 ms, floored to 0 — one loud
+      // keystroke-sized sample must not itself read as sustained audio.
+      expect(pushAudioWindow).toHaveBeenCalledWith("default", 0.5, 0);
     });
 
     it("takes the max-abs sample in the window, including a negative (trough) sample", async () => {
@@ -844,7 +853,7 @@ describe("WsTransport — protocol v2", () => {
       samples[5] = -24576; // |−24576| / 32768 = 0.75
       transport.pushPcm(int16Buffer(samples));
 
-      expect(pushAudioWindow).toHaveBeenCalledWith("default", 0.75);
+      expect(pushAudioWindow).toHaveBeenCalledWith("default", 0.75, 0);
     });
 
     it("resets the fold after each flush — a later window's max never carries over from the previous one", async () => {
@@ -854,10 +863,40 @@ describe("WsTransport — protocol v2", () => {
       const loud = silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES);
       loud[0] = 32767;
       transport.pushPcm(int16Buffer(loud));
-      expect(pushAudioWindow).toHaveBeenNthCalledWith(1, "default", expect.closeTo(1, 3));
+      expect(pushAudioWindow).toHaveBeenNthCalledWith(1, "default", expect.closeTo(1, 3), 0);
 
       transport.pushPcm(int16Buffer(silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES)));
-      expect(pushAudioWindow).toHaveBeenNthCalledWith(2, "default", 0);
+      expect(pushAudioWindow).toHaveBeenNthCalledWith(2, "default", 0, 0);
+    });
+
+    // Fix C (pre-tag fix round, sustained-audio predicate): pins the
+    // loudMs arithmetic itself with a literal sample count — 16kHz mono
+    // means samples/16 is milliseconds (see wsTransport.ts's own doc
+    // comment on this exact literal), independent of the max-abs tests
+    // above (which only ever inject a single loud sample, always
+    // flooring to 0ms).
+    it("converts a literal count of loud samples to milliseconds (samples/16 at 16kHz)", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+
+      const samples = silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES);
+      // 320 samples above SPEECH_SAMPLE_FLOOR (0.05) -> 320 / 16 = 20ms.
+      for (let i = 0; i < 320; i++) samples[i] = 16384; // 0.5 normalized
+      transport.pushPcm(int16Buffer(samples));
+
+      expect(pushAudioWindow).toHaveBeenCalledWith("default", 0.5, 20);
+    });
+
+    it("samples below SPEECH_SAMPLE_FLOOR never count toward windowLoudMs, however many of them there are", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+
+      const samples = silentSamples(AUDIO_LIVENESS_WINDOW_SAMPLES);
+      const belowFloor = 1000; // 1000 / 32768 ≈ 0.0305 — below the 0.05 floor
+      for (let i = 0; i < samples.length; i++) samples[i] = belowFloor;
+      transport.pushPcm(int16Buffer(samples));
+
+      expect(pushAudioWindow).toHaveBeenCalledWith("default", expect.closeTo(1000 / 0x8000, 5), 0);
     });
 
     it("pauseFeed() suppresses the fold entirely — pushPcm() returns before ever reaching it", async () => {

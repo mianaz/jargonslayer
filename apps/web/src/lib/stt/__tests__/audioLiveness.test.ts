@@ -8,15 +8,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useApp } from "../../store";
 import {
   AUDIO_FLOOR,
+  SPEECH_SAMPLE_FLOOR,
   STATS_STALE_MS,
   SILENT_CHANNEL_HINT_MS,
   WATCHDOG_MIN_AUDIO_WINDOWS,
   WATCHDOG_WALL_FLOOR_MS,
+  WINDOW_LOUD_MS_MIN,
   armLiveness,
   disarmLiveness,
   noteResult,
   pushAudioWindow,
   resetLiveness,
+  resumeLiveness,
   useAudioLiveness,
 } from "../audioLiveness";
 
@@ -115,6 +118,42 @@ describe("audioLiveness", () => {
     });
   });
 
+  // Fix C (pre-tag fix round, sustained-audio predicate): when a producer
+  // carries `windowLoudMs`, it ALONE decides audio-presence — a single
+  // loud sample (windowPeak comfortably above AUDIO_FLOOR) must not count
+  // as "audio-present" if the DURATION of loud samples in that window
+  // never reached WINDOW_LOUD_MS_MIN, and vice versa. Falls back to the
+  // old windowPeak > AUDIO_FLOOR predicate only when windowLoudMs is
+  // omitted entirely (an older/foreign producer).
+  describe("windowLoudMs sustained-audio predicate (Fix C)", () => {
+    beforeEach(() => {
+      primeAppStore(Date.now());
+      armLiveness("whisper");
+    });
+
+    it("a loud single-sample peak with windowLoudMs below WINDOW_LOUD_MS_MIN does NOT count as audio-present", () => {
+      pushAudioWindow("default", AUDIO_FLOOR + 0.5, WINDOW_LOUD_MS_MIN - 1);
+      const c = useAudioLiveness.getState().channels.default;
+      expect(c.everAudio).toBe(false);
+      expect(c.audioWindowsSinceResult).toBe(0);
+    });
+
+    it("windowLoudMs at/above WINDOW_LOUD_MS_MIN counts as audio-present even with a modest peak", () => {
+      pushAudioWindow("default", AUDIO_FLOOR - 0.01, WINDOW_LOUD_MS_MIN);
+      const c = useAudioLiveness.getState().channels.default;
+      expect(c.everAudio).toBe(true);
+      expect(c.audioWindowsSinceResult).toBe(1);
+    });
+
+    it("omitting windowLoudMs entirely falls back to the windowPeak > AUDIO_FLOOR predicate", () => {
+      pushAudioWindow("default", AUDIO_FLOOR + 0.01);
+      expect(useAudioLiveness.getState().channels.default.everAudio).toBe(true);
+
+      pushAudioWindow("default", AUDIO_FLOOR);
+      expect(useAudioLiveness.getState().channels.default.audioWindowsSinceResult).toBe(1); // unchanged — at-floor never bumps
+    });
+  });
+
   describe("watchdog verdict (1): loud audio, zero results", () => {
     beforeEach(() => {
       primeAppStore(Date.now());
@@ -194,6 +233,51 @@ describe("audioLiveness", () => {
       vi.advanceTimersByTime(WATCHDOG_WALL_FLOOR_MS);
       pushAudioWindow("default", AUDIO_FLOOR + 0.01);
       expect(useAudioLiveness.getState().verdicts.watchdogChannels).toEqual(["default"]);
+    });
+
+    // Fix B (pre-tag fix round, HIGH): before that fix, EVERY interim
+    // (regardless of which channel actually produced it) called
+    // noteResult(undefined) — the surviving channel's own interims kept
+    // perpetually clearing a wedged sibling's count, making its watchdog
+    // unreachable in practice. With the channel now threaded through
+    // (useMeeting.ts's onInterim -> noteResult(channelFromSttSpeaker(...))),
+    // a channel that produced results and then died is catchable: the
+    // OTHER channel's continuing interims/finals no longer touch it.
+    it("a channel that goes silent stays catchable even while the OTHER channel keeps producing results (Fix B)", () => {
+      // "mic" accumulates enough loud-audio-with-no-result evidence to
+      // satisfy the watchdog's window-count floor, then goes quiet —
+      // representing a wedged/dead lane.
+      pushLoudWindows("mic", WATCHDOG_MIN_AUDIO_WINDOWS);
+
+      // "system" keeps right on producing results for the whole
+      // WATCHDOG_WALL_FLOOR_MS wait — each one now correctly attributed
+      // to ONLY "system" (the post-Fix-B behavior), never clearing mic's
+      // count the way an unconditional noteResult(undefined) used to.
+      for (let i = 0; i < 5; i++) {
+        vi.advanceTimersByTime(WATCHDOG_WALL_FLOOR_MS / 5);
+        noteResult("system");
+      }
+
+      pushAudioWindow("mic", AUDIO_FLOOR + 0.01); // re-evaluate against the now-elapsed clock
+      expect(useAudioLiveness.getState().verdicts.watchdogChannels).toEqual(["mic"]);
+    });
+  });
+
+  // Fix E (pre-tag fix round, MEDIUM): computeVerdicts used to return a
+  // fresh object/arrays on EVERY noteResult/pushAudioWindow call, so
+  // StatusLine (which reads `verdicts` reactively) re-rendered on every
+  // single interim for the whole meeting even when nothing about the
+  // verdict actually changed.
+  describe("verdict object identity (Fix E)", () => {
+    it("two consecutive noteResults with an unchanged verdict return the SAME verdicts object (Object.is)", () => {
+      primeAppStore(Date.now());
+      armLiveness("whisper");
+
+      noteResult(undefined);
+      const first = useAudioLiveness.getState().verdicts;
+      noteResult(undefined);
+      const second = useAudioLiveness.getState().verdicts;
+      expect(Object.is(first, second)).toBe(true);
     });
   });
 
@@ -303,6 +387,56 @@ describe("audioLiveness", () => {
     });
   });
 
+  // Fix A (pre-tag fix round, CRITICAL): a soft pause (tabaudio/appaudio)
+  // keeps the SAME watchdog session alive across the pause — resumeLiveness()
+  // is what useMeeting.ts's own soft-resume branch calls on the
+  // paused->listening transition to re-seed every channel's evidence
+  // clocks, closing the false-stall/false-statsStale a long pause would
+  // otherwise manufacture (retained pre-pause counts + a frozen
+  // lastStatsAt). Both scenario tests below simulate that exact
+  // sequence: pushLoudWindows/pause/advance/resume+resumeLiveness().
+  describe("resumeLiveness (Fix A: post-resume false-stall/false-statsStale)", () => {
+    beforeEach(() => {
+      primeAppStore(Date.now());
+      armLiveness("tabaudio");
+    });
+
+    function simulatePauseThenResume(pauseMs: number): void {
+      useApp.setState({ status: "paused", pauseStartedAt: Date.now() });
+      vi.advanceTimersByTime(pauseMs);
+      useApp.setState((s) => ({
+        status: "listening",
+        pausedAccumMs: s.pausedAccumMs + (Date.now() - (s.pauseStartedAt ?? Date.now())),
+        pauseStartedAt: null,
+      }));
+      resumeLiveness();
+    }
+
+    it("long pause -> resume -> sentinel ticks BEFORE the first post-resume push -> no statsStale", () => {
+      simulatePauseThenResume(20 * 60_000); // a 20-minute break
+
+      // The free-running 15s sentinel fires (real setInterval, fake
+      // timers) well before any post-resume pushAudioWindow ever lands
+      // (up to 5s of audio needed for the first fold flush) — without
+      // Fix A, lastStatsAt would still read its frozen pre-pause value
+      // here and this tick would false-fire statsStale.
+      vi.advanceTimersByTime(15_000);
+      expect(useAudioLiveness.getState().verdicts.statsStale).toBe(false);
+    });
+
+    it("12 pre-pause windows + long pause -> resume -> no immediate watchdog fire", () => {
+      pushLoudWindows("default", WATCHDOG_MIN_AUDIO_WINDOWS);
+
+      // Without Fix A, the wall-clock floor (now - lastResultAt) is
+      // pre-satisfied the instant the pause ends — the retained
+      // audioWindowsSinceResult count from before the pause already
+      // meets WATCHDOG_MIN_AUDIO_WINDOWS.
+      simulatePauseThenResume(20 * 60_000);
+
+      expect(useAudioLiveness.getState().verdicts.watchdogChannels).toEqual([]);
+    });
+  });
+
   describe("resetLiveness", () => {
     it("clears every channel's counters and verdicts, and disarms", () => {
       primeAppStore(Date.now());
@@ -317,6 +451,26 @@ describe("audioLiveness", () => {
       expect(s.armed).toBe(false);
       expect(s.verdicts).toEqual({ watchdogChannels: [], statsStale: false, silentChannels: [] });
       expect(s.channels.default.audioWindowsSinceResult).toBe(0);
+    });
+  });
+
+  // Fix H (pre-tag fix round, LOW): this suite imports every tunable by
+  // name, so silently changing one of these values (e.g.
+  // WATCHDOG_MIN_AUDIO_WINDOWS to 2, or AUDIO_FLOOR to 0.003) would keep
+  // every test above green — none of them pin the LITERAL value, only the
+  // relative behavior around it. Changing any of these is a product
+  // decision (how aggressively the watchdog warns), not a refactor —
+  // this is the one place a change to any of them must show up as a
+  // failing test, forcing a conscious update here.
+  describe("tunable contract pins", () => {
+    it("pins the exact tunable values", () => {
+      expect(AUDIO_FLOOR).toBe(0.06);
+      expect(WATCHDOG_MIN_AUDIO_WINDOWS).toBe(12);
+      expect(WATCHDOG_WALL_FLOOR_MS).toBe(90_000);
+      expect(STATS_STALE_MS).toBe(45_000);
+      expect(SILENT_CHANNEL_HINT_MS).toBe(600_000);
+      expect(WINDOW_LOUD_MS_MIN).toBe(1000);
+      expect(SPEECH_SAMPLE_FLOOR).toBe(0.05);
     });
   });
 });

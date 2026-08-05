@@ -314,6 +314,76 @@ describe("scanDictionary — lookaround polish: a non-word edge rejects a glued 
   });
 });
 
+// Fix F (pre-tag fix round, Lane Q inflection order): buildExpressionRegex
+// used to append the optional inflection group `(?:s|es|ed|d|ing)?` BEFORE
+// choosing the trailing boundary assertion — for a non-word-ending
+// expression like "100%", a greedy match against "100%s." could consume
+// the "s" as the "inflection" and let the trailing `(?!\w)` see the "."
+// right after, matching a phrase it should never have. An expression
+// whose last character is a non-word character now gets NO inflection
+// group at all. Every assertion below fails against the pre-fix ordering.
+describe("scanDictionary — Fix F: a non-word-ending expression takes no inflection group", () => {
+  function remotePackWith100Percent() {
+    return {
+      id: "__test_symbol_pack__",
+      name: "symbol pack",
+      version: 1,
+      expressions: [
+        {
+          expression: "100%",
+          category: "phrase" as const,
+          meaning: "entirely",
+          chinese_explanation: "百分之百",
+          plain_english: "completely",
+          tone: "neutral",
+          confidence: 0.9,
+          pack: "__test_symbol_pack__",
+        },
+      ],
+      terms: [],
+    };
+  }
+
+  it("does NOT match '100%s' — the 's' is not a real inflection of a non-word-ending expression", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWith100Percent()]);
+    const res = scanDictionary("We hit 100%s today.");
+    expect(res.expressions.some((e) => e.expression === "100%")).toBe(false);
+  });
+
+  it("does NOT match '100%s.' either (the glued 's' followed by punctuation)", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWith100Percent()]);
+    const res = scanDictionary("We hit 100%s.");
+    expect(res.expressions.some((e) => e.expression === "100%")).toBe(false);
+  });
+
+  it("a normal word-ending expression keeps its inflection behavior (regression pin)", () => {
+    // Same pinned case the "last-word inflection AS IMPLEMENTED" describe
+    // block above already covers — re-asserted here as this fix's own
+    // regression guard.
+    const res = scanDictionary("Let's touch bases again on Friday.");
+    expect(res.expressions.some((e) => e.expression === "touch base")).toBe(true);
+  });
+});
+
+// Fix G (pre-tag fix round, MINOR): the v0.7.2 boundary fix's new
+// trailing `(?!\w)` correctly rejects "401(k)x" but, as a side effect,
+// also stopped the real plural usage "401(k)s" from matching at all (the
+// "s" right after the closing paren is a word character). Restored via
+// DATA — "401(k)s" is now its own variant of headword "401k"
+// (dictionary-data-finance.ts) — rather than reopening Fix F's
+// inflection-vs-boundary regex problem for the term path.
+describe("scanDictionary — Fix G: '401(k)s' plural usage is restored via a data variant", () => {
+  it("'my two 401(k)s' matches the '401k' headword", () => {
+    const res = scanDictionary("I have my two 401(k)s from past employers.", null);
+    expect(res.terms.some((t) => t.term === "401k")).toBe(true);
+  });
+
+  it("'401(k)sx' does NOT match — a glued word-char suffix after the plural is still rejected", () => {
+    const res = scanDictionary("Some plan called 401(k)sx is not a real thing.", null);
+    expect(res.terms.some((t) => t.term === "401k")).toBe(false);
+  });
+});
+
 // Variants enrichment pass (conservative alias sweep, field report):
 // "get the ball rolling" gained explicit keep-family variants since the
 // FIRST word is the light-verb here and buildExpressionRegex only ever

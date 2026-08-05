@@ -462,6 +462,14 @@ struct RawOsSpeechLine {
     /// older/foreign stats line may omit it.
     #[serde(rename = "windowPeak")]
     window_peak: Option<f64>,
+    /// Fix C (pre-tag fix round, sustained-audio predicate): milliseconds
+    /// of speech-level audio within the SAME window as `windowPeak` —
+    /// StatusEvents.swift's `windowLoudMs` (TranscribeConsumer only; Writer
+    /// never emits it, same nil-omission posture as `channel`). `Option`
+    /// for the same reason `window_peak` is: an older/foreign stats line
+    /// (or Writer's own capture-mode stats) omits it.
+    #[serde(rename = "windowLoudMs")]
+    window_loud_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -527,6 +535,9 @@ enum ParsedOsSpeechLine {
         peak: Option<f64>,
         window_peak: Option<f64>,
         channel: Option<String>,
+        /// Fix C (pre-tag fix round): see `RawOsSpeechLine::window_loud_ms`'s
+        /// own doc comment.
+        window_loud_ms: Option<u32>,
     },
     /// Not valid JSON, valid JSON with an unrecognized/missing "type", or
     /// a known "type" missing the fields that shape requires — never a
@@ -594,6 +605,7 @@ fn parse_osspeech_line(line: &str) -> ParsedOsSpeechLine {
                 peak: raw.peak,
                 window_peak: raw.window_peak,
                 channel: raw.channel,
+                window_loud_ms: raw.window_loud_ms,
             },
             _ => ParsedOsSpeechLine::Unrecognized,
         },
@@ -1279,6 +1291,11 @@ struct OsSpeechAudioStatsEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     channel: Option<String>,
     window_peak: f64,
+    /// Fix C (pre-tag fix round): see `RawOsSpeechLine::window_loud_ms`'s
+    /// own doc comment — absent (never null) on an older/foreign helper
+    /// build that never sent one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    window_loud_ms: Option<u32>,
 }
 
 /// §2.5 R2 — PINNED CROSS-LANE CONTRACT: every `osspeech://status` payload
@@ -1603,7 +1620,7 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                             ParsedOsSpeechLine::Error { code, message } => {
                                 last_error = Some((code, message));
                             }
-                            ParsedOsSpeechLine::Stats { peak, window_peak, channel } => {
+                            ParsedOsSpeechLine::Stats { peak, window_peak, channel, window_loud_ms } => {
                                 if peak.unwrap_or(0.0) > 0.0 {
                                     saw_nonzero_peak = true;
                                 }
@@ -1615,7 +1632,7 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                                     emit_audio_stats_for_session(
                                         &app,
                                         generation,
-                                        OsSpeechAudioStatsEvent { channel, window_peak },
+                                        OsSpeechAudioStatsEvent { channel, window_peak, window_loud_ms },
                                     );
                                 }
                             }
@@ -2112,7 +2129,7 @@ mod tests {
         let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0}"#;
         assert_eq!(
             parse_osspeech_line(line),
-            ParsedOsSpeechLine::Stats { peak: None, window_peak: None, channel: None }
+            ParsedOsSpeechLine::Stats { peak: None, window_peak: None, channel: None, window_loud_ms: None }
         );
     }
 
@@ -2121,7 +2138,18 @@ mod tests {
         let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0,"peak":0.351,"windowPeak":0.042}"#;
         assert_eq!(
             parse_osspeech_line(line),
-            ParsedOsSpeechLine::Stats { peak: Some(0.351), window_peak: Some(0.042), channel: None }
+            ParsedOsSpeechLine::Stats { peak: Some(0.351), window_peak: Some(0.042), channel: None, window_loud_ms: None }
+        );
+    }
+
+    #[test]
+    fn a_stats_line_carries_its_window_loud_ms_through() {
+        // Fix C (pre-tag fix round): the wire's windowLoudMs extracts onto
+        // the Stats variant exactly like windowPeak/channel above.
+        let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0,"windowPeak":0.042,"windowLoudMs":1200}"#;
+        assert_eq!(
+            parse_osspeech_line(line),
+            ParsedOsSpeechLine::Stats { peak: None, window_peak: Some(0.042), channel: None, window_loud_ms: Some(1200) }
         );
     }
 
@@ -2140,7 +2168,7 @@ mod tests {
         let line = r#"{"type":"stats","channel":"mic","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0,"windowPeak":0.04}"#;
         assert_eq!(
             parse_osspeech_line(line),
-            ParsedOsSpeechLine::Stats { peak: None, window_peak: Some(0.04), channel: Some("mic".to_string()) }
+            ParsedOsSpeechLine::Stats { peak: None, window_peak: Some(0.04), channel: Some("mic".to_string()), window_loud_ms: None }
         );
     }
 
@@ -2755,7 +2783,8 @@ mod tests {
 
     #[test]
     fn audio_stats_event_omits_channel_from_the_wire_when_none() {
-        let json = serde_json::to_value(OsSpeechAudioStatsEvent { channel: None, window_peak: 0.04 }).unwrap();
+        let json =
+            serde_json::to_value(OsSpeechAudioStatsEvent { channel: None, window_peak: 0.04, window_loud_ms: None }).unwrap();
         assert!(json.get("channel").is_none(), "None must serialize as an absent key, not null: {json}");
         assert_eq!(json.get("windowPeak").and_then(|v| v.as_f64()), Some(0.04));
     }
@@ -2765,9 +2794,30 @@ mod tests {
         let json = serde_json::to_value(OsSpeechAudioStatsEvent {
             channel: Some("system".to_string()),
             window_peak: 0.5,
+            window_loud_ms: None,
         })
         .unwrap();
         assert_eq!(json.get("channel").and_then(|v| v.as_str()), Some("system"));
         assert_eq!(json.get("windowPeak").and_then(|v| v.as_f64()), Some(0.5));
+    }
+
+    // ---- Fix C (pre-tag fix round): windowLoudMs on the wire ----
+
+    #[test]
+    fn audio_stats_event_omits_window_loud_ms_from_the_wire_when_none() {
+        let json =
+            serde_json::to_value(OsSpeechAudioStatsEvent { channel: None, window_peak: 0.04, window_loud_ms: None }).unwrap();
+        assert!(json.get("windowLoudMs").is_none(), "None must serialize as an absent key, not null: {json}");
+    }
+
+    #[test]
+    fn audio_stats_event_carries_window_loud_ms_on_the_wire_when_some() {
+        let json = serde_json::to_value(OsSpeechAudioStatsEvent {
+            channel: Some("mic".to_string()),
+            window_peak: 0.5,
+            window_loud_ms: Some(1200),
+        })
+        .unwrap();
+        assert_eq!(json.get("windowLoudMs").and_then(|v| v.as_u64()), Some(1200));
     }
 }

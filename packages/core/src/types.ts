@@ -130,7 +130,15 @@ export interface InterimState {
 export type STTStatus = "idle" | "connecting" | "listening" | "error";
 
 export interface STTEvents {
-  onInterim: (text: string, speaker?: string) => void;
+  // Fix B (pre-tag fix round): `sttSpeaker` is a THIRD, independent
+  // argument — never conflated with `speaker` above (InterimLine's own
+  // display value, untouched by this fix). Dual-capture osspeech's
+  // interim branch is the one producer today (mirrors onFinal's own
+  // `opts.sttSpeaker`, CH_MIC/CH_SYS — see that field's own doc comment);
+  // every other engine simply never passes it, so `channelFromSttSpeaker`
+  // (useMeeting.ts) sees `undefined` and clears every channel exactly
+  // like before this fix.
+  onInterim: (text: string, speaker?: string, sttSpeaker?: string) => void;
   onFinal: (
     text: string,
     opts?: {

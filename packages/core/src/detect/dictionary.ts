@@ -1374,14 +1374,28 @@ function boundaryFor(edgeChar: string, side: "leading" | "trailing"): string {
 
 /** Build a case-insensitive, whitespace/inflection-tolerant regex for
  *  a multi-word expression. The last word may carry a common suffix
- *  (s, es, ed, d, ing) so "circling back" matches "circle back". */
+ *  (s, es, ed, d, ing) so "circling back" matches "circle back".
+ *
+ *  Fix F (pre-tag fix round, Lane Q inflection order): inflections are
+ *  for WORD-ENDING phrases only. The optional suffix group used to be
+ *  appended unconditionally, BEFORE the trailing boundary assertion
+ *  (`boundaryFor`) below was ever chosen — for a phrase ending in a
+ *  NON-word character (e.g. "100%"), that boundary is the lookaround
+ *  `(?!\w)`, and a greedy match against "100%s." could consume the "s"
+ *  as the "inflection", leaving `(?!\w)` to see the "." right after and
+ *  match — silently matching a phrase this expression was never meant
+ *  to. An expression whose last character is a non-word character now
+ *  gets NO inflection group at all; a normal word-ending expression
+ *  keeps its inflection tolerance unchanged. */
 function buildExpressionRegex(phrase: string): RegExp {
   const words = phrase.trim().split(/\s+/);
   const first = words[0];
   const last = words[words.length - 1];
   const head = words.slice(0, -1).map(escapeRe);
   const lastEscaped = escapeRe(last);
-  const parts = [...head, `${lastEscaped}(?:s|es|ed|d|ing)?`];
+  const lastCharIsWord = /\w/.test(last[last.length - 1]);
+  const lastPart = lastCharIsWord ? `${lastEscaped}(?:s|es|ed|d|ing)?` : lastEscaped;
+  const parts = [...head, lastPart];
   const leadingBoundary = boundaryFor(first[0], "leading");
   const trailingBoundary = boundaryFor(last[last.length - 1], "trailing");
   const source = `${leadingBoundary}${parts.join("\\s+")}${trailingBoundary}`;

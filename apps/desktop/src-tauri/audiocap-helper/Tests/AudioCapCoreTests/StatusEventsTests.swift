@@ -35,4 +35,20 @@ final class StatusEventsTests: XCTestCase {
             #"{"channel":"system","droppedFrames":0,"framesOut":0,"overflows":0,"peak":0.123,"ringHighWater":0,"type":"stats","windowPeak":0.988}"# + "\n"
         )
     }
+
+    // ---- windowLoudMs (Fix C, pre-tag fix round) ----
+
+    func testStatsBytesOmitsWindowLoudMsWhenNil() {
+        let data = StatusEvents.statsBytes(overflows: 0, ringHighWater: 0, framesOut: 0, droppedFrames: 0, peak: 0, windowPeak: 0)
+        XCTAssertFalse(string(data).contains("windowLoudMs"), "a nil windowLoudMs must be omitted entirely — Writer's own capture-mode stats never pass one, and must stay byte-identical to before this field existed")
+    }
+
+    func testStatsBytesIncludesWindowLoudMsWhenNonNil() {
+        let data = StatusEvents.statsBytes(overflows: 1, ringHighWater: 2, framesOut: 3, droppedFrames: 4, peak: 0.5, windowPeak: 0.25, channel: "mic", windowLoudMs: 1200)
+        XCTAssertEqual(
+            string(data),
+            #"{"channel":"mic","droppedFrames":4,"framesOut":3,"overflows":1,"peak":0.5,"ringHighWater":2,"type":"stats","windowLoudMs":1200,"windowPeak":0.25}"# + "\n",
+            "sortedKeys places windowLoudMs alphabetically between type and windowPeak"
+        )
+    }
 }

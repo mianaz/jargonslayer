@@ -183,7 +183,10 @@ describe("OsSpeechEngine", () => {
     expect(onStatus).toHaveBeenCalledWith("listening");
 
     emit("osspeech://transcript", { final: false, seq: 1, startMs: 0, endMs: 500, text: "jargon" });
-    expect(onInterim).toHaveBeenCalledWith("jargon");
+    // Fix B (pre-tag fix round): onInterim's third argument now carries
+    // the channel-mapped sttSpeaker — undefined here, a channel-less
+    // (legacy/single-source) transcript event.
+    expect(onInterim).toHaveBeenCalledWith("jargon", undefined, undefined);
 
     emit("osspeech://transcript", { final: true, seq: 2, startMs: 0, endMs: 900, text: "jargon slayer" });
     expect(onFinal).toHaveBeenCalledWith("jargon slayer");
@@ -260,7 +263,9 @@ describe("OsSpeechEngine", () => {
 
       emit("osspeech://transcript", { final: false, seq: 1, startMs: 100, endMs: 400, text: "hi" });
 
-      expect(onInterim).toHaveBeenCalledWith("hi");
+      // Fix B (pre-tag fix round): third argument (sttSpeaker) is
+      // undefined for a channel-less transcript event.
+      expect(onInterim).toHaveBeenCalledWith("hi", undefined, undefined);
     });
 
     // A3 verify-from-source: wsTransport.ts's own onFinal call
@@ -393,7 +398,14 @@ describe("OsSpeechEngine", () => {
     // (opts) argument at all" — a channel-tagged event must never
     // regress that byte-identical call shape.
 
-    it("interim (final:false) events carry no speaker mapping regardless of channel — onInterim's own signature has no speaker param for osspeech", async () => {
+    // Fix B (pre-tag fix round, HIGH): the interim branch used to drop
+    // the channel entirely (noteResult(undefined) cleared EVERY channel
+    // regardless of which lane actually produced the interim) — now
+    // mapped through the SAME sttSpeakerForChannel onFinal uses, carried
+    // as onInterim's THIRD argument. The SECOND argument (`speaker`,
+    // InterimLine's own display value) is untouched by this fix — still
+    // always `undefined` for osspeech's interim branch.
+    it("interim (final:false) events carry the channel via the THIRD argument, but no speaker display value (second argument stays undefined)", async () => {
       const { emit } = wireFakes();
       const engine = new OsSpeechEngine();
       const onInterim = vi.fn();
@@ -408,7 +420,25 @@ describe("OsSpeechEngine", () => {
         channel: "mic",
       });
 
-      expect(onInterim).toHaveBeenCalledWith("partial");
+      expect(onInterim).toHaveBeenCalledWith("partial", undefined, CH_MIC_SPEAKER);
+    });
+
+    it("interim events on the 'system' channel map to CH_SYS_SPEAKER via the third argument", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      const onInterim = vi.fn();
+      await engine.start({ ...noopEvents(), onInterim } as unknown as STTEvents, OSSPEECH_SETTINGS);
+
+      emit("osspeech://transcript", {
+        final: false,
+        seq: 4,
+        startMs: 0,
+        endMs: 100,
+        text: "their partial",
+        channel: "system",
+      });
+
+      expect(onInterim).toHaveBeenCalledWith("their partial", undefined, CH_SYS_SPEAKER);
     });
   });
 
@@ -426,7 +456,10 @@ describe("OsSpeechEngine", () => {
 
       emit("osspeech://audio-stats", { channel: "mic", windowPeak: 0.05 });
 
-      expect(pushAudioWindow).toHaveBeenCalledWith("mic", 0.05);
+      // Fix C (pre-tag fix round): third argument (windowLoudMs) is
+      // undefined when the payload doesn't carry one (an older/foreign
+      // helper build).
+      expect(pushAudioWindow).toHaveBeenCalledWith("mic", 0.05, undefined);
     });
 
     it("an absent channel (legacy/single-source session) maps to 'default'", async () => {
@@ -436,7 +469,17 @@ describe("OsSpeechEngine", () => {
 
       emit("osspeech://audio-stats", { windowPeak: 0.02 });
 
-      expect(pushAudioWindow).toHaveBeenCalledWith("default", 0.02);
+      expect(pushAudioWindow).toHaveBeenCalledWith("default", 0.02, undefined);
+    });
+
+    it("forwards windowLoudMs verbatim when the payload carries one (Fix C)", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      await engine.start(noopEvents(), OSSPEECH_SETTINGS);
+
+      emit("osspeech://audio-stats", { channel: "system", windowPeak: 0.02, windowLoudMs: 1500 });
+
+      expect(pushAudioWindow).toHaveBeenCalledWith("system", 0.02, 1500);
     });
 
     it("drops an audio-stats event that arrives after stop() has already settled (listener unregistered)", async () => {

@@ -97,4 +97,29 @@ final class PeakMeterTests: XCTestCase {
             XCTAssertEqual(PeakMeter.maxAbsoluteSample(in: buffer), 1.0, accuracy: 0.0001)
         }
     }
+
+    // ---- scanWithLoudCount (Fix C, pre-tag fix round) ----
+
+    func testScanWithLoudCountAgreesWithMaxAbsoluteSampleOnPeak() {
+        withBytes([0.1, -0.9, 0.3, -0.2]) { buffer in
+            XCTAssertEqual(PeakMeter.scanWithLoudCount(in: buffer).peak, 0.9, accuracy: 0.0001)
+        }
+    }
+
+    func testScanWithLoudCountCountsOnlySamplesStrictlyAboveTheSpeechFloor() {
+        // 0.05 sits exactly at speechSampleFloor — must NOT count (strict >,
+        // same convention as maxAbsoluteSample's own `>` running max).
+        withBytes([0.05, 0.051, -0.9, 0.02]) { buffer in
+            XCTAssertEqual(PeakMeter.scanWithLoudCount(in: buffer).loudSampleCount, 2)
+        }
+    }
+
+    func testScanWithLoudCountIsZeroForAnEmptyOrSubSampleBuffer() {
+        let bytes: [UInt8] = [1, 2, 3]
+        bytes.withUnsafeBytes { buffer in
+            let result = PeakMeter.scanWithLoudCount(in: buffer)
+            XCTAssertEqual(result.peak, 0)
+            XCTAssertEqual(result.loudSampleCount, 0)
+        }
+    }
 }
