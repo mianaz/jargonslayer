@@ -938,14 +938,19 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
   // new visual vocabulary" doc comment for why that one stays quiet.
   const livenessNoticeAtRef = useRef<number | null>(null);
   useEffect(() => {
-    const warningActive =
-      isListening &&
-      livenessArmed &&
-      (livenessVerdicts.statsStale || livenessVerdicts.watchdogChannels.length > 0);
-    if (!warningActive) {
+    const verdictActive = livenessVerdicts.statsStale || livenessVerdicts.watchdogChannels.length > 0;
+    // Fix A (pre-tag fix round, CRITICAL): reset the one-shot notice ONLY
+    // on a genuine verdict recovery (still armed, verdict cleared) or a
+    // full disarm — NOT merely because `isListening` flickered false
+    // (the soft-pause window, or a transient reconnect blip) while the
+    // SAME verdict is still active. A bare pause/resume no longer even
+    // clears the verdict itself (resumeLiveness re-seeds the watchdog on
+    // resume), but a stray `!isListening` tick must not re-arm the notice
+    // for a stall that never actually recovered.
+    if (!livenessArmed || !verdictActive) {
       livenessNoticeAtRef.current = null;
-      return;
     }
+    if (!isListening || !livenessArmed || !verdictActive) return;
     const now = Date.now();
     if (
       livenessNoticeAtRef.current === null ||

@@ -10,7 +10,14 @@ import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
 import { langPairFromSettings, resolveTranslationProvider, stopSystemTranslator } from "../lib/translate/providers";
 import { diagLog } from "../lib/diag/log";
-import { armLiveness, disarmLiveness, noteResult, resetLiveness, type AudioChannel } from "../lib/stt/audioLiveness";
+import {
+  armLiveness,
+  disarmLiveness,
+  noteResult,
+  resetLiveness,
+  resumeLiveness,
+  type AudioChannel,
+} from "../lib/stt/audioLiveness";
 import { resetLagStats } from "../lib/stt/latencyStats";
 import { probeSidecar } from "../lib/stt/sidecarHealth";
 import { isConventionalSidecarUrl } from "../lib/stt/upload";
@@ -535,13 +542,25 @@ export function useMeeting(): UseMeetingResult {
       // itself is guarded by terminalTeardownRef, set/cleared around
       // this flow's call sites below — stop() plain-returns while it's
       // set (the M7 reopen fix).
-      if (engineRef.current === engine) engineRef.current = null;
+      // Fix D (pre-tag fix round, MEDIUM): the comparison result is
+      // captured HERE (not re-read after the awaits below) and reused to
+      // gate disarmLiveness() further down — see that call's own doc
+      // comment for the race this closes.
+      const ownedEngineRef = engineRef.current === engine;
+      if (ownedEngineRef) engineRef.current = null;
       await engine.stop();
-      // Lane W: this terminal teardown (engine error / demo natural end /
-      // capture_ended) ends the engine session the watchdog was armed
-      // for — disarmLiveness() is idempotent, so a racing doStop() that
-      // also calls it is harmless.
-      disarmLiveness();
+      // Fix D (pre-tag fix round, MEDIUM): gated on `ownedEngineRef`
+      // (captured above, BEFORE this flow's own first await), never a
+      // fresh `engineRef.current === engine` re-check here — by this
+      // point engineRef.current is either already null (this flow itself
+      // cleared it) or has since been reassigned to a NEWER meeting's
+      // engine, so re-comparing against `engine` would always read false.
+      // Without this gate, an old flow's disarm (this call) could land
+      // AFTER a brand-new meeting's own armLiveness() already fired
+      // (attachEngine below), silently killing that new meeting's
+      // watchdog. disarmLiveness() is idempotent, so a racing doStop()
+      // that also calls it is still harmless.
+      if (ownedEngineRef) disarmLiveness();
       // v0.6: tear down the native Apple-translate child alongside the
       // STT engine's own — see providers.ts's own doc comment for why
       // this is safe/idempotent to call unconditionally (no-op outside
@@ -590,7 +609,7 @@ export function useMeeting(): UseMeetingResult {
     };
 
     const events: STTEvents = {
-      onInterim: (text, speaker) => {
+      onInterim: (text, speaker, sttSpeaker) => {
         // Late-partial belt (STT protocol v2 fix, codex v2 review
         // F4): a "flush" (soft pause) doesn't cancel an in-flight
         // partial transcription — its result can arrive AFTER pause
@@ -606,12 +625,15 @@ export function useMeeting(): UseMeetingResult {
           diagLog("info", "stt-lifecycle", "忽略非监听状态下到达的插字");
           return;
         }
-        // Lane W (mid-session STT liveness watchdog): an interim carries
-        // no channel of its own (osspeech's channel tagging only ever
-        // rides a FINAL, see channelFromSttSpeaker's own doc comment) —
-        // `undefined` clears every channel, which is exactly right: any
-        // interim at all is still evidence the pipeline is alive.
-        noteResult(undefined);
+        // Fix B (pre-tag fix round, HIGH): dual-capture osspeech's
+        // interim branch now carries its own channel (osSpeech.ts's
+        // sttSpeakerForChannel) — mapped exactly like onFinal's own
+        // channelFromSttSpeaker(opts?.sttSpeaker) call below. Every
+        // other engine never passes a third argument at all, so
+        // `sttSpeaker` is `undefined` there and this still clears every
+        // channel, same "any interim is evidence the pipeline is alive"
+        // posture as before this fix.
+        noteResult(channelFromSttSpeaker(sttSpeaker));
         // Honest interim contract (fix #A4): the engine layer now
         // forwards `""` (a genuine retraction) instead of swallowing
         // it — map that to `null` here so InterimLine doesn't render
@@ -836,7 +858,17 @@ export function useMeeting(): UseMeetingResult {
     // a mid-meeting engine switch, or resume()'s own teardown-reattach)
     // — armLiveness() itself no-ops for a non-qualifying engine kind
     // (webSpeech/cloud), so this is safe to call unconditionally here.
-    armLiveness(engine.kind);
+    // Fix D (pre-tag fix round, MEDIUM): gated on `engineRef.current ===
+    // engine` — engine.start() above can synchronously fire
+    // onStatus("error") (a doomed connect), whose handler's own
+    // compare-and-clear already nulled engineRef.current and kicked off
+    // runStopFlow's teardown before this line ever runs. Arming
+    // unconditionally there would arm a 15s sentinel for a session
+    // that's already dead (and dying/dead runStopFlow's own disarm may
+    // have ALREADY run by now too — see that call's own doc comment),
+    // leaking the interval forever since nothing else would ever disarm
+    // it again.
+    if (engineRef.current === engine) armLiveness(engine.kind);
     return !attachFailed;
   }, []);
 
@@ -1200,6 +1232,13 @@ export function useMeeting(): UseMeetingResult {
       // transport doesn't asynchronously fail the way attachEngine can.
       if (!pendingEndRef.current) {
         useApp.getState().resumeMeeting();
+        // Fix A (pre-tag fix round, CRITICAL): this is the SOFT-resume
+        // branch — the SAME watchdog session that was live before the
+        // pause continues, unlike the teardown branch below (which
+        // re-arms fresh via attachEngine's own armLiveness call). See
+        // resumeLiveness's own doc comment for the false-stall this
+        // closes.
+        resumeLiveness();
       }
       return;
     }

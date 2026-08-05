@@ -51,4 +51,41 @@ public enum PeakMeter {
         }
         return result
     }
+
+    /// Pre-tag fix round (Fix C, sustained-audio predicate): the shared
+    /// per-sample "loud enough to look like speech, not noise-floor hiss"
+    /// threshold — MUST mirror audioLiveness.ts's own SPEECH_SAMPLE_FLOOR
+    /// (0.05) exactly, since a windowLoudMs computed here (TranscribeConsumer)
+    /// and one computed by wsTransport.ts's own PCM fold both feed the SAME
+    /// `windowLoudMs >= WINDOW_LOUD_MS_MIN` predicate — they must agree on
+    /// what counts as "loud" for that comparison to mean the same thing
+    /// regardless of which producer emitted it.
+    public static let speechSampleFloor: Float = 0.05
+
+    /// Same single pass as `maxAbsoluteSample` above, extended to also
+    /// count samples louder than `speechSampleFloor` — a single
+    /// loud-but-brief sample (a keystroke, a cough) must not by itself
+    /// read as "sustained audio"; TranscribeConsumer accumulates this
+    /// count across a whole stats window and converts it to milliseconds
+    /// (see that class's own windowLoudMs bookkeeping) so the watchdog's
+    /// audio-present predicate can require a MINIMUM DURATION of
+    /// speech-level samples, not merely a single-sample max crossing a
+    /// floor. Kept as a separate function (not a replacement) — Writer.swift
+    /// is Must-NOT-TOUCH and keeps calling `maxAbsoluteSample` unchanged.
+    public static func scanWithLoudCount(in bytes: UnsafeRawBufferPointer) -> (peak: Float, loudSampleCount: Int) {
+        guard bytes.count >= 4, let base = bytes.baseAddress else { return (0, 0) }
+        let sampleCount = bytes.count / 4
+        var peak: Float = 0
+        var loudCount = 0
+        for i in 0..<sampleCount {
+            let magnitude = abs(base.loadUnaligned(fromByteOffset: i * 4, as: Float32.self))
+            if magnitude > peak {
+                peak = magnitude
+            }
+            if magnitude > speechSampleFloor {
+                loudCount += 1
+            }
+        }
+        return (peak, loudCount)
+    }
 }

@@ -13,7 +13,7 @@
 import type { MeetingLexicon, STTEvents, Settings } from "@jargonslayer/core/types";
 import { withBase } from "../basePath";
 import { diagLog } from "../diag/log";
-import { pushAudioWindow } from "./audioLiveness";
+import { pushAudioWindow, SPEECH_SAMPLE_FLOOR } from "./audioLiveness";
 import { pushLagSample } from "./latencyStats";
 import { projectForInitialPrompt } from "./lexicon";
 
@@ -73,11 +73,12 @@ const POST_STOP_LINGER_MS = 12000;
 // Lane W (mid-session STT liveness watchdog, audioLiveness.ts): every
 // whisper-family engine (mic/tabaudio/appaudio) feeds this ONE transport,
 // which has no per-channel distinction of its own — every sample folds
-// into audioLiveness.ts's "default" channel key. 16000 samples @ 16kHz
-// mono (pcm-processor.js's own wire format, matching appAudio.ts's native
-// PCM feed too) is ~5s of audio time — the same emission cadence
-// osSpeechTransport.ts's own stats lane uses, so pushAudioWindow's own
-// "~5s window" doc comment holds for both producers.
+// into audioLiveness.ts's "default" channel key. 16kHz mono (pcm-
+// processor.js's own wire format, matching appAudio.ts's native PCM feed
+// too) means 16000 samples is ~1s of audio time — so 16000 * 5 (this
+// constant) is ~5s, the same emission cadence osSpeechTransport.ts's own
+// stats lane uses, so pushAudioWindow's own "~5s window" doc comment
+// holds for both producers.
 const AUDIO_LIVENESS_WINDOW_SAMPLES = 16000 * 5;
 
 /** Why stop()'s drain wait resolved — see stopDrainResolve's own doc
@@ -260,6 +261,12 @@ export class WsTransport {
   // reaching this fold in the first place).
   private livenessWindowMax = 0;
   private livenessWindowSamples = 0;
+  // Fix C (pre-tag fix round, sustained-audio predicate): count of samples
+  // in the current window louder than SPEECH_SAMPLE_FLOOR (audioLiveness.ts)
+  // — converted to milliseconds at flush time (16kHz mono: samples/16) and
+  // passed as pushAudioWindow's own windowLoudMs, same reset cadence as
+  // livenessWindowMax above.
+  private livenessWindowLoudSamples = 0;
 
   // stop()'s drain wait (STT protocol v2): resolved by the "stopped"
   // ack (see connect()'s onmessage), by the ws closing on its own
@@ -417,12 +424,22 @@ export class WsTransport {
     for (let i = 0; i < samples.length; i++) {
       const abs = Math.abs(samples[i]) / 0x8000;
       if (abs > this.livenessWindowMax) this.livenessWindowMax = abs;
+      // Fix C (pre-tag fix round, sustained-audio predicate): same
+      // per-sample floor as PeakMeter.speechSampleFloor (Swift) — see
+      // SPEECH_SAMPLE_FLOOR's own doc comment for why both must mirror
+      // each other exactly.
+      if (abs > SPEECH_SAMPLE_FLOOR) this.livenessWindowLoudSamples++;
     }
     this.livenessWindowSamples += samples.length;
     if (this.livenessWindowSamples >= AUDIO_LIVENESS_WINDOW_SAMPLES) {
-      pushAudioWindow("default", this.livenessWindowMax);
+      // 16kHz mono: samples/16 is milliseconds (1000ms / 16000 samples-
+      // per-second == samples/16) — same literal-arithmetic convention
+      // AUDIO_LIVENESS_WINDOW_SAMPLES's own doc comment already pins.
+      const windowLoudMs = Math.floor(this.livenessWindowLoudSamples / 16);
+      pushAudioWindow("default", this.livenessWindowMax, windowLoudMs);
       this.livenessWindowMax = 0;
       this.livenessWindowSamples = 0;
+      this.livenessWindowLoudSamples = 0;
     }
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(data);

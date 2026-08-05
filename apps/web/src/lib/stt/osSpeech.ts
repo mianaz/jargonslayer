@@ -117,6 +117,11 @@ export interface OsSpeechStatusPayload {
 export interface OsSpeechAudioStatsPayload {
   channel?: "mic" | "system";
   windowPeak: number;
+  // Fix C (pre-tag fix round, sustained-audio predicate): forwarded
+  // verbatim from Rust's own optional `windowLoudMs` (osspeech.rs) —
+  // absent on an older/foreign helper build, see audioLiveness.ts's own
+  // pushAudioWindow doc comment for the fallback this triggers.
+  windowLoudMs?: number;
 }
 
 export interface OsSpeechTranscriptPayload {
@@ -152,6 +157,18 @@ export const OSSPEECH_TERMINAL_STATUS_KINDS = new Set<OsSpeechStatusKind>([
 // STOP_GRACE_PERIOD, 3s, must stay shorter than this 4s JS-side wait —
 // see that file's own doc comment for the full invariant).
 const STOP_ENDED_TIMEOUT_MS = 4000;
+
+/** Dual capture v1 / Fix B (pre-tag fix round): the one place a channel
+ *  tag maps onto the matching stable sttSpeaker id — shared by both
+ *  handleTranscript's final AND interim branches so the mapping can never
+ *  drift between them. `undefined` for a channel-less payload (a legacy/
+ *  single-source session), matching `channelFromSttSpeaker`'s own
+ *  (useMeeting.ts) "no channel signal" contract on the other end. */
+function sttSpeakerForChannel(channel: "mic" | "system" | undefined): string | undefined {
+  if (channel === "mic") return CH_MIC_SPEAKER;
+  if (channel === "system") return CH_SYS_SPEAKER;
+  return undefined;
+}
 
 function unsupportedLocaleMessage(payload: OsSpeechStatusPayload): string {
   const requested = payload.message ? `（${payload.message}）` : "";
@@ -405,13 +422,18 @@ export class OsSpeechEngine implements STTEngine {
       // stay byte-identical to before this feature (no phantom speaker).
       if (payload.channel) {
         events.onFinal(payload.text, {
-          sttSpeaker: payload.channel === "mic" ? CH_MIC_SPEAKER : CH_SYS_SPEAKER,
+          sttSpeaker: sttSpeakerForChannel(payload.channel),
         });
       } else {
         events.onFinal(payload.text);
       }
     } else {
-      events.onInterim(payload.text);
+      // Fix B (pre-tag fix round, HIGH): the interim branch used to drop
+      // the channel entirely — see STTEvents.onInterim's own doc comment
+      // for the third-argument contract this now feeds. `speaker` (2nd
+      // arg, InterimLine's own display value) stays `undefined`, exactly
+      // as before this fix — only the NEW third argument changes.
+      events.onInterim(payload.text, undefined, sttSpeakerForChannel(payload.channel));
     }
   }
 
@@ -424,7 +446,7 @@ export class OsSpeechEngine implements STTEngine {
   // since there is equally no per-channel signal to carry there.
   private handleAudioStats(myGeneration: number, payload: OsSpeechAudioStatsPayload): void {
     if (myGeneration !== this.generation) return; // stale session
-    pushAudioWindow(payload.channel ?? "default", payload.windowPeak);
+    pushAudioWindow(payload.channel ?? "default", payload.windowPeak, payload.windowLoudMs);
   }
 
   private handleStatus(myGeneration: number, payload: OsSpeechStatusPayload): void {

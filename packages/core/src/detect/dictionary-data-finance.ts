@@ -114,7 +114,18 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "401k",
-    variants: ["401(k)"],
+    // Fix G (pre-tag fix round, MINOR): "401(k)s" (real plural usage, e.g.
+    // "my two 401(k)s") is its OWN variant, not left to a regex suffix —
+    // getCachedTermRegex (dictionary.ts) carries no inflection tolerance
+    // at all for terms, and the v0.7.2 boundary fix's new trailing
+    // `(?!\w)` on "401(k)" correctly rejects "401(k)x" but, as a side
+    // effect, also stopped "401(k)s" from matching at all (the "s" is a
+    // word char right after the closing paren). Restored via DATA:
+    // "401(k)s" gets its OWN candidate/boundary check (trailing "s" is a
+    // word char, so its own boundary is a plain `\b`), rather than
+    // reopening the inflection-vs-boundary regex problem Fix F just closed
+    // for expressions.
+    variants: ["401(k)", "401(k)s"],
     type: "other",
     gloss_en: "a US employer-sponsored retirement account with pretax contributions",
     gloss_zh: "401(k) 退休金账户，税前存钱",

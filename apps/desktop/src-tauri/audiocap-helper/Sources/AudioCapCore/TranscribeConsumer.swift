@@ -73,6 +73,14 @@ public final class TranscribeConsumer: @unchecked Sendable {
     private let pollInterval: TimeInterval
     private let statsInterval: TimeInterval
     private let starvationTimeout: TimeInterval
+    /// Fix C (pre-tag fix round, sustained-audio predicate): the tap's own
+    /// sample rate — needed to convert `windowLoudSamples` (a raw sample
+    /// COUNT, channel/frame-agnostic like PeakMeter's own scan) into a
+    /// DURATION (`windowLoudMs`). Defaulted for every pre-existing test call
+    /// site that only cares about peak/starvation/pause bookkeeping; the one
+    /// real production call site (SpeechAnalyzerSession.run) always passes
+    /// the tap's actual negotiated rate.
+    private let sampleRate: UInt32
     /// Dual-capture mic producer — threaded straight through into every
     /// `StatusEvents.emitStats` call this class makes (below and in
     /// `emitFinalStats`); see StatusEvents.StatsRecord's own `channel`
@@ -85,6 +93,13 @@ public final class TranscribeConsumer: @unchecked Sendable {
     private var ringHighWater: UInt64 = 0
     private var peak: Float = 0
     private var windowPeak: Float = 0
+    /// Fix C: raw count of samples louder than `PeakMeter.speechSampleFloor`
+    /// accumulated since the last stats emission — reset alongside
+    /// `windowPeak` (same cadence, same reason: "since the last emission
+    /// only"). Converted to `windowLoudMs` at emission time via `sampleRate`
+    /// (and `channels`, since this is a raw sample count across every
+    /// interleaved channel, not a frame count).
+    private var windowLoudSamples: Int = 0
     private var lastObservedDroppedFrames: UInt64 = 0
     private var lastStats: Date
     private var lastActivityTime: Date?
@@ -99,7 +114,8 @@ public final class TranscribeConsumer: @unchecked Sendable {
         starvationTimeout: TimeInterval = 3.0,
         statsInterval: TimeInterval = 5.0,
         clock: @escaping () -> Date = Date.init,
-        channel: String? = nil
+        channel: String? = nil,
+        sampleRate: UInt32 = 16000
     ) {
         self.ring = ring
         self.channels = channels
@@ -112,16 +128,27 @@ public final class TranscribeConsumer: @unchecked Sendable {
         self.clock = clock
         self.lastStats = clock()
         self.channel = channel
+        self.sampleRate = sampleRate
     }
 
     #if DEBUG
     /// Test-only peek, exactly Writer's own `debugPeakAndWindowPeak` —
     /// `StatusEvents.emitStats` has no injectable output, so this is the
-    /// seam TranscribeConsumerTests uses to verify peak/windowPeak
-    /// bookkeeping (including the periodic-emission reset) without
-    /// capturing the real stderr NDJSON. Never called in production.
-    var debugPeakAndWindowPeak: (peak: Float, windowPeak: Float) { (peak, windowPeak) }
+    /// seam TranscribeConsumerTests uses to verify peak/windowPeak/
+    /// windowLoudMs bookkeeping (including the periodic-emission reset)
+    /// without capturing the real stderr NDJSON. Never called in production.
+    var debugPeakAndWindowPeak: (peak: Float, windowPeak: Float, windowLoudMs: UInt32) { (peak, windowPeak, currentWindowLoudMs()) }
     #endif
+
+    /// `windowLoudSamples` (a raw sample count) -> milliseconds, via this
+    /// consumer's own `sampleRate`/`channels` — see `windowLoudSamples`'s
+    /// own doc comment for why both are needed (not just sampleRate alone).
+    private func currentWindowLoudMs() -> UInt32 {
+        guard windowLoudSamples > 0 else { return 0 }
+        let samplesPerMs = Double(sampleRate) * Double(channels) / 1000.0
+        guard samplesPerMs > 0 else { return 0 }
+        return UInt32(Double(windowLoudSamples) / samplesPerMs)
+    }
 
     /// Reused UNCHANGED on the transcribe path (§2.2): the exact same
     /// `StatusEvents.emitStats` call Writer.emitFinalStats makes, with
@@ -134,7 +161,8 @@ public final class TranscribeConsumer: @unchecked Sendable {
             droppedFrames: ring.droppedFrameCount(),
             peak: peak,
             windowPeak: windowPeak,
-            channel: channel
+            channel: channel,
+            windowLoudMs: currentWindowLoudMs()
         )
     }
 
@@ -186,10 +214,12 @@ public final class TranscribeConsumer: @unchecked Sendable {
                 droppedFrames: ring.droppedFrameCount(),
                 peak: peak,
                 windowPeak: windowPeak,
-                channel: channel
+                channel: channel,
+                windowLoudMs: currentWindowLoudMs()
             )
             lastStats = now
             windowPeak = 0
+            windowLoudSamples = 0
         }
 
         if let lastActivityTime, now.timeIntervalSince(lastActivityTime) >= starvationTimeout {
@@ -207,9 +237,10 @@ public final class TranscribeConsumer: @unchecked Sendable {
     private func handle(frameCount: UInt32, payload: UnsafeRawBufferPointer, paused: Bool) {
         guard frameCount > 0, payload.count > 0 else { return }
         lastActivityTime = clock()
-        let sample = PeakMeter.maxAbsoluteSample(in: payload)
-        if sample > peak { peak = sample }
-        if sample > windowPeak { windowPeak = sample }
+        let scan = PeakMeter.scanWithLoudCount(in: payload)
+        if scan.peak > peak { peak = scan.peak }
+        if scan.peak > windowPeak { windowPeak = scan.peak }
+        windowLoudSamples += scan.loudSampleCount
 
         guard !paused else { return }
         if isNonInterleaved {
