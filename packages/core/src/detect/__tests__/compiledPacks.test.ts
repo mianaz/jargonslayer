@@ -13,7 +13,7 @@ vi.mock("../remotePacksRegistry", () => ({
 }));
 
 import { COMPILED_PACK_TERMS } from "../dictionary-packs-compiled";
-import { packCounts, scanDictionary } from "../dictionary";
+import { ALL_EXPRESSION_ENTRIES, ALL_TERM_ENTRIES, normalizeDictKey, packCounts, scanDictionary } from "../dictionary";
 
 const VALID_TYPES = new Set(["acronym", "company", "product", "tech", "metric", "person", "other"]);
 
@@ -121,6 +121,94 @@ describe("scanDictionary — Bug B fix: cross-pack collisions no longer delete a
     const res = scanDictionary("We reviewed our OKR this quarter.", ["core", "business-terms"]);
     const hits = res.terms.filter((t) => t.term === "OKR");
     expect(hits).toHaveLength(1);
+  });
+});
+
+// Lane Q (v0.7.8 decision record, docs/ROADMAP.md): the two tests above
+// only spot-check the two REPORTED collisions (SAM, regression). This
+// computes the FULL inventory over ALL_TERM_ENTRIES — the UNMERGED flat
+// list, since mergeTermTables has already resolved every collision by
+// the time TERM_DICTIONARY exists — and categorizes each collision key
+// exactly the way mergeTermTables (dictionary.ts:1137) itself does:
+//   - byte-identical gloss_en+gloss_zh across every entry at the key:
+//     "duplicate" (collapses to one card, no data loss, no pack-count
+//     inflation).
+//   - distinct glosses, a CORE_PACK ("core") member present: "core-wins"
+//     (core is unconditionally enabled, so a non-core sibling could
+//     never win scanDictionary's own isPackEnabled tie-break anyway).
+//   - distinct glosses, no core member: "survivor" — this is the v0.7.2
+//     Bug B shape (SAM, regression): every entry in the group survives,
+//     each still tagged with its own pack.
+// A mismatch means a NEW pack introduced a collision this list doesn't
+// know about yet — mergeTermTables will handle it (silently, per the
+// category above), so the point of this test is making that a
+// conscious decision by a pack author instead of a silent one.
+describe("cross-pack collision inventory — full accounting, not silent", () => {
+  const EXPECTED_SURVIVORS = ["sam", "regression"].sort();
+  const EXPECTED_DUPLICATES = ["okr", "mvp", "kpi", "cac", "poc", "p&l"].sort();
+  const EXPECTED_CORE_WINS = ["roi", "yoy", "qoq", "gtm", "icp", "ltv", "sow", "nda", "rfp", "b2b"].sort();
+
+  it("terms: the full collision inventory matches the known, reviewed state", () => {
+    const groups = new Map<string, typeof ALL_TERM_ENTRIES>();
+    for (const entry of ALL_TERM_ENTRIES) {
+      const key = normalizeDictKey(entry.term);
+      const group = groups.get(key) ?? [];
+      group.push(entry);
+      groups.set(key, group);
+    }
+
+    const survivors: string[] = [];
+    const duplicates: string[] = [];
+    const coreWins: string[] = [];
+    for (const [key, group] of groups) {
+      if (group.length < 2) continue; // no collision at this key
+
+      // Mirrors mergeTermTables' own byte-identical-gloss collapse pass.
+      const distinct: typeof group = [];
+      for (const item of group) {
+        const isDup = distinct.some(
+          (d) => d.gloss_en === item.gloss_en && d.gloss_zh === item.gloss_zh,
+        );
+        if (!isDup) distinct.push(item);
+      }
+      if (distinct.length === 1) {
+        duplicates.push(key);
+        continue;
+      }
+      if (distinct.some((d) => d.pack === "core")) coreWins.push(key);
+      else survivors.push(key);
+    }
+
+    const hint =
+      "New cross-pack term collision not in this test's known list. " +
+      "mergeTermTables (dictionary.ts:1137) resolves it silently (duplicate-collapse, " +
+      "core-wins, or survive-as-siblings, per that function's own doc) — update the " +
+      "EXPECTED_* lists above only after confirming that's the right outcome for it.";
+
+    expect(survivors.sort(), hint).toEqual(EXPECTED_SURVIVORS);
+    expect(duplicates.sort(), hint).toEqual(EXPECTED_DUPLICATES);
+    expect(coreWins.sort(), hint).toEqual(EXPECTED_CORE_WINS);
+  });
+
+  it("expressions: zero cross-pack normalized-key collisions", () => {
+    // Unlike terms, EXPRESSIONS still goes through the naive dedupeByKey
+    // chain (dictionary.ts:1101-1105), which silently DROPS the losing
+    // entry on any collision rather than merging or preserving it. This
+    // asserts today's true state (0) as a guard: any future expression
+    // pack that introduces a collision needs a conscious look at
+    // dedupeByKey before it ships, not a silent data loss.
+    const counts = new Map<string, number>();
+    for (const entry of ALL_EXPRESSION_ENTRIES) {
+      const key = normalizeDictKey(entry.expression);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const collisions = [...counts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
+    expect(
+      collisions,
+      "New cross-pack expression collision. dedupeByKey (dictionary.ts:1101) will silently " +
+        "drop the losing entry — there is no per-pack survival for expressions like " +
+        "mergeTermTables gives terms. Investigate before adding the new pack.",
+    ).toEqual([]);
   });
 });
 

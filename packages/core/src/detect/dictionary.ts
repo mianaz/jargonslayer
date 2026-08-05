@@ -1068,7 +1068,11 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
 // dedupe by normalized expression/term string, base wins on conflict.
 // ---------------------------------------------------------------
 
-function normalizeDictKey(s: string): string {
+// Exported (Lane Q, v0.7.8): compiledPacks.test.ts's collision-inventory
+// guard groups ALL_TERM_ENTRIES/ALL_EXPRESSION_ENTRIES by this same key
+// function rather than re-deriving it, so the guard can never drift
+// from what mergeTermTables/dedupeByKey actually group on.
+export function normalizeDictKey(s: string): string {
   return s.trim().toLowerCase();
 }
 
@@ -1090,7 +1094,12 @@ function dedupeByKey<T>(base: T[], extra: T[], keyOf: (item: T) => string): T[] 
 // language (finance-consumer), and the conversational register around
 // meetings (daily-idiom). Merged at the same precedence as EXTRA_*:
 // base still wins a normalized-key collision, these only fill gaps.
-const ALL_EXPRESSION_ENTRIES: ExpressionEntry[] = [
+// Exported (Lane Q, v0.7.8): compiledPacks.test.ts's cross-pack
+// collision-inventory guard needs the unmerged flat list, same reason
+// ALL_TERM_ENTRIES is exported below — mergeTermTables/dedupeByKey have
+// already thrown away the collisions by the time TERM_DICTIONARY/
+// EXPRESSIONS exist.
+export const ALL_EXPRESSION_ENTRIES: ExpressionEntry[] = [
   ...BASE_EXPRESSIONS,
   ...EXTRA_EXPRESSIONS,
   ...MODERN_USAGE_EXPRESSIONS,
@@ -1186,7 +1195,12 @@ const ALL_TERM_TABLES: TermEntry[][] = [
 ];
 
 const TERM_DICTIONARY: TermEntry[] = mergeTermTables(ALL_TERM_TABLES);
-const ALL_TERM_ENTRIES: TermEntry[] = ALL_TERM_TABLES.flat();
+// Exported (Lane Q, v0.7.8): compiledPacks.test.ts's cross-pack
+// collision-inventory guard groups this UNMERGED list by
+// normalizeDictKey to assert the exact known collision set —
+// mergeTermTables above has already resolved every collision by the
+// time TERM_DICTIONARY exists, so that's the wrong list for the guard.
+export const ALL_TERM_ENTRIES: TermEntry[] = ALL_TERM_TABLES.flat();
 
 /** Entry counts per pack id, for the Settings dialog (shows how many
  *  items a pack contributes before the user decides to disable it).
@@ -1337,19 +1351,25 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** S11 fix (v0.6 round-2 review): `\b` only makes sense adjacent to a
- *  word character — it asserts "exactly one of the two neighboring
- *  characters is a word character", so placed right next to a NON-word
- *  edge character (e.g. the trailing "%" in "100%") it can never
- *  actually match once that symbol is itself followed by whitespace,
- *  punctuation, or the end of the string — the overwhelmingly common
- *  case for how such a token appears in real text (both neighbors end
- *  up non-word). An expression edge like that needs no `\b` at all: the
- *  "don't match a substring of a longer word" concern `\b` exists for
- *  (e.g. "cat" inside "category") only applies when the edge itself IS
- *  a word character. */
-function boundaryFor(edgeChar: string): string {
-  return /\w/.test(edgeChar) ? "\\b" : "";
+/** S11 fix (v0.6 round-2 review) + queued lookaround polish (decision
+ *  record, v0.7.2 review round, docs/ROADMAP.md): `\b` only makes sense
+ *  adjacent to a word character — it asserts "exactly one of the two
+ *  neighboring characters is a word character", so placed right next to
+ *  a NON-word edge character (e.g. the trailing "%" in "100%") it can
+ *  never actually match once that symbol is itself followed by
+ *  whitespace, punctuation, or the end of the string — the
+ *  overwhelmingly common case for how such a token appears in real
+ *  text (both neighbors end up non-word). The original S11 fix dropped
+ *  the assertion entirely at a non-word edge, which let a glued
+ *  word-char suffix slip through undetected ("mode (statistics)" inside
+ *  "mode (statistics)abc", "401(k)" inside "401(k)x"). A lookaround
+ *  closes that gap without `\b`'s exactly-one-word-char requirement:
+ *  `(?<!\w)` on the left / `(?!\w)` on the right reject only an adjacent
+ *  WORD character, so CJK, punctuation, and end-of-string — the cases
+ *  S11 exists for — still match exactly as before. */
+function boundaryFor(edgeChar: string, side: "leading" | "trailing"): string {
+  if (/\w/.test(edgeChar)) return "\\b";
+  return side === "leading" ? "(?<!\\w)" : "(?!\\w)";
 }
 
 /** Build a case-insensitive, whitespace/inflection-tolerant regex for
@@ -1362,8 +1382,8 @@ function buildExpressionRegex(phrase: string): RegExp {
   const head = words.slice(0, -1).map(escapeRe);
   const lastEscaped = escapeRe(last);
   const parts = [...head, `${lastEscaped}(?:s|es|ed|d|ing)?`];
-  const leadingBoundary = boundaryFor(first[0]);
-  const trailingBoundary = boundaryFor(last[last.length - 1]);
+  const leadingBoundary = boundaryFor(first[0], "leading");
+  const trailingBoundary = boundaryFor(last[last.length - 1], "trailing");
   const source = `${leadingBoundary}${parts.join("\\s+")}${trailingBoundary}`;
   return new RegExp(source, "i");
 }
@@ -1564,8 +1584,8 @@ function getCachedTermRegex(candidate: string): RegExp {
   let re = termRegexCache.get(candidate);
   if (!re) {
     const isAllCaps = /^[A-Z0-9&]+$/.test(candidate);
-    const leadingBoundary = boundaryFor(candidate[0]);
-    const trailingBoundary = boundaryFor(candidate[candidate.length - 1]);
+    const leadingBoundary = boundaryFor(candidate[0], "leading");
+    const trailingBoundary = boundaryFor(candidate[candidate.length - 1], "trailing");
     re = new RegExp(
       `${leadingBoundary}${escapeRe(candidate)}${trailingBoundary}`,
       isAllCaps ? "" : "i",
