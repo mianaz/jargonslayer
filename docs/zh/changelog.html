@@ -28,6 +28,7 @@
     <a href="advanced.html">高级玩法</a>
 
     <div class="label">版本</div>
+    <a href="#v078">v0.7.8</a>
     <a href="#v077">v0.7.7</a>
     <a href="#v076">v0.7.6</a>
     <a href="#v075">v0.7.5</a>
@@ -50,10 +51,20 @@
       <p class="lead">每一条用户能感知到的变化，按时间倒序排列。除非条目里写明具体平台，否则版本号同时覆盖网页版、macOS 桌面版、iOS 测试版和 Chrome 插件。发布下载在 <a href="https://github.com/mianaz/jargonslayer/releases" target="_blank" rel="noopener">GitHub releases</a>；接下来打算做什么见「<a href="features.html#next">功能页</a>」。</p>
     </section>
 
-    <section id="v077">
+    <section id="v078">
       <h2>v0.7</h2>
       <div class="ver">
-        <div class="ver-head"><h3>v0.7.7</h3><span class="ver-date">2026-08-04</span><span class="ver-tag">最新</span></div>
+        <div class="ver-head"><h3>v0.7.8</h3><span class="ver-date">2026-08-05</span><span class="ver-tag">最新</span></div>
+        <ul>
+          <li><strong>转写停摆看得见：</strong>有声音进来、字幕却停了，状态栏当场亮「转写停滞」。判定很挑剔：累计约一分钟语音级声能且 90 秒（按活动时间计）零结果才报——Q&amp;A 冷场、键盘咔哒、咖啡歇后恢复都不误报。只提醒不打断；双路收音分声道判定，本地 whisper 引擎同样覆盖。</li>
+          <li><strong>管线假死也报：</strong>音频统计断流 45 秒亮同一警示，采集管线卡死不再无声无息。</li>
+          <li><strong>单路无声提示：</strong>双路收音下某路开场十分钟零声音、另一路正常时给中性提示——不发言正常，麦克风被静音值得看一眼。</li>
+          <li><strong>词典边界收口：</strong>「mode (statistics)abc」类粘连后缀不再误命中；100%s 不再算 100%；401(k)s 以词形变体回归；跨包词条碰撞有了清单守卫测试。</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v077">
+        <div class="ver-head"><h3>v0.7.7</h3><span class="ver-date">2026-08-04</span></div>
         <ul>
           <li><strong>检查更新：</strong>设置里可手动查新版，后台每日静默核对；发现新版弹横幅，一键打开下载页（桌面版）。</li>
           <li><strong>翻译断线看得见：</strong>翻译通道会议中途死掉也会亮「翻译失败」，不再只有全程零翻译才报；判定有 60 秒地板，短暂抖动不闪假警。</li>

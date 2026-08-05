@@ -28,6 +28,7 @@
     <a href="advanced.html">Power Users</a>
 
     <div class="label">Versions</div>
+    <a href="#v078">v0.7.8</a>
     <a href="#v077">v0.7.7</a>
     <a href="#v076">v0.7.6</a>
     <a href="#v075">v0.7.5</a>
@@ -50,10 +51,20 @@
       <p class="lead">Every user-visible change, newest first. Versions cover the web app, the macOS desktop app, the iOS beta, and the Chrome extension together unless a change names a specific platform. Release downloads live on <a href="https://github.com/mianaz/jargonslayer/releases" target="_blank" rel="noopener">GitHub releases</a>; what's planned next is on the <a href="features.html#next">Features page</a>.</p>
     </section>
 
-    <section id="v077">
+    <section id="v078">
       <h2>v0.7</h2>
       <div class="ver">
-        <div class="ver-head"><h3>v0.7.7</h3><span class="ver-date">2026-08-04</span><span class="ver-tag">Latest</span></div>
+        <div class="ver-head"><h3>v0.7.8</h3><span class="ver-date">2026-08-05</span><span class="ver-tag">Latest</span></div>
+        <ul>
+          <li><strong>Transcription stall warning:</strong> audio flowing but no captions now raises 转写停滞 on the spot — the verdict needs about a minute of speech-level energy with zero results plus a 90-second floor in active time, so Q&amp;A lulls, keystrokes and post-break resumes never false-fire. Advisory only, never interrupts; per-channel in dual capture, local whisper engines covered.</li>
+          <li><strong>Wedged pipelines too:</strong> a 45-second gap in audio stats raises the same warning — a stuck capture pipeline is no longer silent.</li>
+          <li><strong>Silent-channel hint:</strong> in dual capture, a channel with zero audio ten minutes in (other channel alive) gets a neutral hint — staying quiet is normal, a muted mic is worth a look.</li>
+          <li><strong>Dictionary edges:</strong> glued suffixes ("mode (statistics)abc") no longer match; 100%s no longer counts as 100%; 401(k)s returns as a variant; cross-pack term collisions now have a ledger test.</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v077">
+        <div class="ver-head"><h3>v0.7.7</h3><span class="ver-date">2026-08-04</span></div>
         <ul>
           <li><strong>Update check:</strong> manual check in Settings plus a quiet daily check; a banner opens the download page when a new version exists (desktop).</li>
           <li><strong>Translation death visible:</strong> a lane dying mid-meeting now shows 翻译失败, not only after a fully silent meeting; a 60s floor prevents false alarms.</li>
