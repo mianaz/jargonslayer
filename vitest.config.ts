@@ -8,6 +8,21 @@ import { defineConfig } from "vitest/config";
 // vitest.workspace.ts file).
 export default defineConfig({
   test: {
-    projects: ["packages/*", "apps/*"],
+    projects: [
+      "packages/*",
+      "apps/*",
+      // scripts/ has no package.json of its own, so it can't be picked up
+      // by the directory globs above — without this inline project a test
+      // under scripts/__tests__/ would sit there green-looking and never
+      // execute (which is exactly what happened to the sidecar suite
+      // before v0.7.5 wired it into CI).
+      {
+        test: {
+          name: "scripts",
+          environment: "node",
+          include: ["scripts/**/__tests__/**/*.test.mjs"],
+        },
+      },
+    ],
   },
 });
