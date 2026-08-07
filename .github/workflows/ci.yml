@@ -48,7 +48,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
+      # Same suite as plain `npm test`, plus v8 coverage with the floors
+      # set in vitest.config.ts's coverage.thresholds — before this,
+      # nothing measured coverage anywhere, so a 300-line zero-coverage
+      # module could land under a green run. include-all denominators:
+      # never-imported files count against the floor too.
+      - run: npm run test:coverage
       - run: npm run typecheck
       - run: npm run check:versions
       # numpy/websockets/tqdm only — NOT requirements-sidecar.txt. See

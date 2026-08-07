@@ -28,12 +28,14 @@
     "check:versions": "node scripts/check-versions.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:sidecar": "node scripts/test-sidecar.mjs",
     "postinstall": "node scripts/copy-ffmpeg-assets.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
   }
