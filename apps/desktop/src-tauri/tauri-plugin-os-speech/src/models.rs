@@ -122,3 +122,167 @@ pub struct GenerationResult {
 pub struct TranslateItemsResult {
     pub items: Vec<TranslateItem>,
 }
+
+// The Rust half of the wire-contract tests: Swift's side of these exact
+// shapes is pinned by OsSpeechWireTests.swift (golden payload keys,
+// explicit-null vs omitted), but until now nothing asserted the Rust
+// serialization it must mirror — a one-sided contract. Golden
+// serde_json::json! comparisons, not field spot-checks, so an added/
+// renamed/dropped key fails loudly the same way the Swift suite does.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn start_args_serializes_camel_case_with_contextual_json_present() {
+        let v = serde_json::to_value(StartArgs {
+            locale: "en-US".into(),
+            contextual_json: Some("{\"strings\":[\"ARR\"]}".into()),
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            json!({"locale": "en-US", "contextualJson": "{\"strings\":[\"ARR\"]}"})
+        );
+    }
+
+    #[test]
+    fn start_args_none_contextual_json_stays_an_explicit_null() {
+        // §6 F1 posture (same as capabilities.reason below): no
+        // skip_serializing_if anywhere in this file — Swift's Decodable
+        // side always sees the key.
+        let v = serde_json::to_value(StartArgs {
+            locale: "zh-CN".into(),
+            contextual_json: None,
+        })
+        .unwrap();
+        assert_eq!(v, json!({"locale": "zh-CN", "contextualJson": null}));
+    }
+
+    #[test]
+    fn capabilities_reason_none_serializes_as_explicit_null() {
+        // The pinned §6 F1 amendment: `reason` is required-nullable. JS
+        // reads `caps.reason === null` — an omitted key would change
+        // `undefined`-vs-`null` semantics silently.
+        let v = serde_json::to_value(OsSpeechCapabilities {
+            supported: true,
+            reason: None,
+            locales: vec!["en-US".into()],
+            installed_locales: vec![],
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "supported": true,
+                "reason": null,
+                "locales": ["en-US"],
+                "installedLocales": []
+            })
+        );
+    }
+
+    #[test]
+    fn capabilities_round_trips_swifts_reply_json() {
+        // The Deserialize direction: run_mobile_plugin::<OsSpeechCapabilities>
+        // decoding the exact key set OsSpeechWireTests pins on the Swift side.
+        let caps: OsSpeechCapabilities = serde_json::from_value(json!({
+            "supported": false,
+            "reason": "unsupported-os",
+            "locales": [],
+            "installedLocales": ["en-US"]
+        }))
+        .unwrap();
+        assert_eq!(
+            caps,
+            OsSpeechCapabilities {
+                supported: false,
+                reason: Some("unsupported-os".into()),
+                locales: vec![],
+                installed_locales: vec!["en-US".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn probe_result_uses_the_desktop_wire_field_os_supported() {
+        // Field-exact against desktop systranslate.rs's own probe shape:
+        // `osSupported`, camelCase — the TS caller branches on it.
+        let v = serde_json::to_value(SysTranslateProbeResult {
+            os_supported: true,
+            status: "installed".into(),
+        })
+        .unwrap();
+        assert_eq!(v, json!({"osSupported": true, "status": "installed"}));
+    }
+
+    #[test]
+    fn translate_item_and_batch_args_deliberately_skip_camel_case() {
+        // TranslateItem/SysTranslateBatchArgs carry NO rename_all — id/
+        // text/items/source/target are already single words; adding the
+        // attribute later must be a conscious wire change, not a tidy-up.
+        let v = serde_json::to_value(SysTranslateBatchArgs {
+            items: vec![TranslateItem {
+                id: "s1".into(),
+                text: "hello".into(),
+            }],
+            source: "en".into(),
+            target: "zh".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "items": [{"id": "s1", "text": "hello"}],
+                "source": "en",
+                "target": "zh"
+            })
+        );
+    }
+
+    #[test]
+    fn stop_args_without_a_generation_still_sends_the_key() {
+        let v = serde_json::to_value(SysTranslateStopArgs { generation: None }).unwrap();
+        assert_eq!(v, json!({"generation": null}));
+    }
+
+    #[test]
+    fn preinstall_args_shape() {
+        let v = serde_json::to_value(PreinstallArgs {
+            locale: "en-US".into(),
+        })
+        .unwrap();
+        assert_eq!(v, json!({"locale": "en-US"}));
+    }
+
+    #[test]
+    fn generation_result_unwraps_swifts_envelope() {
+        let g: GenerationResult = serde_json::from_value(json!({"generation": 7})).unwrap();
+        assert_eq!(g.generation, 7);
+    }
+
+    #[test]
+    fn translate_items_result_unwraps_swifts_envelope() {
+        let r: TranslateItemsResult = serde_json::from_value(json!({
+            "items": [
+                {"id": "a", "text": "甲"},
+                {"id": "b", "text": "乙"}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            r.items,
+            vec![
+                TranslateItem {
+                    id: "a".into(),
+                    text: "甲".into()
+                },
+                TranslateItem {
+                    id: "b".into(),
+                    text: "乙".into()
+                },
+            ]
+        );
+    }
+}
