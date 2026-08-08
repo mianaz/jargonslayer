@@ -10,11 +10,16 @@
 # every push. See scripts/test-sidecar.mjs for why requirements-sidecar
 # is deliberately not installed.
 #
-# Still NOT covered, so nobody mistakes this for total: the iOS plugin's
-# 43 Swift tests under tauri-plugin-os-speech/ios/Tests — they need a
-# SwiftPM restructure first, because a bare `swift test` there also
-# builds the Tauri-dependent glue target, which cannot compile on macOS
-# (that package's Package.swift documents the manual workaround).
+# v0.7.9 test-coverage pass: the iOS plugin's Swift tests (tauri-plugin-
+# os-speech/ios/Tests, 43 as of this wiring) now run here too, via
+# scripts/test-ios-core.mjs — no SwiftPM restructure after all: the
+# runner stages the Tauri-free OsSpeechCore target + its tests into a
+# scratch manifest, sidestepping both host blockers (the glue target's
+# Tauri/UIKit dependency AND the gitignored ../.tauri path dep that
+# fails resolution on a fresh checkout). The plugin's Rust half gets its
+# own `cargo test --manifest-path` step for the same reason: an
+# iOS-target-only dependency, it was never compiled by the app crate's
+# `cargo test` at all.
 name: CI
 
 on:
@@ -43,7 +48,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
+      # Same suite as plain `npm test`, plus v8 coverage with the floors
+      # set in vitest.config.ts's coverage.thresholds — before this,
+      # nothing measured coverage anywhere, so a 300-line zero-coverage
+      # module could land under a green run. include-all denominators:
+      # never-imported files count against the floor too.
+      - run: npm run test:coverage
       - run: npm run typecheck
       - run: npm run check:versions
       # numpy/websockets/tqdm only — NOT requirements-sidecar.txt. See
@@ -90,9 +100,29 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: apps/desktop/src-tauri
+          workspaces: |
+            apps/desktop/src-tauri
+            apps/desktop/src-tauri/tauri-plugin-os-speech
       - run: cargo test
         working-directory: apps/desktop/src-tauri
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: apps/desktop/src-tauri
+      # tauri-plugin-os-speech is an iOS-target-only dependency of the app
+      # crate with no cargo workspace binding them, so the `cargo test`
+      # above never even COMPILES it — until this step the plugin's Rust
+      # half had no tests, no type-check, and no lints running anywhere.
+      # Its desktop.rs stub exists precisely so a host build type-checks
+      # the shared code; this runs its own suite (models.rs's Rust<->Swift
+      # wire-contract tests, the counterpart of OsSpeechWireTests.swift).
+      - run: cargo test --manifest-path tauri-plugin-os-speech/Cargo.toml
+        working-directory: apps/desktop/src-tauri
       - run: swift test --package-path apps/desktop/src-tauri/audiocap-helper
+      # The iOS plugin's 43 Tauri-free core tests (ios/Tests/
+      # OsSpeechCoreTests) — the gap the header comment above used to
+      # carve out. A bare `swift test` in that package still can't work on
+      # a host (the glue target needs Tauri, whose package imports UIKit
+      # unconditionally, and the ../.tauri path dependency only exists
+      # after a tauri ios build); the runner stages OsSpeechCore + its
+      # tests into a scratch Tauri-free manifest instead — automating
+      # ios/Package.swift's own documented manual workaround.
+      - run: node scripts/test-ios-core.mjs
