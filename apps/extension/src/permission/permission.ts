@@ -51,3 +51,8 @@ async function requestMicGrant(): Promise<void> {
 grantBtn.addEventListener("click", () => {
   void requestMicGrant();
 });
+
+// Module marker so tsc + the test suite can `import "../permission"` —
+// without at least one export this file is a global SCRIPT to TypeScript
+// (TS2306) even though Vite bundles it identically either way.
+export {};
