@@ -31,6 +31,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_zh: "AI 模型的工具运行框架",
     pack: "modern-usage",
     commonWord: true,
+    domains: ["ml"],
   },
   {
     term: "agent",
@@ -39,6 +40,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_zh: "能自主连续执行任务的 AI 程序",
     pack: "modern-usage",
     commonWord: true,
+    domains: ["ml"],
   },
   {
     term: "agentic",
@@ -46,6 +48,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "describes an AI system that acts autonomously across steps, not just answers once",
     gloss_zh: "形容 AI 能自主连续行动",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "RAG",
@@ -53,6 +56,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "Retrieval-Augmented Generation — the model looks up documents before answering",
     gloss_zh: "检索增强生成，先查资料再作答",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "prompt injection",
@@ -60,6 +64,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "tricking an AI model into ignoring its instructions via crafted input text",
     gloss_zh: "用特制输入劫持 AI 的指令",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "context window",
@@ -67,14 +72,16 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "the amount of text an AI model can take into account at once",
     gloss_zh: "AI 模型一次能处理的文本上限",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "hallucinate",
-    variants: ["hallucination"],
+    variants: ["hallucination", "hallucinated", "hallucinating"],
     type: "tech",
     gloss_en: "an AI model confidently states something false or made up",
     gloss_zh: "AI 一本正经地编造错误信息",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "guardrails",
@@ -104,6 +111,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "Model Context Protocol — a standard letting AI models plug into external tools and data",
     gloss_zh: "让 AI 接入外部工具数据的标准协议",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "copilot",
@@ -118,6 +126,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "a process where a person reviews or approves an AI system's output before it takes effect",
     gloss_zh: "AI 的输出要经人工审核才生效",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "foundation model",
@@ -125,6 +134,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "a large general-purpose model trained on broad data, then adapted for specific uses",
     gloss_zh: "先广泛预训练、再适配各种用途的大模型",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "open-weights",
@@ -132,6 +142,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "a model whose trained parameters are published for anyone to download and run",
     gloss_zh: "训练参数公开、可下载运行的模型",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "orchestration",
@@ -146,6 +157,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "a cap on how many requests can be made in a given time window",
     gloss_zh: "限制单位时间内的请求次数",
     pack: "modern-usage",
+    domains: ["software", "infra"],
   },
   {
     term: "deprecate",
@@ -153,6 +165,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "mark something as outdated and scheduled for removal, though still usable for now",
     gloss_zh: "标记为即将淘汰，但暂时还能用",
     pack: "modern-usage",
+    domains: ["software"],
   },
   {
     term: "red-team",
@@ -168,6 +181,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_zh: "套壳产品，核心技术是别人的",
     pack: "modern-usage",
     commonWord: true,
+    domains: ["ml", "software"],
   },
   {
     term: "primitives",
@@ -176,6 +190,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_zh: "系统里最基础的可复用构建单元",
     pack: "modern-usage",
     commonWord: true,
+    domains: ["ml", "software"],
   },
   {
     term: "unlock",
@@ -185,6 +200,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_zh: "松开限制后才成立的新可能性",
     pack: "modern-usage",
     commonWord: true,
+    domains: ["ml", "software"],
   },
   {
     term: "surface area",
@@ -193,6 +209,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_zh: "可能出问题或需要维护的暴露面",
     pack: "modern-usage",
     commonWord: true,
+    domains: ["software", "ml"],
   },
   {
     term: "leverage",
@@ -201,6 +218,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_zh: "借力，用现有资源撬动更大结果",
     pack: "modern-usage",
     commonWord: true,
+    domains: ["sales", "finance"],
   },
   {
     term: "jailbreak",
@@ -215,6 +233,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "hidden instructions set by the developer that shape how an AI model behaves",
     gloss_zh: "开发者预设、决定 AI 行为的隐藏指令",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "grounding",
@@ -222,6 +241,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "anchoring an AI model's answer in retrieved facts instead of its own memory",
     gloss_zh: "让 AI 的回答有据可查，不是瞎编",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "multimodal",
@@ -229,6 +249,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "an AI model that handles more than one input type — text, images, audio — at once",
     gloss_zh: "能同时处理文字图像语音等输入",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "frontier model",
@@ -236,6 +257,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "one of the handful of most capable AI models available at a given time",
     gloss_zh: "当前最顶尖的一批 AI 模型",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "compute",
@@ -244,6 +266,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_zh: "算力，当资源来分配的计算能力",
     pack: "modern-usage",
     commonWord: true,
+    domains: ["ml", "infra"],
   },
   {
     term: "tool calling",
@@ -252,6 +275,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "an AI model invoking external functions or APIs to complete part of a task",
     gloss_zh: "AI 模型调用外部工具完成任务",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "context engineering",
@@ -259,6 +283,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "deliberately curating what information an AI model sees, beyond just writing a prompt",
     gloss_zh: "精心设计喂给 AI 的信息，不只是提示词",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "async",
@@ -266,6 +291,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "work communication that doesn't require both people online at the same time",
     gloss_zh: "不需要双方同时在线的协作方式",
     pack: "modern-usage",
+    domains: ["software"],
   },
   {
     term: "reward hacking",
@@ -273,6 +299,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "an AI system finds a technically-correct but unintended shortcut to score well",
     gloss_zh: "AI 钻了评分标准的空子",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "reasoning model",
@@ -280,6 +307,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "a model that works through intermediate steps before giving a final answer",
     gloss_zh: "会先分步推理、再给答案的模型",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "structured output",
@@ -287,6 +315,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "forcing an AI model's response into a fixed format like JSON instead of free text",
     gloss_zh: "让 AI 按固定格式输出，而非自由文本",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "checkpoint",
@@ -296,6 +325,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_zh: "训练过程中保存的参数快照",
     pack: "modern-usage",
     commonWord: true,
+    domains: ["ml", "software"],
   },
   {
     term: "PLG",
@@ -326,6 +356,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_zh: "估值超十亿美元的未上市创业公司",
     pack: "modern-usage",
     commonWord: true,
+    domains: ["finance", "sales"],
   },
   {
     term: "boomerang employee",
@@ -340,6 +371,7 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     gloss_en: "Artificial General Intelligence — an AI with human-level ability across nearly any task",
     gloss_zh: "通用人工智能，接近人类水平的全面能力",
     pack: "modern-usage",
+    domains: ["ml"],
   },
   {
     term: "PMF",

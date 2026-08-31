@@ -1256,6 +1256,38 @@ describe("remotePacks — term senses (v0.6 multi-sense-terms sprint)", () => {
     expect(term?.senses?.[1].senseId).toBe("sense-1");
   });
 
+  it("accepts entry-level `domains` hints, dropping unrecognized values and capping at 4 (v0.7.9 detection audit)", async () => {
+    mockFetchOnce({
+      id: "domains-pack",
+      name: "Domains Pack",
+      version: 1,
+      terms: [
+        {
+          term: "zzzevidence",
+          gloss_zh: "领域证据词",
+          domains: ["ml", "not-a-domain", "ml", "stats", "software", "infra", "finance"],
+        },
+        { term: "zzzplain", gloss_zh: "普通词" },
+      ],
+      expressions: [
+        {
+          expression: "zzz common phrase",
+          chinese_explanation: "常见短语",
+          commonWord: true,
+          domains: ["finance", 42, "bogus"],
+        },
+      ],
+    });
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/domains.json");
+
+    const evidence = pack.terms.find((t) => t.term === "zzzevidence");
+    // deduped, unrecognized dropped, capped at 4 recognized values
+    expect(evidence?.domains).toEqual(["ml", "stats", "software", "infra"]);
+    expect(pack.terms.find((t) => t.term === "zzzplain")?.domains).toBeUndefined();
+    expect(pack.expressions[0].domains).toEqual(["finance"]);
+  });
+
   it("caps at 6 senses even when the manifest declares more", async () => {
     const senses = Array.from({ length: 9 }, (_, i) => ({
       gloss_en: `sense ${i}`,

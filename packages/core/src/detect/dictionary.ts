@@ -68,6 +68,10 @@ interface TermEntry {
   // data.ts) for the full doc; mirrors that field exactly, same as
   // every other field on this internal interface.
   senses?: DictSense[];
+  // See DictTermEntry.domains — entry-level domain hints for entries in
+  // a cross-domain pack: evidence toward domain activation (non-common
+  // entries) and a commonWord unlock gate (see shouldIncludeCommonWord).
+  domains?: DomainTag[];
 }
 
 // Base tables (below) are the product floor — always tagged "core",
@@ -92,14 +96,26 @@ export interface ScanDictionaryOptions {
 }
 
 function shouldIncludeCommonWord(
-  entry: { pack: string; commonWord?: boolean },
+  entry: { pack: string; commonWord?: boolean; domains?: DomainTag[] },
   enabledPacks: string[] | null,
   options: ScanDictionaryOptions,
 ): boolean {
   if (!entry.commonWord || options.bypassCommonWordSuppression) return true;
 
+  const active = options.activeDomains ?? EMPTY_ACTIVE_DOMAINS;
+
+  // Entry-level unlock (under-detection fix): a commonWord entry in a
+  // CROSS-DOMAIN pack (one deliberately absent from PACK_DOMAINS, e.g.
+  // modern-usage) used to be reachable only through an explicit pack
+  // selection — under the default all-on state (enabledPacks: null) it
+  // never fired at all, even in a meeting saturated with that entry's
+  // own field ("agent"/"harness" in an AI meeting). An entry that names
+  // its qualifying domains now unlocks the moment ANY of them is active,
+  // exactly like a domain-mapped pack's entries always have.
+  if (entry.domains?.some((d) => active.has(d))) return true;
+
   const domain = PACK_DOMAINS[entry.pack];
-  if (domain) return (options.activeDomains ?? EMPTY_ACTIVE_DOMAINS).has(domain);
+  if (domain) return active.has(domain);
 
   // Cross-domain packs retain their existing explicit-enable behavior.
   return isPackExplicitlyEnabled(entry.pack, enabledPacks);
@@ -790,6 +806,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Annual Recurring Revenue",
     gloss_zh: "年度经常性收入",
     pack: CORE_PACK,
+    domains: ["sales"],
   },
   {
     term: "OKR",
@@ -800,10 +817,15 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
   },
   {
     term: "churn",
+    // Verb forms are how the metric is actually spoken ("customers are
+    // churning") — terms only get automatic PLURAL tolerance (see
+    // getCachedTermRegex), so verb inflections are explicit variants.
+    variants: ["churning", "churned"],
     type: "metric",
     gloss_en: "rate at which customers stop using a product",
     gloss_zh: "客户流失率",
     pack: CORE_PACK,
+    domains: ["sales"],
   },
   {
     term: "runway",
@@ -818,6 +840,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "a company's third major round of venture funding",
     gloss_zh: "第三轮主要融资",
     pack: CORE_PACK,
+    domains: ["finance", "sales"],
   },
   {
     term: "MVP",
@@ -832,6 +855,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Monthly Recurring Revenue",
     gloss_zh: "月度经常性收入",
     pack: CORE_PACK,
+    domains: ["sales"],
   },
   {
     term: "KPI",
@@ -867,6 +891,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Go-To-Market strategy",
     gloss_zh: "市场推广策略",
     pack: CORE_PACK,
+    domains: ["sales"],
   },
   {
     term: "ICP",
@@ -874,6 +899,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Ideal Customer Profile",
     gloss_zh: "理想客户画像",
     pack: CORE_PACK,
+    domains: ["sales"],
   },
   {
     term: "CAC",
@@ -937,6 +963,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Customer Lifetime Value",
     gloss_zh: "客户终身价值",
     pack: CORE_PACK,
+    domains: ["sales"],
   },
   {
     term: "NPS",
@@ -944,6 +971,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Net Promoter Score, a loyalty metric",
     gloss_zh: "净推荐值",
     pack: CORE_PACK,
+    domains: ["sales"],
   },
   {
     term: "EOD",
@@ -1023,6 +1051,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Request For Proposal",
     gloss_zh: "招标/征求方案书",
     pack: CORE_PACK,
+    domains: ["sales"],
   },
   {
     term: "B2B",
@@ -1030,6 +1059,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Business-to-Business",
     gloss_zh: "企业对企业",
     pack: CORE_PACK,
+    domains: ["sales"],
   },
   {
     term: "SaaS",
@@ -1052,6 +1082,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Profit and Loss statement",
     gloss_zh: "损益表",
     pack: CORE_PACK,
+    domains: ["finance"],
   },
   {
     term: "headcount",
@@ -1372,30 +1403,55 @@ function boundaryFor(edgeChar: string, side: "leading" | "trailing"): string {
   return side === "leading" ? "(?<!\\w)" : "(?!\\w)";
 }
 
-/** Build a case-insensitive, whitespace/inflection-tolerant regex for
- *  a multi-word expression. The last word may carry a common suffix
- *  (s, es, ed, d, ing) so "circling back" matches "circle back".
+/** One word of an expression, with light inflection tolerance when it
+ *  ends in a letter (under-detection fix — see buildExpressionRegex).
+ *  E-aware: a word ending in "e" flexes its stem ("circle" ->
+ *  circl(?:e|es|ed|ing), covering "circling"/"circled" — the old
+ *  whole-word suffix group could never reach "circling" at all); any
+ *  other letter-ending word takes an optional (?:s|es|ed|ing) suffix.
+ *  The bare "d" alternative of the old suffix set is gone from the
+ *  non-e branch on purpose: English only attaches bare "-d" to
+ *  e-ending words (now covered by the stem branch), so all it ever
+ *  did there was manufacture false surfaces ("win" + d = "wind").
  *
- *  Fix F (pre-tag fix round, Lane Q inflection order): inflections are
- *  for WORD-ENDING phrases only. The optional suffix group used to be
- *  appended unconditionally, BEFORE the trailing boundary assertion
- *  (`boundaryFor`) below was ever chosen — for a phrase ending in a
- *  NON-word character (e.g. "100%"), that boundary is the lookaround
- *  `(?!\w)`, and a greedy match against "100%s." could consume the "s"
- *  as the "inflection", leaving `(?!\w)` to see the "." right after and
- *  match — silently matching a phrase this expression was never meant
- *  to. An expression whose last character is a non-word character now
- *  gets NO inflection group at all; a normal word-ending expression
- *  keeps its inflection tolerance unchanged. */
+ *  Fix F (pre-tag fix round, Lane Q inflection order) still holds: a
+ *  word ending in a NON-letter character (e.g. "100%") gets NO
+ *  inflection group at all — the trailing boundary for such a word is
+ *  the lookaround `(?!\w)`, and a greedy suffix match against "100%s."
+ *  could consume the "s" as the "inflection" and silently match a
+ *  phrase this expression was never meant to. (Tightened from \w to
+ *  [letter]: a digit-ending word — "24/7", a bare year — gains nothing
+ *  real from verb suffixes either.) */
+function inflectedWordPattern(word: string): string {
+  const lastChar = word[word.length - 1];
+  if (!/[a-z]/i.test(lastChar)) return escapeRe(word);
+  if (/e/i.test(lastChar)) {
+    return `${escapeRe(word.slice(0, -1))}(?:e|es|ed|ing)`;
+  }
+  return `${escapeRe(word)}(?:s|es|ed|ing)?`;
+}
+
+/** Build a case-insensitive, whitespace/inflection-tolerant regex for
+ *  a multi-word expression.
+ *
+ *  Under-detection fix (v0.7.9 detection audit): inflection tolerance
+ *  now applies to the FIRST word as well as the last, and both are
+ *  e-aware (see inflectedWordPattern above). English phrasal idioms
+ *  inflect their leading verb — "circling back", "pushed back",
+ *  "tabling this", "reads the room" — and the old last-word-only
+ *  suffix group missed every one of them unless a data author had
+ *  hand-listed the variant (the "REAL BEHAVIOR" pins in
+ *  dictionary.test.ts documented exactly this gap). Middle words stay
+ *  literal: real-world inflection lands on the phrase-initial verb or
+ *  the phrase-final noun/verb, and keeping the interior rigid keeps
+ *  false surfaces out. */
 function buildExpressionRegex(phrase: string): RegExp {
   const words = phrase.trim().split(/\s+/);
   const first = words[0];
   const last = words[words.length - 1];
-  const head = words.slice(0, -1).map(escapeRe);
-  const lastEscaped = escapeRe(last);
-  const lastCharIsWord = /\w/.test(last[last.length - 1]);
-  const lastPart = lastCharIsWord ? `${lastEscaped}(?:s|es|ed|d|ing)?` : lastEscaped;
-  const parts = [...head, lastPart];
+  const parts = words.map((word, i) =>
+    i === 0 || i === words.length - 1 ? inflectedWordPattern(word) : escapeRe(word),
+  );
   const leadingBoundary = boundaryFor(first[0], "leading");
   const trailingBoundary = boundaryFor(last[last.length - 1], "trailing");
   const source = `${leadingBoundary}${parts.join("\\s+")}${trailingBoundary}`;
@@ -1594,16 +1650,35 @@ function getCachedExpressionRegex(phrase: string): RegExp {
 // common case in real text. Reuses boundaryFor() rather than re-deriving
 // the same rule, so terms/variants/user-dictionary entries/future remote
 // packs all benefit identically.
+//
+// Plural tolerance (v0.7.9 detection audit, under-detection fix): a
+// non-acronym candidate whose trailing token is a lowercase letter and
+// is at least 5 characters long takes an optional (?:s|es)? plural —
+// "epochs", "tokens", "embeddings", "premiums" are how these terms are
+// actually spoken, and each used to require its own hand-listed
+// variant. Deliberately NOT the expression loop's verb suffix set:
+// verb forms of a term ("recalled", "means") collide with ordinary
+// grammar far more often than noun plurals do, so verby terms list
+// their forms as explicit variants instead. The >=5 length floor keeps
+// short ambiguous headwords exact ("mean" must never match the
+// ubiquitous "means"); all-caps acronyms stay otherwise exact-match
+// but take an optional lowercase "s" — the standard written plural of
+// a spoken acronym ("the KPIs", "two PRs"), which can never collide
+// with another all-caps acronym since the "s" is case-sensitive.
 function getCachedTermRegex(candidate: string): RegExp {
   let re = termRegexCache.get(candidate);
   if (!re) {
     const isAllCaps = /^[A-Z0-9&]+$/.test(candidate);
     const leadingBoundary = boundaryFor(candidate[0], "leading");
     const trailingBoundary = boundaryFor(candidate[candidate.length - 1], "trailing");
-    re = new RegExp(
-      `${leadingBoundary}${escapeRe(candidate)}${trailingBoundary}`,
-      isAllCaps ? "" : "i",
-    );
+    const lastChar = candidate[candidate.length - 1];
+    let body = escapeRe(candidate);
+    if (isAllCaps && candidate.length >= 2 && /[A-Z]/.test(lastChar)) {
+      body = `${body}s?`;
+    } else if (!isAllCaps && candidate.length >= 5 && /[a-z]/.test(lastChar)) {
+      body = `${body}(?:s|es)?`;
+    }
+    re = new RegExp(`${leadingBoundary}${body}${trailingBoundary}`, isAllCaps ? "" : "i");
     termRegexCache.set(candidate, re);
   }
   return re;
@@ -1748,6 +1823,54 @@ function selectSense(
 // observable behavior. See PLAN-v0.4 S1 report for the full reasoning.
 // ---------------------------------------------------------------
 
+// ---------------------------------------------------------------
+// Near-duplicate collapse for explicit lookups (v0.7.9 detection
+// audit): includeAllPackMatches deliberately keeps every enabled
+// pack's entry for one surface — that's the whole point for a genuine
+// cross-pack sense split ("SAM" the market metric vs. "SAM" the
+// alignment format). But the built-in tables also carry ~16 same-key
+// re-authorings of the SAME fact ("ROI" appears in both core and
+// business-terms, one capitalization apart) that mergeTermTables
+// collapses for transcript detection and the raw ALL_*_ENTRIES lists
+// do not — so a lookup on "ROI" showed two near-identical cards. An
+// entry is a near-duplicate of one already emitted for the same key
+// when EITHER its Chinese gloss or its (case/whitespace-normalized)
+// English gloss matches; genuinely different senses differ in both.
+// ---------------------------------------------------------------
+
+interface GlossFingerprint {
+  en: string;
+  zh: string;
+}
+
+function normalizeGloss(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function keepAllPackMatch(
+  emitted: Map<string, GlossFingerprint[]>,
+  key: string,
+  glossEn: string,
+  glossZh: string,
+): boolean {
+  const seen = emitted.get(key);
+  if (!seen) return true;
+  const en = normalizeGloss(glossEn);
+  const zh = normalizeGloss(glossZh);
+  return !seen.some((g) => (g.zh !== "" && g.zh === zh) || (g.en !== "" && g.en === en));
+}
+
+function recordAllPackMatch(
+  emitted: Map<string, GlossFingerprint[]>,
+  key: string,
+  glossEn: string,
+  glossZh: string,
+): void {
+  const seen = emitted.get(key) ?? [];
+  seen.push({ en: normalizeGloss(glossEn), zh: normalizeGloss(glossZh) });
+  emitted.set(key, seen);
+}
+
 /** Scan text against the built-in dictionaries. Word-boundary,
  *  case-insensitive, light inflection tolerance (e.g. "circling back").
  *  `enabledPacks` defaults to the value last set via setEnabledPacks()
@@ -1783,15 +1906,36 @@ export function scanDictionary(
   const remoteExpressions: ExpressionEntry[] = remotePacks.flatMap((p) => p.expressions);
   const remoteTerms: TermEntry[] = remotePacks.flatMap((p) => p.terms);
 
+  // Same-key conflict handling as the term loop below (v0.7.9 detection
+  // audit): the built-in EXPRESSIONS table is already deduped at build
+  // time, but a REMOTE pack's expression can share a normalized key with
+  // a built-in one (or with another remote pack's) — the old loop had no
+  // cross-entry guard at all, so one spoken "circle back" produced TWO
+  // cards when an installed pack re-defined it. Mirrors the term loop's
+  // F1 priority exactly: remote packs first (explicit user intent wins
+  // the collision), then the built-in tables; first entry to match
+  // claims the key. An explicit lookup (includeAllPackMatches) instead
+  // keeps every enabled pack's entry unless it is a near-duplicate
+  // re-authoring of one already kept — see keepAllPackMatch below.
+  const matchedExpressionKeys = new Set<string>();
+  const emittedExpressionGlosses = new Map<string, GlossFingerprint[]>();
   const expressionEntries = options.includeAllPackMatches ? ALL_EXPRESSION_ENTRIES : EXPRESSIONS;
-  for (const entry of [...expressionEntries, ...remoteExpressions]) {
+  for (const entry of [...remoteExpressions, ...expressionEntries]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
+    const key = normalizeDictKey(entry.expression);
+    if (!options.includeAllPackMatches && matchedExpressionKeys.has(key)) continue;
     if (!shouldIncludeCommonWord(entry, enabledPacks, options)) continue;
     // A personal-glossary entry on this exact surface owns the word —
     // the custom scan (store.addFinal) already emits it as source
     // "custom"; skip the dictionary's own version entirely. Enabled-
     // pack-filtered (Finding 2 fix) — see shadowLookup's own doc above.
     if (shadowLookup(entry.expression)) continue;
+    if (
+      options.includeAllPackMatches &&
+      !keepAllPackMatch(emittedExpressionGlosses, key, entry.meaning, entry.chinese_explanation)
+    ) {
+      continue;
+    }
     const candidates = [entry.expression, ...(entry.variants ?? [])];
     const regexes = candidates.map(getCachedExpressionRegex);
     let matched = false;
@@ -1817,6 +1961,10 @@ export function scanDictionary(
         }
       }
     }
+    if (matched) {
+      matchedExpressionKeys.add(key);
+      recordAllPackMatch(emittedExpressionGlosses, key, entry.meaning, entry.chinese_explanation);
+    }
   }
 
   // v0.7.2 fix (Bug B): TERM_DICTIONARY can now carry more than one
@@ -1838,10 +1986,26 @@ export function scanDictionary(
   // claim. A user who wants the built-in back can disable the
   // colliding remote pack.
   const matchedTermKeys = new Set<string>();
+  const emittedTermGlosses = new Map<string, GlossFingerprint[]>();
   const termEntries = options.includeAllPackMatches ? ALL_TERM_ENTRIES : TERM_DICTIONARY;
   for (const entry of [...remoteTerms, ...termEntries]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
     if (!options.includeAllPackMatches && matchedTermKeys.has(normalizeDictKey(entry.term))) continue;
+    // Lookup mode keeps every enabled pack's entry EXCEPT a near-
+    // duplicate re-authoring of one already emitted for this key —
+    // see keepAllPackMatch's own doc above ("ROI" twice is noise;
+    // both "SAM" senses are the feature).
+    if (
+      options.includeAllPackMatches &&
+      !keepAllPackMatch(
+        emittedTermGlosses,
+        normalizeDictKey(entry.term),
+        entry.gloss_en,
+        entry.gloss_zh,
+      )
+    ) {
+      continue;
+    }
     // Everyday headwords in a domain pack need evidence that the meeting
     // is actually in that domain. Cross-domain packs keep the old
     // explicit-enable behavior; non-common terms are unaffected.
@@ -1879,9 +2043,33 @@ export function scanDictionary(
       if (match) break;
     }
     if (!match) continue;
-    if (!options.includeAllPackMatches) matchedTermKeys.add(normalizeDictKey(entry.term));
+    if (options.includeAllPackMatches) {
+      recordAllPackMatch(
+        emittedTermGlosses,
+        normalizeDictKey(entry.term),
+        entry.gloss_en,
+        entry.gloss_zh,
+      );
+    } else {
+      matchedTermKeys.add(normalizeDictKey(entry.term));
+    }
     const matchStart = match.index;
     const matchEnd = matchStart + match[0].length;
+
+    // Entry-level domain evidence (v0.7.9 detection audit): a NON-common
+    // entry that names its own domains carries them onto the wire so
+    // domainSignal.ts's tracker can count it toward activation — the
+    // pack-level PACK_DOMAINS map deliberately leaves cross-domain packs
+    // (modern-usage) unmapped, which used to mean an AI meeting full of
+    // unambiguous modern-usage terms (RAG, MCP, context window…) never
+    // activated "ml" at all. commonWord entries stay OFF the wire here:
+    // they can fire pre-activation via the explicit-enable path, and an
+    // everyday word spoken in its everyday sense must never count as
+    // domain evidence (domainSignal.ts's own invariant).
+    const evidenceDomains =
+      !entry.commonWord && entry.domains && entry.domains.length > 0
+        ? { domains: [...entry.domains] }
+        : {};
 
     // v0.6 T3 (multi-sense terms): cardinality is UNCHANGED — still
     // exactly one DetectedTerm per matched entry — but when the entry
@@ -1906,6 +2094,7 @@ export function scanDictionary(
           senseId: chosen.senseId,
           senses: ranked,
           ambiguous,
+          ...evidenceDomains,
         },
         matchStart,
         matchEnd,
@@ -1918,6 +2107,7 @@ export function scanDictionary(
           type: entry.type,
           gloss_en: entry.gloss_en,
           gloss_zh: entry.gloss_zh,
+          ...evidenceDomains,
         },
         matchStart,
         matchEnd,

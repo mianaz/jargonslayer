@@ -19,8 +19,12 @@ vi.mock("../../llm/client", () => ({
   },
 }));
 
+// Mutable so individual tests can simulate a same-language pair (the
+// offline no-op path) without re-mocking the module.
+const mockLangPair = { source: "en", target: "zh" };
+
 vi.mock("../../translate/providers", () => ({
-  langPairFromSettings: () => ({ source: "en", target: "zh" }),
+  langPairFromSettings: () => ({ ...mockLangPair }),
   resolveTranslationProvider: (...args: unknown[]) => mockResolveTranslationProvider(...args),
   SystemTranslatorUnavailableError: class SystemTranslatorUnavailableError extends Error {
     reason: "unavailable" | "downloading";
@@ -38,6 +42,8 @@ import { runSelectionLookup, useSelectionLookup } from "../selectionLookup";
 import { NoKeyError } from "../../llm/client";
 import { SystemTranslatorUnavailableError } from "../../translate/providers";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
+import { setLoadedRemotePacks } from "@jargonslayer/core/detect/remotePacksRegistry";
+import { setCachedEntries } from "@jargonslayer/core/history/glossaryLookup";
 import { DEFAULT_SETTINGS, type DefineResult, type Settings } from "@jargonslayer/core/types";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
@@ -78,8 +84,9 @@ describe("runSelectionLookup", () => {
     useApp.setState({ cards: [], terms: [], lookup: null, toast: null, meetingGen: 0 });
   });
 
-  it("lists an explicit dictionary hit immediately and never calls AI or translation", async () => {
+  it("lists an explicit dictionary hit immediately, never calls AI, and still translates the selection (offline 划词翻译)", async () => {
     const req = makeReq({ id: "lookup-dictionary-hit", text: "circle back" });
+    mockProviderTranslate.mockResolvedValueOnce([{ id: req.id, text: "回头再说" }]);
     await runSelectionLookup(req, makeSettings({ aiDetect: true }));
 
     const progress = useSelectionLookup.getState().byId[req.id];
@@ -88,8 +95,23 @@ describe("runSelectionLookup", () => {
       "circle back",
     );
     expect(mockDefineApi).not.toHaveBeenCalled();
-    expect(mockProviderTranslate).not.toHaveBeenCalled();
+    // The translation is a silent in-place upgrade after the hit — no
+    // task registered (the primary answer was already on screen).
+    expect(mockProviderTranslate).toHaveBeenCalledWith([{ id: req.id, text: req.text }], "zh");
+    expect(progress?.status === "done" && progress.translation).toBe("回头再说");
     expect(useTasks.getState().tasks[req.id]).toBeUndefined();
+  });
+
+  it("a dictionary hit is finished/applied even when its follow-up translation fails, quietly", async () => {
+    const req = makeReq({ id: "lookup-hit-translate-fails", text: "circle back" });
+    mockProviderTranslate.mockRejectedValueOnce(new Error("翻译服务挂了"));
+    await runSelectionLookup(req, makeSettings({ aiDetect: false }));
+
+    const progress = useSelectionLookup.getState().byId[req.id];
+    expect(progress?.status).toBe("done");
+    expect(progress?.status === "done" && progress.translation).toBeUndefined();
+    // The hit itself still landed as a card.
+    expect(useApp.getState().cards.some((c) => c.expression === "circle back")).toBe(true);
   });
 
   it("bypasses common-word suppression for an explicit dictionary lookup", async () => {
@@ -165,13 +187,123 @@ describe("runSelectionLookup", () => {
     expect(useTasks.getState().tasks[req.id].status).toBe("done");
   });
 
-  it("with AI disabled, returns the dictionary miss without a network request", async () => {
+  it("with AI disabled, a dictionary miss still translates the selection through the configured (offline-capable) provider — no AI request", async () => {
     const req = makeReq({ id: "lookup-offline" });
+    mockProviderTranslate.mockResolvedValueOnce([{ id: req.id, text: "离线翻译结果" }]);
     await runSelectionLookup(req, makeSettings({ aiDetect: false }));
 
     expect(mockDefineApi).not.toHaveBeenCalled();
+    expect(mockProviderTranslate).toHaveBeenCalledWith([{ id: req.id, text: req.text }], "zh");
+    expect(useSelectionLookup.getState().byId[req.id]).toEqual({
+      status: "done",
+      result: { expressions: [], terms: [] },
+      dictFallback: false,
+      translation: "离线翻译结果",
+    });
+    // The user IS waiting on this one (no dictionary answer yet), so the
+    // translation-only round registers a task, labeled honestly.
+    expect(useTasks.getState().tasks[req.id]).toMatchObject({ status: "done", label: "翻译所选" });
+  });
+
+  it("with AI disabled AND a same-language pair, a miss finishes instantly with no task and no provider call", async () => {
+    const req = makeReq({ id: "lookup-offline-same-lang" });
+    mockLangPair.source = "zh";
+    try {
+      await runSelectionLookup(req, makeSettings({ aiDetect: false }));
+    } finally {
+      mockLangPair.source = "en";
+    }
+
+    expect(mockDefineApi).not.toHaveBeenCalled();
     expect(mockProviderTranslate).not.toHaveBeenCalled();
+    expect(mockResolveTranslationProvider).not.toHaveBeenCalled();
     expect(useTasks.getState().tasks[req.id]).toBeUndefined();
+    expect(useSelectionLookup.getState().byId[req.id]).toEqual({
+      status: "done",
+      result: { expressions: [], terms: [] },
+      dictFallback: false,
+    });
+  });
+
+  it("surfaces the user's own personal-glossary entry (which shadows the built-in dictionary) without re-applying it to cards", async () => {
+    const now = Date.now();
+    setCachedEntries([
+      {
+        id: "custom-1",
+        kind: "expression",
+        packId: "personal",
+        headword: "circle back",
+        variants: [],
+        chinese_explanation: "我自己的解释",
+        example: "",
+        context: "",
+        note: "",
+        createdAt: now,
+        updatedAt: now,
+        source: "manual",
+        mastered: false,
+        reviewCount: 0,
+      },
+    ]);
+    try {
+      const req = makeReq({ id: "lookup-personal-entry", text: "circle back" });
+      await runSelectionLookup(req, makeSettings({ aiDetect: false }));
+
+      const progress = useSelectionLookup.getState().byId[req.id];
+      expect(
+        progress?.status === "done" &&
+          progress.result.expressions.some(
+            (e) => e.expression === "circle back" && e.chinese_explanation === "我自己的解释",
+          ),
+      ).toBe(true);
+      // The custom hit is display-only here: the transcript scan owns
+      // emitting/counting custom cards, so the lookup must not add one.
+      expect(useApp.getState().cards).toHaveLength(0);
+    } finally {
+      setCachedEntries([]);
+    }
+  });
+
+  it("searches installed (downloaded) dictionary packs during an offline lookup", async () => {
+    setLoadedRemotePacks([
+      {
+        id: "__test_downloaded_pack__",
+        name: "已下载词典",
+        version: 1,
+        expressions: [],
+        terms: [
+          {
+            term: "zzzdownloadedterm",
+            type: "other",
+            gloss_en: "a term only the downloaded pack knows",
+            gloss_zh: "只有已下载词典收录的词",
+            pack: "__test_downloaded_pack__",
+          },
+        ],
+      },
+    ]);
+    try {
+      const req = makeReq({ id: "lookup-downloaded-pack", text: "zzzdownloadedterm" });
+      await runSelectionLookup(req, makeSettings({ aiDetect: false }));
+
+      const progress = useSelectionLookup.getState().byId[req.id];
+      expect(mockDefineApi).not.toHaveBeenCalled();
+      expect(
+        progress?.status === "done" &&
+          progress.result.terms.some(
+            (t) => t.term === "zzzdownloadedterm" && t.gloss_zh === "只有已下载词典收录的词",
+          ),
+      ).toBe(true);
+    } finally {
+      setLoadedRemotePacks([]);
+    }
+  });
+
+  it("quietly omits the translation line when the llm translate engine has no key (NoKeyError)", async () => {
+    const req = makeReq({ id: "lookup-offline-nokey" });
+    mockProviderTranslate.mockRejectedValueOnce(new NoKeyError());
+    await runSelectionLookup(req, makeSettings({ aiDetect: false }));
+
     expect(useSelectionLookup.getState().byId[req.id]).toEqual({
       status: "done",
       result: { expressions: [], terms: [] },
