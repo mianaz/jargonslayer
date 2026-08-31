@@ -295,6 +295,14 @@ export interface DetectedTerm {
   // sense's own domain carries zero weight in it — i.e. this pick is a
   // low-confidence guess worth flagging. Absent/false otherwise.
   ambiguous?: boolean;
+  // Entry-level domain evidence (v0.7.9 detection audit): present only
+  // when the matched dictionary entry declared `domains` AND is not a
+  // commonWord entry — detect/domainSignal.ts's tracker counts such a
+  // hit toward activating each listed domain. Loosely `string` for the
+  // identical reason DetectedTerm.senses[].domain stays loosely typed
+  // above (this file is a dependency-free leaf); consumers validate
+  // against the real DomainTag enum at their own boundary.
+  domains?: string[];
 }
 
 // ---------- UI cards = detection + bookkeeping ----------

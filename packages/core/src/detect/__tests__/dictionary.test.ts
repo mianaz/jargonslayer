@@ -84,39 +84,61 @@ describe("scanDictionary — base entry matching, word boundary", () => {
   });
 });
 
-describe("scanDictionary — last-word inflection AS IMPLEMENTED", () => {
+// v0.7.9 detection audit: inflection now applies to the FIRST word as
+// well as the last, e-aware ("circle" -> circl(?:e|es|ed|ing)) — the
+// former "REAL BEHAVIOR" pins below documented the misses this closes
+// (a phrasal idiom's verb is usually its FIRST word, which the old
+// last-word-only suffix group could never flex).
+describe("scanDictionary — first+last word inflection", () => {
   it("a single-word entry (e.g. 'bandwidth') matches its own inflected forms since it IS the last word", () => {
     const res = scanDictionary("Do we have the bandwidths for this?");
     expect(res.expressions.some((e) => e.expression === "bandwidth")).toBe(true);
   });
 
-  it("REAL BEHAVIOR: 'circling back' does NOT match the 'circle back' entry — only the LAST word ('back') is allowed to flex, and 'back' has no inflected form here", () => {
+  it("'circling back' matches the 'circle back' entry (e-aware first-word stem)", () => {
     const res = scanDictionary("We are circling back on this next week.");
-    expect(res.expressions.some((e) => e.expression === "circle back")).toBe(false);
+    expect(res.expressions.some((e) => e.expression === "circle back")).toBe(true);
   });
 
-  it("REAL BEHAVIOR: 'circled back' does NOT match the 'circle back' entry either", () => {
+  it("'circled back' matches the 'circle back' entry", () => {
     const res = scanDictionary("She circled back with an update.");
-    expect(res.expressions.some((e) => e.expression === "circle back")).toBe(false);
+    expect(res.expressions.some((e) => e.expression === "circle back")).toBe(true);
   });
 
-  it("a multi-word entry whose LAST word is the one that naturally inflects DOES match (e.g. 'touch base' -> 'touch bases')", () => {
+  it("a multi-word entry whose LAST word is the one that naturally inflects still matches (e.g. 'touch base' -> 'touch bases')", () => {
     const res = scanDictionary("Let's touch bases again on Friday.");
     expect(res.expressions.some((e) => e.expression === "touch base")).toBe(true);
   });
 
-  it("REAL BEHAVIOR: 'push back' entry does NOT match 'pushing back' or 'pushed back' (verb is the FIRST word, not the last)", () => {
+  it("'pushing back' and 'pushed back' match the 'push back' entry (first-word suffix)", () => {
     const res1 = scanDictionary("The team keeps pushing back on the plan.");
     const res2 = scanDictionary("Leadership pushed back on the proposal.");
-    expect(res1.expressions.some((e) => e.expression === "push back")).toBe(false);
-    expect(res2.expressions.some((e) => e.expression === "push back")).toBe(false);
+    expect(res1.expressions.some((e) => e.expression === "push back")).toBe(true);
+    expect(res2.expressions.some((e) => e.expression === "push back")).toBe(true);
   });
 
-  it("'push back' DOES match its exact form and its explicit 'pushback' variant", () => {
+  it("'push back' still matches its exact form and its explicit 'pushback' variant", () => {
     const res1 = scanDictionary("I expect some push back on this.");
     const res2 = scanDictionary("There was a lot of pushback internally.");
     expect(res1.expressions.some((e) => e.expression === "push back")).toBe(true);
     expect(res2.expressions.some((e) => e.expression === "push back")).toBe(true);
+  });
+
+  it("'reads the room' / 'reading the room' match the 'read the room' entry", () => {
+    const res1 = scanDictionary("She reads the room really well.");
+    const res2 = scanDictionary("Reading the room, I decided to stop.");
+    expect(res1.expressions.some((e) => e.expression === "read the room")).toBe(true);
+    expect(res2.expressions.some((e) => e.expression === "read the room")).toBe(true);
+  });
+
+  it("middle words stay literal — 'circle right back' does not match 'circle back'", () => {
+    const res = scanDictionary("We circle right back to the start.");
+    expect(res.expressions.some((e) => e.expression === "circle back")).toBe(false);
+  });
+
+  it("the bare-'d' suffix is gone from non-e-ending words: 'quick wind' no longer matches 'quick win'", () => {
+    const res = scanDictionary("A quick wind blew through the yard.");
+    expect(res.expressions.some((e) => e.expression === "quick win")).toBe(false);
   });
 });
 
@@ -934,6 +956,205 @@ describe("scanDictionary — remote pack wins a term-key collision (F1 fix, adju
   });
 });
 
+// v0.7.9 detection audit: the expression loop gets the SAME conflict
+// handling the term loop received in the F1 fix — before this, a
+// remote pack redefining a built-in expression produced TWO cards for
+// one spoken occurrence (no cross-entry key guard at all), and the
+// BUILT-IN half won the merge downstream, silently overriding the
+// user's explicitly installed pack.
+describe("scanDictionary — remote pack wins an EXPRESSION-key collision", () => {
+  function remoteExprPack(
+    id: string,
+    expressions: { expression: string; chinese_explanation: string; variants?: string[] }[],
+  ): LoadedRemotePack {
+    return {
+      id,
+      name: id,
+      version: 1,
+      terms: [],
+      expressions: expressions.map((e) => ({
+        expression: e.expression,
+        variants: e.variants,
+        category: "phrase" as const,
+        meaning: e.chinese_explanation,
+        chinese_explanation: e.chinese_explanation,
+        plain_english: e.expression,
+        tone: "neutral",
+        confidence: 0.9,
+        pack: id,
+      })),
+    };
+  }
+
+  it("remote-vs-builtin collision: exactly ONE card, carrying the remote pack's gloss", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remoteExprPack("__test_remote_cb__", [
+        { expression: "circle back", chinese_explanation: "远程词典的解释" },
+      ]),
+    ]);
+    const res = scanDictionary("Let's circle back tomorrow.");
+    const hits = res.expressions.filter((e) => e.expression === "circle back");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].pack).toBe("__test_remote_cb__");
+    expect(hits[0].chinese_explanation).toBe("远程词典的解释");
+  });
+
+  it("remote-vs-remote collision: the first pack in registry order wins deterministically", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remoteExprPack("__test_first__", [
+        { expression: "zzz collide phrase", chinese_explanation: "第一个包" },
+      ]),
+      remoteExprPack("__test_second__", [
+        { expression: "zzz collide phrase", chinese_explanation: "第二个包" },
+      ]),
+    ]);
+    const res = scanDictionary("we said zzz collide phrase yesterday");
+    const hits = res.expressions.filter((e) => e.expression === "zzz collide phrase");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].chinese_explanation).toBe("第一个包");
+  });
+
+  it("an explicit lookup keeps both entries when the glosses genuinely differ", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remoteExprPack("__test_remote_cb__", [
+        { expression: "circle back", chinese_explanation: "远程词典的解释" },
+      ]),
+    ]);
+    const res = scanDictionary("circle back", null, {
+      includeAllPackMatches: true,
+      bypassCommonWordSuppression: true,
+    });
+    const packs = res.expressions.filter((e) => e.expression === "circle back").map((e) => e.pack);
+    expect(packs).toEqual(["__test_remote_cb__", "core"]);
+  });
+
+  it("an explicit lookup collapses a near-duplicate re-authoring (same Chinese gloss) to one card", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remoteExprPack("__test_remote_dup__", [
+        // Same zh gloss as core's own "circle back" entry.
+        { expression: "circle back", chinese_explanation: "回头再聊、之后再讨论这个话题" },
+      ]),
+    ]);
+    const res = scanDictionary("circle back", null, {
+      includeAllPackMatches: true,
+      bypassCommonWordSuppression: true,
+    });
+    const hits = res.expressions.filter((e) => e.expression === "circle back");
+    expect(hits).toHaveLength(1);
+    // Remote pack still wins the ordering (explicit user intent first).
+    expect(hits[0].pack).toBe("__test_remote_dup__");
+  });
+
+  it("a non-colliding remote expression and a built-in both still fire in one scan", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remoteExprPack("__test_remote_other__", [
+        { expression: "zzz own phrase", chinese_explanation: "远程独有" },
+      ]),
+    ]);
+    const res = scanDictionary("Let's circle back on zzz own phrase.");
+    expect(res.expressions.some((e) => e.expression === "circle back" && e.pack === "core")).toBe(true);
+    expect(res.expressions.some((e) => e.expression === "zzz own phrase")).toBe(true);
+  });
+});
+
+// v0.7.9 detection audit: same-key built-in re-authorings in an
+// explicit lookup. The raw ALL_TERM_ENTRIES list keeps every table's
+// copy of "ROI"-class collisions (core + business-terms, one
+// capitalization apart) — the near-duplicate collapse keeps lookups to
+// one card per actual SENSE while preserving genuine cross-pack sense
+// splits like SAM.
+describe("scanDictionary — explicit-lookup near-duplicate collapse (built-in tables)", () => {
+  const lookupOptions = { includeAllPackMatches: true, bypassCommonWordSuppression: true } as const;
+
+  it("ROI: one card, not core + business-terms re-authorings of the same fact", () => {
+    const res = scanDictionary("ROI", null, lookupOptions);
+    const hits = res.terms.filter((t) => t.term === "ROI");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].pack).toBe("core");
+  });
+
+  it("SAM: both genuinely different senses survive (market metric + alignment format)", () => {
+    const res = scanDictionary("SAM", null, lookupOptions);
+    const packs = res.terms.filter((t) => t.term === "SAM").map((t) => t.pack);
+    expect(packs).toContain("business-terms");
+    expect(packs).toContain("bioinformatics-edam");
+  });
+
+  it("NDA: core's multi-sense entry answers alone (business-terms' contract copy is a near-duplicate)", () => {
+    const res = scanDictionary("NDA", null, lookupOptions);
+    const hits = res.terms.filter((t) => t.term === "NDA");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].pack).toBe("core");
+    // The multi-sense ranking still exposes the drug-application sense.
+    expect(hits[0].senses?.some((s) => s.senseId === "new-drug-application")).toBe(true);
+  });
+});
+
+// v0.7.9 detection audit: the "regression" cross-pack collision
+// (tech-terms vs ml-stats) — transcript detection must resolve to ONE
+// deterministic winner per pack selection, never two cards or zero.
+describe("scanDictionary — regression cross-pack collision (transcript mode)", () => {
+  it("with only tech-terms enabled, the software gloss fires", () => {
+    const res = scanDictionary("We shipped a regression.", ["tech-terms"]);
+    const hits = res.terms.filter((t) => t.term === "regression");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].pack).toBe("tech-terms");
+  });
+
+  it("with only ml-stats enabled, the statistical entry fires", () => {
+    const res = scanDictionary("We fit a regression.", ["ml-stats"]);
+    const hits = res.terms.filter((t) => t.term === "regression");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].pack).toBe("ml-stats");
+  });
+
+  it("with both enabled, exactly one deterministic winner (table priority order)", () => {
+    const res = scanDictionary("We discussed the regression.", ["tech-terms", "ml-stats"]);
+    const hits = res.terms.filter((t) => t.term === "regression");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].pack).toBe("tech-terms");
+  });
+});
+
+// v0.7.9 detection audit: light plural tolerance for term matching —
+// noun plurals are how these terms are actually spoken, and each used
+// to require its own hand-listed variant.
+describe("scanDictionary — term plural tolerance", () => {
+  it("a lowercase term (>=5 chars) matches its -s plural", () => {
+    const res = scanDictionary("Our runways are shrinking fast.");
+    expect(res.terms.some((t) => t.term === "runway")).toBe(true);
+  });
+
+  it("matches an -es plural (harness -> harnesses)", () => {
+    const res = scanDictionary("We compared two agent harnesses.", ["modern-usage"]);
+    expect(res.terms.some((t) => t.term === "harness")).toBe(true);
+  });
+
+  it("an all-caps acronym takes a lowercase -s plural (KPIs) but stays otherwise case-sensitive", () => {
+    expect(scanDictionary("Review the KPIs before Friday.").terms.some((t) => t.term === "KPI")).toBe(true);
+    expect(scanDictionary("review the kpis before friday").terms.some((t) => t.term === "KPI")).toBe(false);
+    expect(scanDictionary("REVIEW THE KPIS BEFORE FRIDAY").terms.some((t) => t.term === "KPI")).toBe(false);
+  });
+
+  it("short ambiguous headwords stay exact: 'means' never matches the stats 'mean'", () => {
+    const res = scanDictionary("This means a lot to the team.", null, {
+      bypassCommonWordSuppression: true,
+      activeDomains: new Set<DomainTag>(["stats"]),
+    });
+    expect(res.terms.some((t) => t.term === "mean")).toBe(false);
+  });
+
+  it("verb variants added for churn cover the spoken forms", () => {
+    expect(scanDictionary("Customers are churning at a higher rate.").terms.some((t) => t.term === "churn")).toBe(true);
+    expect(scanDictionary("Half the cohort churned last month.").terms.some((t) => t.term === "churn")).toBe(true);
+  });
+
+  it("word boundaries still hold — no substring match inside a longer word", () => {
+    const res = scanDictionary("The runwayside cameras stayed on.");
+    expect(res.terms.some((t) => t.term === "runway")).toBe(false);
+  });
+});
+
 describe("scanDictionary — empty input", () => {
   it("returns empty expressions/terms for empty or whitespace-only text", () => {
     expect(scanDictionary("")).toEqual({ expressions: [], terms: [] });
@@ -1190,7 +1411,7 @@ describe("scanDictionary — multi-sense term selection (v0.6 T3)", () => {
     };
   }
 
-  it("an entry without `senses` at all emits byte-identical to today — no senseId/senses/ambiguous keys", () => {
+  it("an entry without `senses` at all emits no senseId/senses/ambiguous keys (ARR also carries its entry-level `domains` evidence — v0.7.9 detection audit)", () => {
     const res = scanDictionary("Our ARR grew this quarter.");
     const hit = res.terms.find((t) => t.term === "ARR");
     expect(hit).toEqual({
@@ -1199,10 +1420,24 @@ describe("scanDictionary — multi-sense term selection (v0.6 T3)", () => {
       type: "metric",
       gloss_en: "Annual Recurring Revenue",
       gloss_zh: "年度经常性收入",
+      domains: ["sales"],
     });
     expect(hit).not.toHaveProperty("senseId");
     expect(hit).not.toHaveProperty("senses");
     expect(hit).not.toHaveProperty("ambiguous");
+  });
+
+  it("an entry without `senses` OR `domains` emits byte-identical to today (no extra keys at all)", () => {
+    const res = scanDictionary("The OKR review is next week.");
+    const hit = res.terms.find((t) => t.term === "OKR");
+    expect(hit).toEqual({
+      term: "OKR",
+      pack: "core",
+      type: "other",
+      gloss_en: "Objectives and Key Results, a goal-setting framework",
+      gloss_zh: "目标与关键成果法",
+    });
+    expect(hit).not.toHaveProperty("domains");
   });
 
   it("an entry with an EMPTY senses array also falls through to the no-senses branch, byte-identical", () => {
