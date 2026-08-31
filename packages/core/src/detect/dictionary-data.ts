@@ -29,6 +29,9 @@ export interface DictExpressionEntry {
   // Same word-list semantics as notFollowedBy, but for the token
   // immediately BEFORE the match (whitespace allowed, case-insensitive).
   notPrecededBy?: string[];
+  // Same semantics as DictTermEntry.domains below, unlock role only —
+  // expressions never feed the domain tracker (it observes terms).
+  domains?: DomainTag[];
 }
 
 // v0.6 T1 — multi-sense terms: a surface like "EMT" is genuinely
@@ -146,6 +149,25 @@ export interface DictTermEntry {
   // meeting context (see its own doc for the scoring formula) — absent/
   // empty `senses` behaves byte-identically to today.
   senses?: DictSense[];
+  // Entry-level domain hints (v0.7.9 detection audit) for entries whose
+  // PACK is deliberately cross-domain (absent from packs.ts's
+  // PACK_DOMAINS — modern-usage, daily-idiom, remote packs without a
+  // single obvious field). Dual role, both additive:
+  //   (1) evidence — a matched NON-common entry counts toward
+  //       activating each listed domain in domainSignal.ts's tracker,
+  //       exactly like a PACK_DOMAINS-mapped pack's terms always have.
+  //       Only annotate a surface that is UNAMBIGUOUS evidence of its
+  //       field ("RAG", "context window" — never "eval", which an HR
+  //       meeting uses for something else entirely); a wrong hint here
+  //       actively unlocks the wrong pack's common words.
+  //   (2) unlock — a commonWord entry fires once ANY listed domain is
+  //       active (scanDictionary's shouldIncludeCommonWord), closing
+  //       the gap where a cross-domain pack's common words were
+  //       unreachable under the default all-on pack state.
+  // A commonWord entry's domains are the unlock list only — it is never
+  // emitted as evidence (an everyday word spoken in its everyday sense
+  // must not activate a domain; see scanDictionary's evidenceDomains).
+  domains?: DomainTag[];
 }
 
 // ---------------------------------------------------------------

@@ -141,6 +141,9 @@ export interface RemotePackExpression {
   // Mirrors DictExpressionEntry.notPrecededBy: literal-context predecessor
   // words reject an otherwise matching expression regardless of pack state.
   notPrecededBy?: string[];
+  // v0.7.9 detection audit: commonWord domain-unlock hints — see
+  // DictExpressionEntry.domains and clampDomains below.
+  domains?: string[];
   pack?: string; // ignored on import — always overwritten with the manifest's own id (see validateExpressions)
 }
 
@@ -183,6 +186,10 @@ export interface RemotePackTerm {
   // v0.6 multi-sense-terms sprint (see RemotePackSense's own doc just
   // above): <=6 items, each validated like a term itself (clampSenses).
   senses?: RemotePackSense[];
+  // v0.7.9 detection audit: entry-level domain hints — see
+  // DictTermEntry.domains and clampDomains below. <=4 recognized
+  // DomainTag values; unrecognized values dropped.
+  domains?: string[];
   pack?: string; // ignored on import — always overwritten with the manifest's own id (see validateTerms)
 }
 
@@ -469,6 +476,27 @@ function validateLiteralContextWords(raw: unknown): string[] | undefined {
   return raw.map((word) => word.trim());
 }
 
+/** Entry-level domain hints (v0.7.9 detection audit — see
+ *  DictTermEntry.domains): each value must be a recognized DomainTag or
+ *  it is dropped (lenient posture, same as clampSenses' own domain
+ *  check); capped at 4, deduped. A community pack whose entries carry
+ *  these participates in domain-evidence activation and the commonWord
+ *  domain unlock exactly like the built-in cross-domain packs. */
+function clampDomains(raw: unknown): DomainTag[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: DomainTag[] = [];
+  for (const item of raw) {
+    if (out.length >= 4) break;
+    if (typeof item !== "string") continue;
+    const trimmed = item.trim();
+    if (!(DOMAIN_TAGS as readonly string[]).includes(trimmed)) continue;
+    const tag = trimmed as DomainTag;
+    if (out.includes(tag)) continue;
+    out.push(tag);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** Tiny semver-ish comparator (T1) — good enough for plain "x.y.z"
  *  strings (no pre-release/build metadata support, which neither this
  *  app's own package.json version nor any dict-pack's minAppVersion has
@@ -531,6 +559,8 @@ function validateExpressions(
       commonWord: typeof e.commonWord === "boolean" ? e.commonWord : undefined,
       notFollowedBy,
       notPrecededBy,
+      // v0.7.9 detection audit — see clampDomains' own doc below.
+      domains: clampDomains(e.domains),
       // Always the manifest's own id — an entry's own `pack` field is
       // untrusted input and is ignored, not merely defaulted, so a
       // malicious/buggy remote entry can't claim `pack: "core"` (or
@@ -579,6 +609,8 @@ function validateTerms(raw: unknown, packId: string): DictTermEntry[] {
       // at all) simply sees whatever this pack's own top-level fields
       // say, same as any other term.
       senses: clampSenses(t.senses),
+      // v0.7.9 detection audit — see clampDomains' own doc above.
+      domains: clampDomains(t.domains),
       // See validateExpressions above: always the manifest's own id,
       // never trusts the entry's own `pack` field.
       pack: packId,

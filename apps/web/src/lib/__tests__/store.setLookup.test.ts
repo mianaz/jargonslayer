@@ -29,6 +29,7 @@ vi.mock("../llm/client", () => ({
 vi.mock("../translate/providers", () => ({
   langPairFromSettings: () => ({ source: "en", target: "zh" }),
   resolveTranslationProvider: () => ({ prepare: vi.fn(), translate: mockProviderTranslate }),
+  SystemTranslatorUnavailableError: class SystemTranslatorUnavailableError extends Error {},
 }));
 
 import { useApp, type LookupRequest } from "../store";
@@ -101,7 +102,7 @@ describe("setLookup (store.ts) — single trigger for the selection-lookup pipel
     expect(useTasks.getState().tasks).toEqual({});
   });
 
-  it("dictionary-only settings (aiDetect:false) run through setLookup without registering a task", async () => {
+  it("dictionary-only settings (aiDetect:false) run through setLookup without any AI call — the miss still translates offline as its own honest task (v0.7.9 offline 划词翻译)", async () => {
     useApp.setState((s) => ({ settings: { ...s.settings, aiDetect: false } }));
     const req = makeReq({ id: "trigger-dict", text: "zzz-not-a-dictionary-entry-zzz" });
     useApp.getState().setLookup(req);
@@ -110,6 +111,6 @@ describe("setLookup (store.ts) — single trigger for the selection-lookup pipel
       expect(useSelectionLookup.getState().byId[req.id]?.status).toBe("done");
     });
     expect(mockDefineApi).not.toHaveBeenCalled();
-    expect(useTasks.getState().tasks[req.id]).toBeUndefined();
+    expect(useTasks.getState().tasks[req.id]).toMatchObject({ status: "done", label: "翻译所选" });
   });
 });

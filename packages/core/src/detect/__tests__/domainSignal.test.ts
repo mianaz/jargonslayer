@@ -331,4 +331,133 @@ describe("meeting domain signal", () => {
       expect(iso.gloss_zh).toBe("国际标准化组织");
     });
   });
+
+  // v0.7.9 detection audit: entry-level `domains` evidence — the pack-
+  // level PACK_DOMAINS map deliberately leaves cross-domain packs
+  // (modern-usage) unmapped, which used to mean an AI meeting saturated
+  // with unambiguous modern-usage vocabulary never activated "ml" at
+  // all, so the pack's own commonWord entries (agent, harness, wrapper,
+  // compute, checkpoint…) could NEVER fire under the default all-on
+  // pack state. Entries now carry their own evidence/unlock domains.
+  describe("entry-level domain evidence (modern-usage AI meetings)", () => {
+    it("two unambiguous modern-usage AI terms activate ml, unlocking the pack's own common words in later segments", () => {
+      const tracker = createDomainTracker();
+
+      const first = scanSegment(tracker, "Our RAG pipeline needs a bigger context window.");
+      expect(termNames(first)).toEqual(expect.arrayContaining(["RAG", "context window"]));
+      expect(tracker.activeDomains()).toContain("ml");
+
+      const second = scanSegment(tracker, "The agent runs inside the harness with limited compute.");
+      expect(termNames(second)).toEqual(expect.arrayContaining(["agent", "harness", "compute"]));
+    });
+
+    it("one modern-usage AI term is not enough — agent/harness stay suppressed below the threshold", () => {
+      const tracker = createDomainTracker();
+      scanSegment(tracker, "Our RAG pipeline is slow.");
+      expect(tracker.activeDomains()).not.toContain("ml");
+
+      const res = scanSegment(tracker, "The agent asked about the harness.");
+      expect(termNames(res)).not.toContain("agent");
+      expect(termNames(res)).not.toContain("harness");
+    });
+
+    it("an unambiguous evidence term carries its domains on the wire; a commonWord entry never does", () => {
+      const tracker = createDomainTracker();
+      const first = scanSegment(tracker, "Our RAG pipeline needs a bigger context window.");
+      expect(findTerm(first, "RAG").domains).toEqual(["ml"]);
+
+      const second = scanSegment(tracker, "The agent runs inside the harness.");
+      expect(findTerm(second, "agent").domains).toBeUndefined();
+      expect(findTerm(second, "harness").domains).toBeUndefined();
+    });
+
+    it("commonWord hits never count toward activating a SECOND domain (everyday senses are not evidence)", () => {
+      const tracker = createDomainTracker();
+      // Activate ml the legitimate way…
+      scanSegment(tracker, "Our RAG pipeline needs a bigger context window.");
+      // …then have commonWord entries with sales/finance unlock lists
+      // fire; their own hits must not creep toward activating those.
+      scanSegment(tracker, "The agent uses leverage on the checkpoint.");
+      scanSegment(tracker, "That unicorn has leverage too.");
+      expect(tracker.activeDomains()).not.toContain("sales");
+      expect(tracker.activeDomains()).not.toContain("finance");
+    });
+
+    it("unambiguous core business metrics activate sales, strengthening multi-sense picks like team alignment", () => {
+      const tracker = createDomainTracker();
+      const biz = scanSegment(tracker, "Our ARR is up but the GTM plan needs work.");
+      expect(termNames(biz)).toEqual(expect.arrayContaining(["ARR", "GTM"]));
+      expect(tracker.activeDomains()).toContain("sales");
+
+      const alignment = findTerm(
+        scanSegment(tracker, "After the meeting, the team was aligned."),
+        "alignment",
+      );
+      expect(alignment.senseId).toBe("team-alignment");
+    });
+
+    it("a funding conversation activates finance, unlocking finance-consumer common words", () => {
+      const tracker = createDomainTracker();
+      const funding = scanSegment(tracker, "After the Series B we cleaned up the P&L.");
+      expect(termNames(funding)).toEqual(expect.arrayContaining(["Series B", "P&L"]));
+      expect(tracker.activeDomains()).toContain("finance");
+
+      const res = scanSegment(tracker, "Watch out for dilution of your shares.");
+      expect(termNames(res)).toContain("dilution");
+    });
+
+    it("modern-usage common words STILL fire via the explicit-enable path with no active domain (unchanged behavior)", () => {
+      const res = scanDictionary("The agent can coordinate the workflow.", ["modern-usage"]);
+      expect(termNames(res)).toContain("agent");
+    });
+  });
+
+  describe("createDomainTracker — entry-level domains mechanics", () => {
+    it("counts a term toward EVERY listed domain", () => {
+      const tracker = createDomainTracker();
+      tracker.observe({
+        terms: [
+          { term: "aaa", type: "other", gloss_en: "", gloss_zh: "x", domains: ["ml", "software"] },
+          { term: "bbb", type: "other", gloss_en: "", gloss_zh: "x", domains: ["ml", "software"] },
+        ],
+      });
+      expect(tracker.activeDomains()).toContain("ml");
+      expect(tracker.activeDomains()).toContain("software");
+    });
+
+    it("ignores unrecognized domain strings from the loosely-typed wire field", () => {
+      const tracker = createDomainTracker();
+      tracker.observe({
+        terms: [
+          { term: "aaa", type: "other", gloss_en: "", gloss_zh: "x", domains: ["not-a-domain"] },
+          { term: "bbb", type: "other", gloss_en: "", gloss_zh: "x", domains: ["also-bogus"] },
+        ],
+      });
+      expect(tracker.activeDomains().size).toBe(0);
+    });
+
+    it("entry-level domains take precedence over the pack fallback; a term with neither contributes nothing", () => {
+      const tracker = createDomainTracker();
+      tracker.observe({
+        terms: [
+          // pack maps to pharma, but the entry says stats — entry wins.
+          { term: "aaa", type: "other", gloss_en: "", gloss_zh: "x", pack: "pharma-biotech", domains: ["stats"] },
+          { term: "bbb", type: "other", gloss_en: "", gloss_zh: "x", pack: "pharma-biotech", domains: ["stats"] },
+          { term: "ccc", type: "other", gloss_en: "", gloss_zh: "x" },
+        ],
+      });
+      expect(tracker.activeDomains()).toContain("stats");
+      expect(tracker.activeDomains()).not.toContain("pharma");
+    });
+
+    it("the same headword repeated only ever counts once per domain", () => {
+      const tracker = createDomainTracker();
+      for (let i = 0; i < 5; i++) {
+        tracker.observe({
+          terms: [{ term: "RAG", type: "other", gloss_en: "", gloss_zh: "x", domains: ["ml"] }],
+        });
+      }
+      expect(tracker.activeDomains()).not.toContain("ml");
+    });
+  });
 });
