@@ -6,6 +6,7 @@
 // CardsPanel's expanded TermCardRow styling exactly (see that file).
 
 import { useLayoutEffect, useState } from "react";
+import { runnerUpSense } from "@/lib/cards/senseDisplay";
 import { X } from "@phosphor-icons/react";
 import { CATEGORY_LABELS, TERM_TYPE_LABELS } from "@/lib/cardLabels";
 import type { ExpressionCard, TermCard } from "@jargonslayer/core/types";
@@ -33,6 +34,7 @@ export default function HoverGlossCard({
   pinned,
   onClose,
 }: HoverGlossCardProps) {
+  const runnerUp = item.kind === "term" ? runnerUpSense(item.term) : null;
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
   // Clamp position to viewport.
@@ -113,6 +115,11 @@ export default function HoverGlossCard({
           <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
             {item.term.gloss_zh}
           </div>
+          {runnerUp && (
+            <div data-testid="sense-runner-up" className="mt-1 truncate text-xs text-mut2">
+              或 {runnerUp.gloss_zh}
+            </div>
+          )}
         </>
       )}
     </div>

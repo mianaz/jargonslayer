@@ -183,6 +183,21 @@ function mergeTerms(
       }
       existing.lastSeenAt = now;
       if (source === "dictionary") existing.lastDictSeenAt = now;
+      // Sense-picker plan, Lane 1: a user-pinned sense is the user's own
+      // ruling on THIS card, one notch below a custom-glossary entry —
+      // count/lastSeenAt still move (the term was spoken again), but no
+      // later hit may change what the card SAYS: not the LLM upgrade
+      // below (it would replace the pinned gloss with its own guess),
+      // and not the dictionary re-rank (the ranked snapshot refreshes
+      // for the popover, but the winner never swaps and the card is by
+      // definition not ambiguous any more).
+      if (existing.pinnedSenseId !== undefined) {
+        if (source === "dictionary" && det.senses !== undefined) {
+          existing.senses = det.senses;
+        }
+        existing.ambiguous = false;
+        continue;
+      }
       if (existing.source === "dictionary" && source === "llm") {
         existing.gloss_en = det.gloss_en;
         existing.gloss_zh = det.gloss_zh;
