@@ -110,3 +110,70 @@ describe("deriveSenseContext — cooccurrence", () => {
     expect(result.cooccurrence).toEqual({});
   });
 });
+
+describe("deriveSenseContext — user-pinned sense (sense-picker plan, Lane 1)", () => {
+  it("a pinned sense's domain enters domainWeights at 1.0, even with no inference and every pack on", () => {
+    const result = deriveSenseContext({
+      inferredDomains: [],
+      enabledPacks: null,
+      terms: [
+        {
+          senseId: "cachexia",
+          pinnedSenseId: "cachexia",
+          senses: [
+            { senseId: "sales", domain: "sales" },
+            { senseId: "cachexia", domain: "pharma" },
+          ],
+        },
+      ],
+    });
+    expect(result.domainWeights).toEqual({ pharma: 1.0 });
+  });
+
+  it("a pin never downgrades an inferred 1.0 and an enabled pack's 0.5 never downgrades a pin", () => {
+    const result = deriveSenseContext({
+      inferredDomains: ["pharma"],
+      enabledPacks: ["pharma-biotech"],
+      terms: [
+        {
+          senseId: "cachexia",
+          pinnedSenseId: "cachexia",
+          senses: [{ senseId: "cachexia", domain: "pharma" }],
+        },
+      ],
+    });
+    expect(result.domainWeights).toEqual({ pharma: 1.0 });
+  });
+
+  it("a pinnedSenseId that names no sense on the card (or an unknown domain) contributes nothing, not an error", () => {
+    const result = deriveSenseContext({
+      inferredDomains: [],
+      enabledPacks: null,
+      terms: [
+        { senseId: "x", pinnedSenseId: "missing", senses: [{ senseId: "x", domain: "sales" }] },
+        { senseId: "y", pinnedSenseId: "y", senses: [{ senseId: "y", domain: "not-a-domain" }] },
+      ],
+    });
+    expect(result.domainWeights).toEqual({});
+  });
+
+  it("cooccurrence counts the DISPLAYED sense's domain (senseId), falling back to senses[0] when there is no senseId", () => {
+    const result = deriveSenseContext({
+      inferredDomains: [],
+      enabledPacks: null,
+      terms: [
+        // displayed sense is the runner-up in the ranked snapshot
+        {
+          senseId: "cachexia",
+          senses: [
+            { senseId: "sales", domain: "sales" },
+            { senseId: "cachexia", domain: "pharma" },
+          ],
+        },
+        // no senseId: legacy shape, senses[0] wins
+        { senses: [{ domain: "sales" }] },
+      ],
+    });
+    expect(result.cooccurrence).toEqual({ pharma: 0.5, sales: 0.5 });
+  });
+});

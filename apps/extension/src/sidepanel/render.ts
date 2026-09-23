@@ -78,7 +78,19 @@ export function renderTermCard(term: DetectedTerm, opts: SaveButtonOptions): HTM
   gloss.className = "js-card-gloss";
   gloss.textContent = term.gloss_zh;
 
-  card.append(head, gloss, renderSaveButton(opts));
+  card.append(head, gloss);
+  // Sense-picker plan, Lane 1 (mirrors apps/web's runnerUpSense): when
+  // the dictionary flagged this pick as ambiguous, show the runner-up
+  // gloss too so the user is never confidently mis-taught. Read-only
+  // here — the extension is in maintenance mode and has no pin.
+  const runnerUp = term.ambiguous ? term.senses?.find((s) => s.senseId !== term.senseId) : undefined;
+  if (runnerUp) {
+    const alt = document.createElement("p");
+    alt.className = "js-card-gloss js-card-gloss--alt";
+    alt.textContent = `或 ${runnerUp.gloss_zh}`;
+    card.append(alt);
+  }
+  card.append(renderSaveButton(opts));
   return card;
 }
 

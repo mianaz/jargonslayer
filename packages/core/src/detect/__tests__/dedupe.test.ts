@@ -699,6 +699,87 @@ describe("mergeDetections — multi-sense terms (v0.6 T4)", () => {
   });
 });
 
+describe("mergeDetections — user-pinned sense (sense-picker plan, Lane 1)", () => {
+  function sense(senseId: string, domain = "biomed", score = 0.5) {
+    return { senseId, gloss_en: `gloss for ${senseId}`, gloss_zh: `释义 ${senseId}`, domain, score };
+  }
+  function pinnedCard(): TermCard {
+    return {
+      ...makeTerm({
+        term: "CAC",
+        type: "acronym",
+        gloss_en: "Cancer-Associated Cachexia",
+        gloss_zh: "癌症相关恶病质",
+        senseId: "cachexia",
+        senses: [sense("sales", "sales", 0.9), sense("cachexia", "pharma", 0.2)],
+        ambiguous: false,
+      }),
+      id: "term-1",
+      normKey: "CAC",
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+      count: 1,
+      source: "dictionary",
+      pinnedSenseId: "cachexia",
+    };
+  }
+
+  it("a dictionary re-hit whose heuristic winner clears the margin does NOT swap a pinned card, but still bumps and refreshes the snapshot", () => {
+    const res = makeDetectResponse({
+      terms: [
+        makeTerm({
+          term: "CAC",
+          gloss_en: "Customer Acquisition Cost",
+          gloss_zh: "获客成本",
+          senseId: "sales",
+          senses: [sense("sales", "sales", 1.5), sense("cachexia", "pharma", 0.1)],
+          ambiguous: true,
+        }),
+      ],
+    });
+    const { terms } = mergeDetections([], [pinnedCard()], res, "dictionary", 0.5, 2000);
+    expect(terms).toHaveLength(1);
+    expect(terms[0].senseId).toBe("cachexia");
+    expect(terms[0].gloss_zh).toBe("癌症相关恶病质");
+    expect(terms[0].pinnedSenseId).toBe("cachexia");
+    expect(terms[0].count).toBe(2);
+    expect(terms[0].lastSeenAt).toBe(2000);
+    expect(terms[0].senses).toEqual([sense("sales", "sales", 1.5), sense("cachexia", "pharma", 0.1)]);
+    // A pinned card is by definition no longer a guess.
+    expect(terms[0].ambiguous).toBe(false);
+  });
+
+  it("an LLM hit does NOT overwrite a pinned card's gloss (user ruling beats the model's guess), source stays dictionary", () => {
+    const res = makeDetectResponse({
+      terms: [makeTerm({ term: "CAC", gloss_en: "Customer Acquisition Cost", gloss_zh: "获客成本" })],
+    });
+    const { terms } = mergeDetections([], [pinnedCard()], res, "llm", 0.5, 2000);
+    expect(terms[0].gloss_zh).toBe("癌症相关恶病质");
+    expect(terms[0].senseId).toBe("cachexia");
+    expect(terms[0].source).toBe("dictionary");
+    expect(terms[0].count).toBe(2);
+  });
+
+  it("an unpinned card with the same shape still swaps (the guard is the pin, not the shape)", () => {
+    const card = pinnedCard();
+    delete card.pinnedSenseId;
+    const res = makeDetectResponse({
+      terms: [
+        makeTerm({
+          term: "CAC",
+          gloss_en: "Customer Acquisition Cost",
+          gloss_zh: "获客成本",
+          senseId: "sales",
+          senses: [sense("sales", "sales", 1.5), sense("cachexia", "pharma", 0.1)],
+        }),
+      ],
+    });
+    const { terms } = mergeDetections([], [card], res, "dictionary", 0.5, 2000);
+    expect(terms[0].senseId).toBe("sales");
+    expect(terms[0].gloss_zh).toBe("获客成本");
+  });
+});
+
 describe("mergeDetections — custom-source protection", () => {
   it("a later llm hit on a custom expression normKey mutates NOTHING (zero mutation)", () => {
     const customCard: ExpressionCard = {
