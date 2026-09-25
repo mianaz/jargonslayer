@@ -792,7 +792,7 @@ export function useMeeting(): UseMeetingResult {
               ? engine.kind === "appaudio"
                 ? "音频捕获已结束，会议已保存到历史记录"
                 : "共享已结束，会议已保存到历史记录"
-              : "演示结束，打开右侧「纪要」标签看演示报告";
+              : "演示结束，「纪要」里已放好这场演示的样例报告";
           // UI-1 (U-2): a demo that played to its scripted end gets its
           // sample report BEFORE runStopFlow saves, so the report lands
           // in history with the session like a generated one would. An
