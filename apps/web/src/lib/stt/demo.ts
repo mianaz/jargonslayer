@@ -3,19 +3,20 @@
 // be evaluated without a mic or API key.
 //
 // UI-1 (ui-upgrade-plan-2026-09 U-1): the replay shows the product's
-// headline, not just the cards. Every line is channel-tagged the way
-// desktop dual capture tags a real meeting (CH_MIC = 我, CH_SYS = 对方,
-// resolved through the store's normal alias path in addFinal), and
-// carries a recorded Chinese translation that DemoTranslationProvider
-// (translate/providers.ts) replays through the real TranslateQueue.
+// headline, not just the cards. The listener's own lines arrive on the
+// mic channel (CH_MIC, resolved to 我 through the store's normal
+// dual-capture alias path in addFinal); the remote speakers keep their
+// names, the way speaker separation labels the meeting side of a real
+// session. Every line carries a recorded Chinese translation that
+// DemoTranslationProvider (translate/providers.ts) replays through the
+// real TranslateQueue.
 
 import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
-import { CH_MIC_SPEAKER, CH_SYS_SPEAKER } from "../store";
+import { CH_MIC_SPEAKER } from "../store";
 
 interface ScriptLine {
-  // Who says it in the story. Not emitted: a dual-capture session only
-  // knows the channel, so the transcript shows 我/对方, same as the
-  // real thing. Mike is the listener ("我"); Sarah and Lily are remote.
+  // Who says it. Mike is the listener, so his mic-channel lines show as
+  // 我; Sarah and Lily are remote and show by name.
   speaker: string;
   channel: "mic" | "system";
   text: string;
@@ -133,12 +134,15 @@ export function demoTranslationFor(text: string): string | undefined {
   return DEMO_TRANSLATIONS.get(text.trim());
 }
 
-function sttSpeakerFor(line: ScriptLine): string {
-  return line.channel === "mic" ? CH_MIC_SPEAKER : CH_SYS_SPEAKER;
+// The listener's mic lines ride the dual-capture channel id (display
+// 我 via the store's alias map); remote lines carry their speaker name
+// directly, like a separated-speaker label, and no channel id.
+function sttSpeakerFor(line: ScriptLine): string | undefined {
+  return line.channel === "mic" ? CH_MIC_SPEAKER : undefined;
 }
 
-function channelLabel(line: ScriptLine): string {
-  return line.channel === "mic" ? "我" : "对方";
+function displaySpeaker(line: ScriptLine): string {
+  return line.channel === "mic" ? "我" : line.speaker;
 }
 
 const WORDS_PER_TICK = 2.5; // 2-3 words per interim tick
@@ -191,7 +195,7 @@ export class DemoEngine implements STTEngine {
 
     if (wordIndex >= words.length) {
       this.events.onFinal(line.text, {
-        sttSpeaker: sttSpeakerFor(line),
+        ...(line.channel === "mic" ? { sttSpeaker: sttSpeakerFor(line) } : { speaker: line.speaker }),
         startedAt: lineStartTime,
       });
       const pause = randRange(LINE_PAUSE_MIN_MS, LINE_PAUSE_MAX_MS);
@@ -205,7 +209,7 @@ export class DemoEngine implements STTEngine {
       wordIndex + Math.round(randRange(2, 3)),
     );
     const cumulative = words.slice(0, nextCount).join(" ");
-    this.events.onInterim(cumulative, channelLabel(line), sttSpeakerFor(line));
+    this.events.onInterim(cumulative, displaySpeaker(line), sttSpeakerFor(line));
 
     const delay = randRange(TICK_MIN_MS, TICK_MAX_MS);
     const t = setTimeout(

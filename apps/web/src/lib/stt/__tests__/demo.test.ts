@@ -11,14 +11,20 @@ import { DemoEngine, demoTranslationFor } from "../demo";
 type Recorded =
   | { kind: "status"; status: STTStatus; detail?: string }
   | { kind: "interim"; text: string; speaker?: string; sttSpeaker?: string }
-  | { kind: "final"; text: string; sttSpeaker?: string; startedAt?: number };
+  | { kind: "final"; text: string; speaker?: string; sttSpeaker?: string; startedAt?: number };
 
 function makeRecorder(): { events: STTEvents; seen: Recorded[] } {
   const seen: Recorded[] = [];
   const events: STTEvents = {
     onInterim: (text, speaker, sttSpeaker) => seen.push({ kind: "interim", text, speaker, sttSpeaker }),
     onFinal: (text, opts) =>
-      seen.push({ kind: "final", text, sttSpeaker: opts?.sttSpeaker, startedAt: opts?.startedAt }),
+      seen.push({
+        kind: "final",
+        text,
+        ...(opts?.speaker !== undefined ? { speaker: opts.speaker } : {}),
+        ...(opts?.sttSpeaker !== undefined ? { sttSpeaker: opts.sttSpeaker } : {}),
+        startedAt: opts?.startedAt,
+      }),
     onStatus: (status, detail) => seen.push({ kind: "status", status, detail }),
   };
   return { events, seen };
@@ -55,8 +61,8 @@ describe("DemoEngine", () => {
     expect(seen[1]).toEqual({
       kind: "interim",
       text: "Okay everyone, let's",
-      speaker: "对方",
-      sttSpeaker: "CH_SYS",
+      speaker: "Sarah",
+      sttSpeaker: undefined,
     });
   });
 
@@ -75,7 +81,7 @@ describe("DemoEngine", () => {
     expect(finals[0]).toEqual({
       kind: "final",
       text: FIRST_LINE,
-      sttSpeaker: "CH_SYS",
+      speaker: "Sarah",
       // The engine stamps line start, not finalize time — the fake clock
       // has advanced ~2s by now, so this catches a Date.now()-at-final bug.
       startedAt: 5000,
@@ -96,10 +102,13 @@ describe("DemoEngine", () => {
     expect(finals).toHaveLength(16);
     expect(finals[0].text).toBe(FIRST_LINE);
     expect(finals[finals.length - 1].text).toBe(LAST_LINE);
-    // Dual-capture framing: both channels present, and the listener's
-    // own mic is the minority (4 of 16 lines).
-    expect(new Set(finals.map((f) => f.sttSpeaker))).toEqual(new Set(["CH_MIC", "CH_SYS"]));
-    expect(finals.filter((f) => f.sttSpeaker === "CH_MIC")).toHaveLength(4);
+    // The listener's 4 lines ride the mic channel (shown as 我); the two
+    // remote speakers keep their names and carry no channel id.
+    const mic = finals.filter((f) => f.sttSpeaker === "CH_MIC");
+    expect(mic).toHaveLength(4);
+    expect(mic.every((f) => f.speaker === undefined)).toBe(true);
+    const remote = finals.filter((f) => f.sttSpeaker === undefined);
+    expect(new Set(remote.map((f) => f.speaker))).toEqual(new Set(["Sarah", "Lily"]));
     // Every scripted final has a recorded translation to replay.
     for (const f of finals) expect(demoTranslationFor(f.text)).toMatch(/[\u4e00-\u9fff]/);
 

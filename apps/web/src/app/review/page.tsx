@@ -73,6 +73,15 @@ export default function ReviewPage() {
     });
   };
 
+  // U-8: with nothing due, the dashboard's lead action is 翻卡浏览 —
+  // same flip-then-scroll shape as handleStartReview above.
+  const handleBrowse = () => {
+    setMode("browse");
+    requestAnimationFrame(() => {
+      document.getElementById("review-modes")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   return (
     // iOS-cloud round (固定顶部/底部 shell): this was the ONE in-app
     // route still built on document scroll (min-h-screen + sticky
@@ -138,9 +147,9 @@ export default function ReviewPage() {
 
         {centerTab === "review" ? (
           <>
-            <ReviewDashboard cache={cache} loading={loading} onStartReview={handleStartReview} />
+            <ReviewDashboard cache={cache} loading={loading} onStartReview={handleStartReview} onBrowse={handleBrowse} />
             <div className="border-t border-edge" aria-hidden="true" />
-            <div className="space-y-4">
+            <div id="review-modes" className="space-y-4">
               <div className="flex items-center gap-1 rounded-none border border-edge bg-panel2 p-0.5">
                 {MODE_OPTIONS.map((opt) => (
                   <button

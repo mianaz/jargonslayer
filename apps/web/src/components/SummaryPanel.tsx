@@ -457,10 +457,21 @@ function SummarizingState() {
   );
 }
 
+// C5 (ui-review-2026-08-03, re-scoped in ui-upgrade-plan-2026-09): the
+// export row below stays live mid-meeting on purpose. Exporting what's
+// transcribed so far is a supported path (F4(b) only withholds 补全后导出
+// while the live queue runs), so the waiting copy says what those
+// buttons do now instead of the row being disabled.
 function WaitingState() {
+  const hasSegments = useApp((s) => s.segments.length > 0);
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <div className="text-sm text-mut">会议进行中，结束后在这里生成报告</div>
+      {hasSegments && (
+        <div data-testid="waiting-export-hint" className="max-w-xs text-xs leading-[1.7] text-mut">
+          下方按钮现在就能用，导出的是目前已转录的部分
+        </div>
+      )}
     </div>
   );
 }

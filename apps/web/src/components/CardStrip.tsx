@@ -33,8 +33,8 @@ function StripCardContent({ item }: { item: UnifiedItem }) {
     const c = item.expression;
     return (
       <>
-        <span className="truncate text-sm font-medium text-fg">{c.expression}</span>
-        <span className="line-clamp-2 text-xs text-mut">{c.chinese_explanation}</span>
+        <span className="truncate font-mono text-sm font-semibold text-fg">{c.expression}</span>
+        <span className="line-clamp-2 text-sm font-medium leading-[1.6] text-fg">{c.chinese_explanation}</span>
         {c.plain_english && (
           <span className="truncate text-xs text-mut">{c.plain_english}</span>
         )}
@@ -45,8 +45,8 @@ function StripCardContent({ item }: { item: UnifiedItem }) {
     const t = item.term;
     return (
       <>
-        <span className="truncate text-sm font-medium text-fg">{t.term}</span>
-        <span className="line-clamp-2 text-xs text-mut">{t.gloss_zh}</span>
+        <span className="truncate font-mono text-sm font-semibold text-fg">{t.term}</span>
+        <span className="line-clamp-2 text-sm font-medium leading-[1.6] text-fg">{t.gloss_zh}</span>
       </>
     );
   }

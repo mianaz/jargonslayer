@@ -163,8 +163,12 @@ function StatsStrip() {
 // bare `<ReviewDashboard>` render (e.g. this file's own tests) falls
 // back to the original scroll, so this component stays usable
 // standalone with no caller wiring required.
-function ReviewLead({ onStartReview }: { onStartReview?: () => void }) {
+// U-8 (ui-upgrade-plan-2026-09): with nothing due, 开始复习 pointed at an
+// empty queue. When the caller can switch modes (onBrowse), the lead's
+// one action becomes 翻卡浏览 instead, the review that exists today.
+function ReviewLead({ onStartReview, onBrowse }: { onStartReview?: () => void; onBrowse?: () => void }) {
   const { dueToday } = useDashboardStats();
+  const browseInstead = dueToday === 0 && onBrowse !== undefined;
 
   return (
     <div
@@ -179,15 +183,18 @@ function ReviewLead({ onStartReview }: { onStartReview?: () => void }) {
         type="button"
         data-testid="start-review-cta"
         onClick={
-          onStartReview ??
-          (() =>
-            document
-              .getElementById("due-queue")
-              ?.scrollIntoView({ behavior: "smooth", block: "start" }))
+          browseInstead
+            ? onBrowse
+            : (onStartReview ??
+              (() =>
+                document
+                  .getElementById("due-queue")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" })))
         }
+        title={browseInstead ? "今天没有到期的卡片，先随便翻翻" : undefined}
         className="btn-terminal shrink-0 rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85"
       >
-        开始复习
+        {browseInstead ? "翻卡浏览" : "开始复习"}
       </button>
     </div>
   );
@@ -355,11 +362,14 @@ export default function ReviewDashboard({
   cache,
   loading,
   onStartReview,
+  onBrowse,
 }: {
   cache: Record<string, MeetingSession>;
   loading: boolean;
   /** F8 fix round: see ReviewLead's own doc comment above. */
   onStartReview?: () => void;
+  /** U-8: see ReviewLead's own doc comment above. */
+  onBrowse?: () => void;
 }) {
   const sessions = useApp((s) => s.sessions);
   const words = useWordFrequency(cache);
@@ -382,7 +392,7 @@ export default function ReviewDashboard({
            (glossary saves lazily enroll too — see store.ts's
            addCustomEntry), so the lead + strip both stay visible here
            like KnownTermsSection already does. */}
-        <ReviewLead onStartReview={onStartReview} />
+        <ReviewLead onStartReview={onStartReview} onBrowse={onBrowse} />
         <StatsStrip />
         <EmptyState />
         <KnownTermsSection />
@@ -392,7 +402,7 @@ export default function ReviewDashboard({
 
   return (
     <div className="space-y-6">
-      <ReviewLead onStartReview={onStartReview} />
+      <ReviewLead onStartReview={onStartReview} onBrowse={onBrowse} />
       <StatsStrip />
       <KnownTermsSection />
       <WordCloud

@@ -44,7 +44,8 @@ import {
 import { KEY_STATUS_LABEL, deriveKeyStatus } from "@/lib/settings/keyStatus";
 import { sttProviderKeyValue } from "@/lib/settings/keysCatalog";
 import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
-import { langPairFromSettings } from "@/lib/translate/providers";
+import { isSystemTranslatorSupported, langPairFromSettings } from "@/lib/translate/providers";
+import { DEEPL_WEB_DISABLED_REASON, YOUDAO_WEB_DISABLED_REASON } from "@/components/settings/TranslationEngineRow";
 import { isEngineControlBusy } from "@/components/Header";
 import TaskTray from "@/components/TaskTray";
 import AiStatusPanel, { deriveHealthStatus, type AiHealthStatus } from "@/components/AiStatusPanel";
@@ -77,6 +78,38 @@ export const DETECT_MODE_LABEL: Record<string, string> = {
 export const ENGINE_SELECT_PLACEHOLDER = "引擎";
 export const ENGINE_SELECT_DEMO_LABEL = "演示";
 export const ENGINE_SELECT_IMPORT_LABEL = "导入";
+// U-6 (ui-upgrade-plan-2026-09): the translate chip reads as a setting
+// ("翻译：关" / "翻译：系统"), not as a status ("未译" read as "not
+// translated", with no hint that it was a switch). Short engine names
+// mirror TranslationEngineRow's option labels.
+export const TRANSLATE_CHIP_ENGINE_LABEL: Record<Settings["translateEngine"], string> = {
+  system: "系统",
+  deepl: "DeepL",
+  youdao: "有道",
+  llm: "AI",
+};
+export const TRANSLATE_CHIP_OFF_LABEL = "翻译：关";
+export const TRANSLATE_CHIP_UNAVAILABLE_LABEL = "翻译：不可用";
+
+/** Why the chosen translation engine cannot run on THIS surface, or null
+ *  when it can. Same limits TranslationEngineRow already disables in
+ *  Settings: a plain browser can't reach DeepL/有道 (no CORS), and
+ *  系统翻译 there needs Chrome's on-device Translator API. The native
+ *  shells (desktop/iOS) run every engine; their per-pair readiness is
+ *  the queue's own stalled/dead states, not this gate. */
+export function translateUnavailableReason(
+  engine: Settings["translateEngine"],
+  opts: { native: boolean; systemTranslatorSupported: boolean },
+): string | null {
+  if (opts.native) return null;
+  if (engine === "deepl") return DEEPL_WEB_DISABLED_REASON;
+  if (engine === "youdao") return YOUDAO_WEB_DISABLED_REASON;
+  if (engine === "system" && !opts.systemTranslatorSupported) {
+    return "当前浏览器不支持系统翻译，可在设置里换成 AI 模型翻译";
+  }
+  return null;
+}
+
 export const SIDECAR_DOWN_HINT_WEB = "本地转录服务未连接——见 设置 → 转录引擎";
 
 // S10 field-fix #5: engines whose transcription actually flows through
@@ -628,7 +661,36 @@ function TranslateStatusChip() {
     );
   }
 
+  const engineLabel = TRANSLATE_CHIP_ENGINE_LABEL[settings.translateEngine] ?? settings.translateEngine;
+
   if (!bilingualTranscript) {
+    // An en->en pair needs no engine at all: the off-button's own guard
+    // below says so, and that reason wins over "this engine can't run".
+    const offPair = langPairFromSettings(settings);
+    const unavailable =
+      offPair.source === offPair.target
+        ? null
+        : translateUnavailableReason(settings.translateEngine, {
+            native: IS_DESKTOP || IS_IOS,
+            systemTranslatorSupported: isSystemTranslatorSupported(),
+          });
+    if (unavailable) {
+      // Not a live switch here: turning it on would enable a lane that
+      // can never land a translation on this surface. Clicking says why
+      // (a disabled button would swallow the click and the reason).
+      return (
+        <button
+          type="button"
+          data-testid="statusline-translate-chip"
+          aria-disabled="true"
+          title={unavailable}
+          onClick={() => showToast(unavailable)}
+          className="flex h-full items-center whitespace-nowrap px-2 text-mut hover:bg-panel3 sm:px-3"
+        >
+          {TRANSLATE_CHIP_UNAVAILABLE_LABEL}
+        </button>
+      );
+    }
     return (
       <button
         type="button"
@@ -646,10 +708,10 @@ function TranslateStatusChip() {
           }
           updateSettings({ bilingualTranscript: true });
         }}
-        title="点击开启双语转录"
+        title={`点击开启双语转录（翻译引擎：${engineLabel}）`}
         className="flex h-full items-center whitespace-nowrap px-2 text-mut hover:bg-panel3 hover:text-fg sm:px-3"
       >
-        未译
+        {TRANSLATE_CHIP_OFF_LABEL}
       </button>
     );
   }
@@ -712,7 +774,7 @@ function TranslateStatusChip() {
         data-testid="statusline-translate-chip"
         className="flex h-full items-center whitespace-nowrap px-2 text-mut sm:px-3"
       >
-        翻译
+        翻译：{engineLabel}
       </span>
     );
   }
@@ -723,7 +785,7 @@ function TranslateStatusChip() {
       data-testid="statusline-translate-chip"
       className="flex h-full items-center whitespace-nowrap px-2 sm:px-3"
     >
-      翻译 ✓
+      翻译：{engineLabel} ✓
     </span>
   );
 }
