@@ -726,10 +726,12 @@ describe("useMeeting — lifecycle races", () => {
     });
 
     let engineAtSaveTime: string | undefined;
+    let summaryModelAtSaveTime: string | undefined;
     const saveSpy = vi
       .spyOn(useApp.getState(), "saveCurrentSession")
       .mockImplementation(async () => {
         engineAtSaveTime = useApp.getState().settings.engine;
+        summaryModelAtSaveTime = useApp.getState().summary?.model;
         return "sess-1";
       });
 
@@ -740,6 +742,9 @@ describe("useMeeting — lifecycle races", () => {
     });
 
     expect(engineAtSaveTime).toBe("demo");
+    // UI-1 (U-2): the sample report is in place before the save, so it
+    // lands in history with the session.
+    expect(summaryModelAtSaveTime).toBe("demo");
     expect(useApp.getState().settings.engine).toBe("tabaudio");
     expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
     saveSpy.mockRestore();

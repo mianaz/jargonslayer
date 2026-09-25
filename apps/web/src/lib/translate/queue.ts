@@ -12,9 +12,10 @@
 // contract — do not change it.
 
 import { NoKeyError, RateLimitApiError } from "../llm/client";
-import { SystemTranslatorUnavailableError, type TranslationProvider } from "./providers";
+import { DemoTranslationProvider, SystemTranslatorUnavailableError, type TranslationProvider } from "./providers";
 import type { Settings, TranscriptSegment } from "@jargonslayer/core/types";
 import { diagLog } from "../diag/log";
+import { bilingualActive } from "./bilingual";
 
 export interface TranslateQueueOptions {
   getSettings: () => Settings;
@@ -300,7 +301,7 @@ export class TranslateQueue {
    *  off or the segment is too long to bother translating. */
   pushSegment(seg: TranscriptSegment): void {
     if (this.stopped) return;
-    if (!this.opts.getSettings().bilingualTranscript) return;
+    if (!bilingualActive(this.opts.getSettings(), this.opts.provider instanceof DemoTranslationProvider)) return;
     if (seg.text.length > MAX_TEXT_CHARS) return;
 
     this.pending.push({ id: seg.id, text: seg.text });
@@ -314,7 +315,7 @@ export class TranslateQueue {
    *  per-segment so a mixed batch doesn't lose the valid ones. */
   backfill(segs: TranscriptSegment[]): void {
     if (this.stopped) return;
-    if (!this.opts.getSettings().bilingualTranscript) return;
+    if (!bilingualActive(this.opts.getSettings(), this.opts.provider instanceof DemoTranslationProvider)) return;
 
     const items = segs
       .filter((s) => s.text.length <= MAX_TEXT_CHARS)
@@ -502,7 +503,7 @@ export class TranslateQueue {
     // The toggle is checked at enqueue time too, but re-check here so
     // flipping it OFF during the debounce window doesn't fire one last
     // request the user just opted out of.
-    if (!this.opts.getSettings().bilingualTranscript) {
+    if (!bilingualActive(this.opts.getSettings(), this.opts.provider instanceof DemoTranslationProvider)) {
       this.pending = [];
       this.emitState();
       return;

@@ -6,19 +6,19 @@
 // word-tick cadence collapses to exact, assertable steps.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings, STTEvents, STTStatus } from "@jargonslayer/core/types";
-import { DemoEngine } from "../demo";
+import { DemoEngine, demoTranslationFor } from "../demo";
 
 type Recorded =
   | { kind: "status"; status: STTStatus; detail?: string }
-  | { kind: "interim"; text: string; speaker?: string }
-  | { kind: "final"; text: string; speaker?: string; startedAt?: number };
+  | { kind: "interim"; text: string; speaker?: string; sttSpeaker?: string }
+  | { kind: "final"; text: string; sttSpeaker?: string; startedAt?: number };
 
 function makeRecorder(): { events: STTEvents; seen: Recorded[] } {
   const seen: Recorded[] = [];
   const events: STTEvents = {
-    onInterim: (text, speaker) => seen.push({ kind: "interim", text, speaker }),
+    onInterim: (text, speaker, sttSpeaker) => seen.push({ kind: "interim", text, speaker, sttSpeaker }),
     onFinal: (text, opts) =>
-      seen.push({ kind: "final", text, speaker: opts?.speaker, startedAt: opts?.startedAt }),
+      seen.push({ kind: "final", text, sttSpeaker: opts?.sttSpeaker, startedAt: opts?.startedAt }),
     onStatus: (status, detail) => seen.push({ kind: "status", status, detail }),
   };
   return { events, seen };
@@ -55,7 +55,8 @@ describe("DemoEngine", () => {
     expect(seen[1]).toEqual({
       kind: "interim",
       text: "Okay everyone, let's",
-      speaker: "Sarah",
+      speaker: "对方",
+      sttSpeaker: "CH_SYS",
     });
   });
 
@@ -74,7 +75,7 @@ describe("DemoEngine", () => {
     expect(finals[0]).toEqual({
       kind: "final",
       text: FIRST_LINE,
-      speaker: "Sarah",
+      sttSpeaker: "CH_SYS",
       // The engine stamps line start, not finalize time — the fake clock
       // has advanced ~2s by now, so this catches a Date.now()-at-final bug.
       startedAt: 5000,
@@ -95,8 +96,12 @@ describe("DemoEngine", () => {
     expect(finals).toHaveLength(16);
     expect(finals[0].text).toBe(FIRST_LINE);
     expect(finals[finals.length - 1].text).toBe(LAST_LINE);
-    // Three scripted speakers, all present.
-    expect(new Set(finals.map((f) => f.speaker))).toEqual(new Set(["Sarah", "Mike", "Lily"]));
+    // Dual-capture framing: both channels present, and the listener's
+    // own mic is the minority (4 of 16 lines).
+    expect(new Set(finals.map((f) => f.sttSpeaker))).toEqual(new Set(["CH_MIC", "CH_SYS"]));
+    expect(finals.filter((f) => f.sttSpeaker === "CH_MIC")).toHaveLength(4);
+    // Every scripted final has a recorded translation to replay.
+    for (const f of finals) expect(demoTranslationFor(f.text)).toMatch(/[\u4e00-\u9fff]/);
 
     const last = seen[seen.length - 1];
     expect(last).toEqual({ kind: "status", status: "idle", detail: "demo_finished" });
@@ -132,5 +137,10 @@ describe("DemoEngine", () => {
       status: "idle",
       detail: "demo_finished",
     });
+  });
+
+  it("demoTranslationFor trims its input and misses on unscripted text", () => {
+    expect(demoTranslationFor(`  ${FIRST_LINE} `)).toBe(demoTranslationFor(FIRST_LINE));
+    expect(demoTranslationFor("not in the script")).toBeUndefined();
   });
 });

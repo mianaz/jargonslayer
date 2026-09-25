@@ -10,7 +10,7 @@
 // pattern (no @testing-library/react in this repo's test stack).
 
 import { act } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { useLatencyStats } from "../../lib/stt/latencyStats";
@@ -26,7 +26,8 @@ import StatusLine, {
   AI_STATUS_CHIP_GLYPH,
   AI_STATUS_CHIP_UNCONFIGURED_LABEL,
   DETECT_MODE_LABEL,
-  ENGINE_SELECT_PLACEHOLDER,
+  ENGINE_SELECT_DEMO_LABEL,
+  ENGINE_SELECT_IMPORT_LABEL,
   LOCAL_SIDECAR_LABEL,
   shortModelName,
   SIDECAR_DOWN_HINT_WEB,
@@ -941,7 +942,7 @@ describe("StatusLine — engine dropdown", () => {
     expect(select().disabled).toBe(false);
   });
 
-  it("shows a disabled 选择引擎 placeholder while engine is demo (mirrors the old mobile <select>'s own placeholder)", async () => {
+  it("names the demo in a disabled 演示 placeholder while engine is demo (U-4: never a select with no value)", async () => {
     useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
     renderStatusLine();
     await act(async () => {
@@ -954,7 +955,18 @@ describe("StatusLine — engine dropdown", () => {
     );
     expect(placeholder).toBeDefined();
     expect(placeholder!.disabled).toBe(true);
-    expect(placeholder!.textContent).toBe(ENGINE_SELECT_PLACEHOLDER);
+    expect(placeholder!.textContent).toBe(ENGINE_SELECT_DEMO_LABEL);
+  });
+
+  it("names an import session in a disabled 导入 placeholder", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "import" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const placeholder = Array.from(select().querySelectorAll("option")).find((o) => o.value === "");
+    expect(placeholder!.textContent).toBe(ENGINE_SELECT_IMPORT_LABEL);
   });
 
   it("explains that recognizer and source are separate controls", async () => {
@@ -1286,6 +1298,13 @@ describe("StatusLine — 翻译 status chip", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
+  // UI-1: a LIVE demo gets its own passive chip (演示翻译), so these
+  // live-meeting cases pin a real engine instead of inheriting the
+  // fresh-install default engine "demo".
+  beforeEach(() => {
+    useApp.setState((s) => ({ settings: { ...s.settings, engine: "whisper" } }));
+  });
+
   afterEach(() => {
     if (root) {
       act(() => root!.unmount());
@@ -1349,6 +1368,21 @@ describe("StatusLine — 翻译 status chip", () => {
     });
 
     expect(container!.querySelector('[data-testid="statusline-translate-chip"]')).not.toBeNull();
+  });
+
+  it("a live demo shows a passive 演示翻译 chip even with the toggle off (UI-1: names the replay, offers no toggle)", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, engine: "demo", bilingualTranscript: false, language: "en-US", explainLanguage: "zh" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+    const el = container!.querySelector('[data-testid="statusline-translate-chip"]');
+    expect(el!.textContent).toBe("演示翻译");
+    expect(el!.tagName).toBe("SPAN");
+    expect(useApp.getState().settings.bilingualTranscript).toBe(false);
   });
 
   it("bilingualTranscript off renders a clickable 未译 button that flips the setting on", async () => {

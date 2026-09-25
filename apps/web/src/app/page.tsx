@@ -385,7 +385,10 @@ export default function Home() {
                 setImportInitialTab(tab);
                 setImportHubOpen(true);
               }}
-              onDemo={() => void startDemo()}
+              // U-9: while the tutorial is up, its own primary 「$ demo」
+              // button is the screen's one demo CTA; the inline link
+              // would otherwise peek out behind the dialog.
+              onDemo={helpOpen ? undefined : () => void startDemo()}
             />
           )}
         </section>

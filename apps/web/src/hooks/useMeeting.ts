@@ -8,7 +8,7 @@ import { CH_MIC_SPEAKER, CH_SYS_SPEAKER, useApp, currentSessionSnapshot, getMeet
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
-import { langPairFromSettings, resolveTranslationProvider, stopSystemTranslator } from "../lib/translate/providers";
+import { DemoTranslationProvider, langPairFromSettings, resolveTranslationProvider, stopSystemTranslator } from "../lib/translate/providers";
 import { diagLog } from "../lib/diag/log";
 import {
   armLiveness,
@@ -36,6 +36,7 @@ import type { DomainTag } from "@jargonslayer/core/detect/dictionary-data";
 import { deriveSenseContext } from "../lib/detect/senseContext";
 import { inferDomainsFromKeywords } from "../lib/detect/domainKeywords";
 import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
+import { buildDemoReport } from "../lib/demoReport";
 
 // Live bilingual transcript (#42): how many of the most recent
 // finalized segments to catch up when the toggle flips OFF->ON
@@ -791,7 +792,16 @@ export function useMeeting(): UseMeetingResult {
               ? engine.kind === "appaudio"
                 ? "音频捕获已结束，会议已保存到历史记录"
                 : "共享已结束，会议已保存到历史记录"
-              : "演示结束，打开右侧「纪要」标签生成会后报告试试";
+              : "演示结束，打开右侧「纪要」标签看演示报告";
+          // UI-1 (U-2): a demo that played to its scripted end gets its
+          // sample report BEFORE runStopFlow saves, so the report lands
+          // in history with the session like a generated one would. An
+          // early 结束 never reaches this branch (doStop path), so a
+          // report never describes lines that weren't played.
+          if (detail === "demo_finished") {
+            const st = useApp.getState();
+            st.setSummary(buildDemoReport(st.segments, st.cards, st.terms));
+          }
           void runStopFlow()
             .then((savedOk) => {
               // H1 fix (Sol adversarial review): don't claim "已保存到
@@ -1075,7 +1085,15 @@ export function useMeeting(): UseMeetingResult {
     // comment for the full activation contract; LlmTranslationProvider's
     // prepare() is a no-op, so this is harmless when the resolved
     // provider is (as by far most commonly) "llm".
-    const provider = resolveTranslationProvider(() => useApp.getState().settings);
+    // UI-1: the demo replays its script's recorded translations (see
+    // DemoTranslationProvider) instead of reaching any real engine, and
+    // the queue keys its always-on lane off this exact provider
+    // instance (translate/bilingual.ts). Same engine snapshot
+    // attachEngine uses to pick DemoEngine just below.
+    const provider =
+      useApp.getState().settings.engine === "demo"
+        ? new DemoTranslationProvider()
+        : resolveTranslationProvider(() => useApp.getState().settings);
     provider.prepare(langPairFromSettings(useApp.getState().settings));
     const translateQueue = new TranslateQueue({
       getSettings: () => useApp.getState().settings,
