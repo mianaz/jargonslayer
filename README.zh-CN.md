@@ -19,7 +19,7 @@
 
 **简体中文** · [English](README.md) · [**在线体验**](https://apps.bioinfospace.com/jargonslayer) · [**官网与文档**](https://mianaz.github.io/jargonslayer/)
 
-<img src="assets/live.png" alt="JargonSlayer 会议实时视图：左侧为分块转录流，高亮标注表达；右侧为实时释义卡片" width="920" />
+<img src="assets/live.png" alt="JargonSlayer 会议实时视图：左侧为分块双语转录流（每句英文下附中文翻译，「我」与各位说话人分开标注），高亮标注表达；右侧为实时释义卡片" width="920" />
 
 </div>
 

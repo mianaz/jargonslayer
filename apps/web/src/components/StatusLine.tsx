@@ -44,7 +44,8 @@ import {
 import { KEY_STATUS_LABEL, deriveKeyStatus } from "@/lib/settings/keyStatus";
 import { sttProviderKeyValue } from "@/lib/settings/keysCatalog";
 import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
-import { langPairFromSettings } from "@/lib/translate/providers";
+import { isSystemTranslatorSupported, langPairFromSettings } from "@/lib/translate/providers";
+import { DEEPL_WEB_DISABLED_REASON, YOUDAO_WEB_DISABLED_REASON } from "@/components/settings/TranslationEngineRow";
 import { isEngineControlBusy } from "@/components/Header";
 import TaskTray from "@/components/TaskTray";
 import AiStatusPanel, { deriveHealthStatus, type AiHealthStatus } from "@/components/AiStatusPanel";
@@ -53,6 +54,7 @@ import { resolveTaskCreds } from "@/lib/llm/taskConfig";
 import { useDirectTransport } from "@/lib/llm/client";
 import { useOverlayA11y } from "@/lib/a11y";
 import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
+import { bilingualActive } from "@/lib/translate/bilingual";
 
 // Exported (tech-debt ledger #4, 2026-07-17): StatusLine.test.tsx
 // imports this instead of re-pinning its own copy of the zh labels, so
@@ -74,6 +76,39 @@ export const DETECT_MODE_LABEL: Record<string, string> = {
 // hint below, both pinned by exact-equality assertions in
 // StatusLine.test.tsx.
 export const ENGINE_SELECT_PLACEHOLDER = "引擎";
+export const ENGINE_SELECT_DEMO_LABEL = "演示";
+export const ENGINE_SELECT_IMPORT_LABEL = "导入";
+// The translate chip reads as a setting ("翻译：关" / "翻译：系统"), not as a status ("未译" read as "not
+// translated", with no hint that it was a switch). Short engine names
+// mirror TranslationEngineRow's option labels.
+export const TRANSLATE_CHIP_ENGINE_LABEL: Record<Settings["translateEngine"], string> = {
+  system: "系统",
+  deepl: "DeepL",
+  youdao: "有道",
+  llm: "AI",
+};
+export const TRANSLATE_CHIP_OFF_LABEL = "翻译：关";
+export const TRANSLATE_CHIP_UNAVAILABLE_LABEL = "翻译：不可用";
+
+/** Why the chosen translation engine cannot run on THIS surface, or null
+ *  when it can. Same limits TranslationEngineRow already disables in
+ *  Settings: a plain browser can't reach DeepL/有道 (no CORS), and
+ *  系统翻译 there needs Chrome's on-device Translator API. The native
+ *  shells (desktop/iOS) run every engine; their per-pair readiness is
+ *  the queue's own stalled/dead states, not this gate. */
+export function translateUnavailableReason(
+  engine: Settings["translateEngine"],
+  opts: { native: boolean; systemTranslatorSupported: boolean },
+): string | null {
+  if (opts.native) return null;
+  if (engine === "deepl") return DEEPL_WEB_DISABLED_REASON;
+  if (engine === "youdao") return YOUDAO_WEB_DISABLED_REASON;
+  if (engine === "system" && !opts.systemTranslatorSupported) {
+    return "当前浏览器不支持系统翻译，可在设置里换成 AI 模型翻译";
+  }
+  return null;
+}
+
 export const SIDECAR_DOWN_HINT_WEB = "本地转录服务未连接——见 设置 → 转录引擎";
 
 // S10 field-fix #5: engines whose transcription actually flows through
@@ -265,12 +300,20 @@ function EngineDropdown() {
   // placeholder instead of a WRONG live option.
   const unmapped = !selectedOpt;
   // The unmapped engine's OWN name when ENGINE_CAPABILITIES still knows
-  // it (a real engine, just unavailable on this platform/build) — the
-  // generic ENGINE_SELECT_PLACEHOLDER stays reserved for demo/import,
-  // which were never real capture engines to begin with.
+  // it (a real engine, just unavailable on this platform/build).
+  // demo/import were never real capture engines, but they name
+  // themselves too: a fresh install's engine IS "demo" (开始监听
+  // there replays it), so the bare 「引擎」 placeholder read as a select
+  // with no value at all, and the law says both StatusLine selects
+  // always show their current value. ENGINE_SELECT_PLACEHOLDER is left
+  // for an engine kind nothing knows a label for.
   const unmappedLabel =
-    (ENGINE_CAPABILITIES as Partial<Record<STTEngineKind, { label: string }>>)[engine]?.label ??
-    ENGINE_SELECT_PLACEHOLDER;
+    engine === "demo"
+      ? ENGINE_SELECT_DEMO_LABEL
+      : engine === "import"
+        ? ENGINE_SELECT_IMPORT_LABEL
+        : ((ENGINE_CAPABILITIES as Partial<Record<STTEngineKind, { label: string }>>)[engine]?.label ??
+          ENGINE_SELECT_PLACEHOLDER);
 
   const selectValue = unmapped ? "" : isSidecarFamily(engine) ? LOCAL_SIDECAR_VALUE : engine;
 
@@ -595,10 +638,58 @@ function TranslateStatusChip() {
   const settings = useApp((s) => s.settings);
   const bilingualTranscript = settings.bilingualTranscript;
   const translateStatus = useApp((s) => s.translateStatus);
+  const status = useApp((s) => s.status);
   const updateSettings = useApp((s) => s.updateSettings);
   const showToast = useApp((s) => s.showToast);
 
+  // The demo replays recorded translations whatever the toggle
+  // says (translate/bilingual.ts). Truth rule: name the replay, don't
+  // claim an engine, and don't offer a toggle that wouldn't change it.
+  // Only while the demo actually runs: a fresh install's engine is
+  // "demo" at rest too, and there the user's own toggle is the truth.
+  const demoLive = settings.engine === "demo" && status !== "idle" && status !== "stopped";
+  if (demoLive && bilingualActive(settings, true)) {
+    return (
+      <span
+        data-testid="statusline-translate-chip"
+        title="演示：回放预先录好的翻译，不调用任何翻译引擎"
+        className="flex h-full items-center whitespace-nowrap px-2 sm:px-3"
+      >
+        演示翻译
+      </span>
+    );
+  }
+
+  const engineLabel = TRANSLATE_CHIP_ENGINE_LABEL[settings.translateEngine] ?? settings.translateEngine;
+
   if (!bilingualTranscript) {
+    // An en->en pair needs no engine at all: the off-button's own guard
+    // below says so, and that reason wins over "this engine can't run".
+    const offPair = langPairFromSettings(settings);
+    const unavailable =
+      offPair.source === offPair.target
+        ? null
+        : translateUnavailableReason(settings.translateEngine, {
+            native: IS_DESKTOP || IS_IOS,
+            systemTranslatorSupported: isSystemTranslatorSupported(),
+          });
+    if (unavailable) {
+      // Not a live switch here: turning it on would enable a lane that
+      // can never land a translation on this surface. Clicking says why
+      // (a disabled button would swallow the click and the reason).
+      return (
+        <button
+          type="button"
+          data-testid="statusline-translate-chip"
+          aria-disabled="true"
+          title={unavailable}
+          onClick={() => showToast(unavailable)}
+          className="flex h-full items-center whitespace-nowrap px-2 text-mut hover:bg-panel3 sm:px-3"
+        >
+          {TRANSLATE_CHIP_UNAVAILABLE_LABEL}
+        </button>
+      );
+    }
     return (
       <button
         type="button"
@@ -616,10 +707,10 @@ function TranslateStatusChip() {
           }
           updateSettings({ bilingualTranscript: true });
         }}
-        title="点击开启双语转录"
+        title={`点击开启双语转录（翻译引擎：${engineLabel}）`}
         className="flex h-full items-center whitespace-nowrap px-2 text-mut hover:bg-panel3 hover:text-fg sm:px-3"
       >
-        未译
+        {TRANSLATE_CHIP_OFF_LABEL}
       </button>
     );
   }
@@ -682,7 +773,7 @@ function TranslateStatusChip() {
         data-testid="statusline-translate-chip"
         className="flex h-full items-center whitespace-nowrap px-2 text-mut sm:px-3"
       >
-        翻译
+        翻译：{engineLabel}
       </span>
     );
   }
@@ -693,7 +784,7 @@ function TranslateStatusChip() {
       data-testid="statusline-translate-chip"
       className="flex h-full items-center whitespace-nowrap px-2 sm:px-3"
     >
-      翻译 ✓
+      翻译：{engineLabel} ✓
     </span>
   );
 }

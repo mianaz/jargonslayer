@@ -24,6 +24,7 @@ import { IS_IOS } from "../platform/ios";
 import { IS_DESKTOP } from "../platform/desktop";
 import { getInvoke } from "../desktop/tauriApi";
 import type { Settings, TranslateRequest, TranslateResponse } from "@jargonslayer/core/types";
+import { demoTranslationFor } from "../stt/demo";
 
 export interface TranslationLangPair {
   /** BCP-47 primary subtag of the transcript's own language, e.g. "en"
@@ -861,6 +862,36 @@ export function stopSystemTranslator(): Promise<void> {
 export function warmSystemTranslateProbeForStartup(settings: Settings): void {
   if (NATIVE_SYSTEM_TRANSLATE && settings.translateEngine === "system") {
     void probeSystemTranslateSupport(langPairFromSettings(settings));
+  }
+}
+
+// ---------------------------------------------------------------
+// Demo provider: chosen by useMeeting's start() alongside the
+// DemoEngine itself (never by resolveTranslationProvider, which stays a
+// pure function of translateEngine). Replays the DemoEngine script's
+// recorded translations through the real TranslateQueue, so the demo's
+// bilingual transcript exercises the same batching, state chip and
+// applyTranslations path as a live meeting. `kind` only exists for the
+// interface (the queue never branches on it); "system" is the honest
+// nearest: nothing leaves the device. A line outside the script (e.g.
+// a user edit after stop) is simply left untranslated.
+// ---------------------------------------------------------------
+
+export class DemoTranslationProvider implements TranslationProvider {
+  readonly kind: Settings["translateEngine"] = "system";
+
+  prepare(_langPair: TranslationLangPair): void {}
+
+  async translate(
+    items: TranslateRequest["segments"],
+    _lang: string,
+  ): Promise<TranslateResponse["translations"]> {
+    const out: TranslateResponse["translations"] = [];
+    for (const item of items) {
+      const text = demoTranslationFor(item.text);
+      if (text !== undefined) out.push({ id: item.id, text });
+    }
+    return out;
   }
 }
 

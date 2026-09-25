@@ -28,6 +28,7 @@ import { oversizedUntranslated, untranslatedSegments } from "@/lib/translate/gap
 import { runGapFill } from "@/lib/translate/gapfill";
 import { IS_IOS } from "@/lib/platform/ios";
 import CornellNote from "./CornellNote";
+import { isDemoReport } from "@/lib/demoReport";
 
 type PendingExportKind = "md" | "docx" | "copy" | "obsidian" | "notion" | "apple-notes";
 
@@ -456,10 +457,20 @@ function SummarizingState() {
   );
 }
 
+// The export row below stays live mid-meeting on purpose. Exporting what's
+// transcribed so far is a supported path (F4(b) only withholds 补全后导出
+// while the live queue runs), so the waiting copy says what those
+// buttons do now instead of the row being disabled.
 function WaitingState() {
+  const hasSegments = useApp((s) => s.segments.length > 0);
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <div className="text-sm text-mut">会议进行中，结束后在这里生成报告</div>
+      {hasSegments && (
+        <div data-testid="waiting-export-hint" className="max-w-xs text-xs leading-[1.7] text-mut">
+          下方按钮现在就能用，导出的是目前已转录的部分
+        </div>
+      )}
     </div>
   );
 }
@@ -480,6 +491,15 @@ function SummaryContent() {
   // shorthand so only the bottom side grows; top stays pt-3.
   return (
     <div className="scroll-thin flex-1 space-y-6 overflow-y-auto px-3 pt-3 pb-[calc(1.75rem+env(safe-area-inset-bottom))]">
+      {isDemoReport(summary) && (
+        <div
+          data-testid="demo-report-note"
+          className="border-l-2 border-lab-yellow bg-panel2 px-3 py-2 text-xs leading-[1.7] text-mut"
+        >
+          演示报告：为这段演示会议预先写好的样例。真实会议在设置里填好 API Key 后，结束时点「生成会议报告」。
+        </div>
+      )}
+
       <section>
         <div className="text-xs uppercase tracking-wide text-mut">主题</div>
         <div className="mt-2 text-sm text-fg">{summary.summary.topic.en}</div>

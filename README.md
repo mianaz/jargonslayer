@@ -19,7 +19,7 @@
 
 **English** · [简体中文](README.zh-CN.md) · [**Try It Live**](https://apps.bioinfospace.com/jargonslayer) · [**Website & Docs**](https://mianaz.github.io/jargonslayer/)
 
-<img src="assets/live.png" alt="JargonSlayer live meeting view: block-flow transcript with highlighted expressions on the left, real-time explanation cards on the right" width="920" />
+<img src="assets/live.png" alt="JargonSlayer live meeting view: bilingual block-flow transcript (English with its Chinese translation under each line, 我 for your own mic and named remote speakers) with highlighted expressions on the left, real-time explanation cards on the right" width="920" />
 
 </div>
 

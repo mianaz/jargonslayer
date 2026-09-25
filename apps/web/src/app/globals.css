@@ -255,7 +255,9 @@ html[data-fs="xl"] {
   line-height: var(--ts-leading, 1.7);
 }
 .ts-translation {
-  font-size: calc(0.75rem * var(--ts-scale, 1)); /* 12px base (text-xs) */
+  /* 14px base: universal rule, Chinese reading text >=14px (was 12px,
+     under the floor; the demo leads with this line). */
+  font-size: calc(0.875rem * var(--ts-scale, 1));
   line-height: var(--ts-leading, 1.7);
 }
 
