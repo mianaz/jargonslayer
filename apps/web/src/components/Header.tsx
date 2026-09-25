@@ -144,7 +144,7 @@ function formatElapsed(ms: number): string {
   return `${pad(min)}:${pad(sec)}`;
 }
 
-// U-5 (ui-upgrade-plan-2026-09): the header's DetectModeBadge is
+// The header's DetectModeBadge is
 // retired. Detect mode is one fact and gets one home, the StatusLine's
 // statusline-detect-toggle, which is interactive and sits beside the
 // other running-state chips (universal rule: each fact in exactly one

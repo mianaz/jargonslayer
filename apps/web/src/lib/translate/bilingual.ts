@@ -1,6 +1,6 @@
 // Whether the live translation lane should run.
 //
-// UI-1 (ui-upgrade-plan-2026-09 U-1): the demo replays recorded
+// The demo replays recorded
 // translations regardless of the user's own bilingualTranscript toggle,
 // so its first-run story shows the bilingual transcript. Derived here
 // instead of flipping the setting, so nothing about the demo can reach

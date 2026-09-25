@@ -793,7 +793,7 @@ export function useMeeting(): UseMeetingResult {
                 ? "音频捕获已结束，会议已保存到历史记录"
                 : "共享已结束，会议已保存到历史记录"
               : "演示结束，「纪要」里已放好这场演示的样例报告";
-          // UI-1 (U-2): a demo that played to its scripted end gets its
+          // A demo that played to its scripted end gets its
           // sample report BEFORE runStopFlow saves, so the report lands
           // in history with the session like a generated one would. An
           // early 结束 never reaches this branch (doStop path), so a
@@ -1085,7 +1085,7 @@ export function useMeeting(): UseMeetingResult {
     // comment for the full activation contract; LlmTranslationProvider's
     // prepare() is a no-op, so this is harmless when the resolved
     // provider is (as by far most commonly) "llm".
-    // UI-1: the demo replays its script's recorded translations (see
+    // The demo replays its script's recorded translations (see
     // DemoTranslationProvider) instead of reaching any real engine, and
     // the queue keys its always-on lane off this exact provider
     // instance (translate/bilingual.ts). Same engine snapshot

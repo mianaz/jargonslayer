@@ -78,8 +78,7 @@ export const DETECT_MODE_LABEL: Record<string, string> = {
 export const ENGINE_SELECT_PLACEHOLDER = "引擎";
 export const ENGINE_SELECT_DEMO_LABEL = "演示";
 export const ENGINE_SELECT_IMPORT_LABEL = "导入";
-// U-6 (ui-upgrade-plan-2026-09): the translate chip reads as a setting
-// ("翻译：关" / "翻译：系统"), not as a status ("未译" read as "not
+// The translate chip reads as a setting ("翻译：关" / "翻译：系统"), not as a status ("未译" read as "not
 // translated", with no hint that it was a switch). Short engine names
 // mirror TranslationEngineRow's option labels.
 export const TRANSLATE_CHIP_ENGINE_LABEL: Record<Settings["translateEngine"], string> = {
@@ -303,7 +302,7 @@ function EngineDropdown() {
   // The unmapped engine's OWN name when ENGINE_CAPABILITIES still knows
   // it (a real engine, just unavailable on this platform/build).
   // demo/import were never real capture engines, but they name
-  // themselves too (U-4): a fresh install's engine IS "demo" (开始监听
+  // themselves too: a fresh install's engine IS "demo" (开始监听
   // there replays it), so the bare 「引擎」 placeholder read as a select
   // with no value at all, and the law says both StatusLine selects
   // always show their current value. ENGINE_SELECT_PLACEHOLDER is left
@@ -643,7 +642,7 @@ function TranslateStatusChip() {
   const updateSettings = useApp((s) => s.updateSettings);
   const showToast = useApp((s) => s.showToast);
 
-  // UI-1: the demo replays recorded translations whatever the toggle
+  // The demo replays recorded translations whatever the toggle
   // says (translate/bilingual.ts). Truth rule: name the replay, don't
   // claim an engine, and don't offer a toggle that wouldn't change it.
   // Only while the demo actually runs: a fresh install's engine is

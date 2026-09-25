@@ -1,13 +1,12 @@
-// The demo meeting's post-meeting report (UI-1, ui-upgrade-plan-2026-09
-// U-2). A first-run web user has no API key, so 生成会议报告 would end
-// the demo on a 「需要 API Key」 toast and the bilingual report (and the
-// vault export behind it) would never be seen. The demo is a replay, so
-// its report is too: the summary text below is written for this exact
-// script (its topic, points and first decision follow a real report the
-// summarize pipeline produced for the same meeting, the README's
-// assets/summary.png). The bilingual transcript and flashcards are
-// built from what this run actually produced: the replayed
-// translations and the cards live detection surfaced.
+// The demo meeting's post-meeting report. A first-run web user has no
+// API key, so 生成会议报告 would end the demo on a 「需要 API Key」 toast,
+// and the bilingual report (and the vault export behind it) would never
+// be seen. The demo is a replay, so its report is too: the summary text
+// below is written for this exact script (its topic, points and first
+// decision follow a real report the summarize pipeline produced for the
+// same meeting). The bilingual transcript and flashcards are built from
+// what this run actually produced: the replayed translations and the
+// cards live detection surfaced.
 //
 // `model: "demo"` is the marker: SummaryPanel labels the report as a
 // sample, so it never passes for an LLM result.

@@ -320,10 +320,10 @@ describe("Header — chip-saved (E2E batch item 1)", () => {
   });
 });
 
-// U-5 (ui-upgrade-plan-2026-09): detect mode lives only in the
+// Detect mode lives only in the
 // StatusLine (statusline-detect-toggle, covered in StatusLine.test.tsx);
 // the header no longer repeats it in any mode.
-describe("Header — no detect-mode badge (U-5)", () => {
+describe("Header — no detect-mode badge", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
@@ -367,7 +367,7 @@ describe("Header — no detect-mode badge (U-5)", () => {
     expect(container!.textContent).not.toContain("AI 模式");
   });
 
-  it("D1c: the start, history and menu buttons grow to 44px on a coarse pointer", async () => {
+  it("the start, history and menu buttons grow to 44px on a coarse pointer", async () => {
     useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", detectMode: "dictionary" });
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");

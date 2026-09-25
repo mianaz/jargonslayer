@@ -73,7 +73,7 @@ export default function ReviewPage() {
     });
   };
 
-  // U-8: with nothing due, the dashboard's lead action is 翻卡浏览 —
+  // With nothing due, the dashboard's lead action is 翻卡浏览 —
   // same flip-then-scroll shape as handleStartReview above.
   const handleBrowse = () => {
     setMode("browse");

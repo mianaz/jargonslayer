@@ -163,7 +163,7 @@ function StatsStrip() {
 // bare `<ReviewDashboard>` render (e.g. this file's own tests) falls
 // back to the original scroll, so this component stays usable
 // standalone with no caller wiring required.
-// U-8 (ui-upgrade-plan-2026-09): with nothing due, 开始复习 pointed at an
+// With nothing due, 开始复习 pointed at an
 // empty queue. When the caller can switch modes (onBrowse), the lead's
 // one action becomes 翻卡浏览 instead, the review that exists today.
 function ReviewLead({ onStartReview, onBrowse }: { onStartReview?: () => void; onBrowse?: () => void }) {
@@ -368,7 +368,7 @@ export default function ReviewDashboard({
   loading: boolean;
   /** F8 fix round: see ReviewLead's own doc comment above. */
   onStartReview?: () => void;
-  /** U-8: see ReviewLead's own doc comment above. */
+  /** See ReviewLead's own doc comment above. */
   onBrowse?: () => void;
 }) {
   const sessions = useApp((s) => s.sessions);

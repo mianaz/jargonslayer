@@ -1,4 +1,4 @@
-// UI-1: the demo's translation lane. DemoTranslationProvider replays the
+// The demo's translation lane. DemoTranslationProvider replays the
 // DemoEngine script's recorded translations, and a queue built around it
 // runs even with the user's bilingualTranscript toggle off (the toggle is
 // never flipped, so nothing demo-only can persist). Every other provider

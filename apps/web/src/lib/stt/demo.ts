@@ -2,7 +2,7 @@
 // realistic ~2-minute quarterly-planning meeting so the product can
 // be evaluated without a mic or API key.
 //
-// UI-1 (ui-upgrade-plan-2026-09 U-1): the replay shows the product's
+// The replay shows the product's
 // headline, not just the cards. The listener's own lines arrive on the
 // mic channel (CH_MIC, resolved to 我 through the store's normal
 // dual-capture alias path in addFinal); the remote speakers keep their

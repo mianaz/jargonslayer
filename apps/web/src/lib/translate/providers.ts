@@ -866,7 +866,7 @@ export function warmSystemTranslateProbeForStartup(settings: Settings): void {
 }
 
 // ---------------------------------------------------------------
-// Demo provider (UI-1): chosen by useMeeting's start() alongside the
+// Demo provider: chosen by useMeeting's start() alongside the
 // DemoEngine itself (never by resolveTranslationProvider, which stays a
 // pure function of translateEngine). Replays the DemoEngine script's
 // recorded translations through the real TranslateQueue, so the demo's

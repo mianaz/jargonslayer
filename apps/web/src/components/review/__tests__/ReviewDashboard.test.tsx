@@ -110,9 +110,9 @@ describe("ReviewDashboard — IA reorder + skeleton/stat-numeral primitives (UI 
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });
 
-  // U-8: with nothing due, the lead's one action is 翻卡浏览 when the
+  // With nothing due, the lead's one action is 翻卡浏览 when the
   // caller can switch modes; with a card due it stays 开始复习 even then.
-  it("U-8: nothing due + onBrowse -> the CTA reads 翻卡浏览 and calls onBrowse, not onStartReview", async () => {
+  it("nothing due + onBrowse -> the CTA reads 翻卡浏览 and calls onBrowse, not onStartReview", async () => {
     useApp.setState({ learnset: {} });
     const onStartReview = vi.fn();
     const onBrowse = vi.fn();
@@ -131,7 +131,7 @@ describe("ReviewDashboard — IA reorder + skeleton/stat-numeral primitives (UI 
     expect(onStartReview).not.toHaveBeenCalled();
   });
 
-  it("U-8: a due card keeps 开始复习 even when onBrowse is supplied", async () => {
+  it("a due card keeps 开始复习 even when onBrowse is supplied", async () => {
     const onBrowse = vi.fn();
     await act(async () => {
       root!.render(<ReviewDashboard cache={{}} loading={false} onBrowse={onBrowse} />);

@@ -101,7 +101,7 @@ describe("useMeeting start() — TranslationProvider.prepare() ordering (A6)", (
     installFakeTranslator();
     // A real capture engine: with the fresh-install default engine
     // "demo", start() replays the demo's recorded translations instead
-    // (UI-1, DemoTranslationProvider) and never primes a Translator.
+    // (DemoTranslationProvider) and never primes a Translator.
     useApp.setState((s) => ({ settings: { ...s.settings, engine: "webspeech", translateEngine: "system" } }));
 
     act(() => {
@@ -124,7 +124,7 @@ describe("useMeeting start() — TranslationProvider.prepare() ordering (A6)", (
     expect(callOrder).toEqual(["engine.start() called"]);
   });
 
-  it("the demo (engine 'demo') never primes a real translator, even with translateEngine:'system' (UI-1: it replays recorded translations)", () => {
+  it("the demo (engine 'demo') never primes a real translator, even with translateEngine:'system' (it replays recorded translations)", () => {
     const fake = installFakeTranslator();
     useApp.setState((s) => ({ settings: { ...s.settings, engine: "demo", translateEngine: "system" } }));
 

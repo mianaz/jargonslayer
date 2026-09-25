@@ -947,7 +947,7 @@ describe("StatusLine — engine dropdown", () => {
     expect(select().disabled).toBe(false);
   });
 
-  it("names the demo in a disabled 演示 placeholder while engine is demo (U-4: never a select with no value)", async () => {
+  it("names the demo in a disabled 演示 placeholder while engine is demo (never a select with no value)", async () => {
     useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
     renderStatusLine();
     await act(async () => {
@@ -1303,7 +1303,7 @@ describe("StatusLine — 翻译 status chip", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
-  // UI-1: a LIVE demo gets its own passive chip (演示翻译), so these
+  // A LIVE demo gets its own passive chip (演示翻译), so these
   // live-meeting cases pin a real engine instead of inheriting the
   // fresh-install default engine "demo".
   beforeEach(() => {
@@ -1375,7 +1375,7 @@ describe("StatusLine — 翻译 status chip", () => {
     expect(container!.querySelector('[data-testid="statusline-translate-chip"]')).not.toBeNull();
   });
 
-  it("a live demo shows a passive 演示翻译 chip even with the toggle off (UI-1: names the replay, offers no toggle)", async () => {
+  it("a live demo shows a passive 演示翻译 chip even with the toggle off (names the replay, offers no toggle)", async () => {
     useApp.setState((s) => ({
       status: "listening",
       settings: { ...s.settings, engine: "demo", bilingualTranscript: false, language: "en-US", explainLanguage: "zh" },
@@ -1390,7 +1390,7 @@ describe("StatusLine — 翻译 status chip", () => {
     expect(useApp.getState().settings.bilingualTranscript).toBe(false);
   });
 
-  it("bilingualTranscript off renders a clickable 翻译：关 button that flips the setting on (U-6: reads as a setting)", async () => {
+  it("bilingualTranscript off renders a clickable 翻译：关 button that flips the setting on (reads as a setting)", async () => {
     useApp.setState((s) => ({
       status: "listening",
       settings: { ...s.settings, bilingualTranscript: false, translateEngine: "llm" },
@@ -1496,7 +1496,7 @@ describe("StatusLine — 翻译 status chip", () => {
     expect(chip().textContent).toBe(`翻译：${TRANSLATE_CHIP_ENGINE_LABEL.system} ✓`);
   });
 
-  it("U-6: an engine this browser can't run renders 翻译：不可用; clicking explains why and never enables the lane", async () => {
+  it("an engine this browser can't run renders 翻译：不可用; clicking explains why and never enables the lane", async () => {
     useApp.setState((s) => ({
       status: "listening",
       settings: { ...s.settings, bilingualTranscript: false, translateEngine: "deepl" },
@@ -1516,7 +1516,7 @@ describe("StatusLine — 翻译 status chip", () => {
     expect(useApp.getState().toast).toBe(DEEPL_WEB_DISABLED_REASON);
   });
 
-  it("U-6: 系统翻译 is a live switch only where the browser has the Translator API", async () => {
+  it("系统翻译 is a live switch only where the browser has the Translator API", async () => {
     useApp.setState((s) => ({
       status: "listening",
       settings: { ...s.settings, bilingualTranscript: false, translateEngine: "system" },
@@ -2227,7 +2227,7 @@ describe("StatusLine — no mascot perch (retired)", () => {
   );
 });
 
-describe("translateUnavailableReason (U-6)", () => {
+describe("translateUnavailableReason", () => {
   const web = { native: false, systemTranslatorSupported: false };
   it("native shells run every engine", () => {
     for (const e of ["system", "deepl", "youdao", "llm"] as const) {

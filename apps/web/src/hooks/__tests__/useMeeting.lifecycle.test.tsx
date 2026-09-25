@@ -742,7 +742,7 @@ describe("useMeeting — lifecycle races", () => {
     });
 
     expect(engineAtSaveTime).toBe("demo");
-    // UI-1 (U-2): the sample report is in place before the save, so it
+    // The sample report is in place before the save, so it
     // lands in history with the session.
     expect(summaryModelAtSaveTime).toBe("demo");
     expect(useApp.getState().settings.engine).toBe("tabaudio");

@@ -457,8 +457,7 @@ function SummarizingState() {
   );
 }
 
-// C5 (ui-review-2026-08-03, re-scoped in ui-upgrade-plan-2026-09): the
-// export row below stays live mid-meeting on purpose. Exporting what's
+// The export row below stays live mid-meeting on purpose. Exporting what's
 // transcribed so far is a supported path (F4(b) only withholds 补全后导出
 // while the live queue runs), so the waiting copy says what those
 // buttons do now instead of the row being disabled.

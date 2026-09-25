@@ -461,7 +461,7 @@ describe("SummaryPanel — export-path gate (v0.7.1 Chamber C)", () => {
     expect(container!.querySelector('[data-testid="export-cancel"]')).not.toBeNull();
   });
 
-  it("C5: mid-meeting, the waiting state says the live export row exports what's transcribed so far", async () => {
+  it("mid-meeting, the waiting state says the live export row exports what's transcribed so far", async () => {
     useApp.setState({ status: "listening" });
     await act(async () => {
       root!.render(<SummaryPanel />);

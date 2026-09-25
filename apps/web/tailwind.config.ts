@@ -4,7 +4,7 @@ export default {
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
-      // D1c (DESIGN.md v3.9b rule 3: >=44px on touch, >=28px with a
+      // Touch-target floor (>=44px on touch, >=28px with a
       // pointer): Tailwind 3.4 has no pointer variants, so `coarse:` is a
       // raw media screen. Keyed on the input device, not the width, so an
       // iPad gets touch targets and a narrow desktop window doesn't.
