@@ -33,7 +33,7 @@ import { resolveTaskCreds } from "../lib/llm/taskConfig";
 import { setSenseContext } from "@jargonslayer/core/detect/dictionary";
 import type { SenseContextInput } from "@jargonslayer/core/detect/dictionary";
 import type { DomainTag } from "@jargonslayer/core/detect/dictionary-data";
-import { deriveSenseContext } from "../lib/detect/senseContext";
+import { deriveSenseContext, type SenseContextDerivationInput } from "../lib/detect/senseContext";
 import { inferDomainsFromKeywords } from "../lib/detect/domainKeywords";
 import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 import { buildDemoReport } from "../lib/demoReport";
@@ -364,7 +364,7 @@ export function shouldDropContextResult(
  *  already have. */
 export function resolveSenseContext(input: {
   segments: { text: string }[];
-  terms: { senses?: { domain: string }[] }[];
+  terms: SenseContextDerivationInput["terms"];
   enabledPacks: string[] | null;
   inferredDomains: DomainTag[];
 }): SenseContextInput {

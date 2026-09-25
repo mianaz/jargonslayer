@@ -8,6 +8,7 @@
 // surfaces sort/merge expression+term cards identically.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { runnerUpSense } from "@/lib/cards/senseDisplay";
 import { ArrowLeft, CaretDown, ListBullets } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { toUnified, type UnifiedItem } from "@/lib/cards/unified";
@@ -43,10 +44,18 @@ function StripCardContent({ item }: { item: UnifiedItem }) {
   }
   if (item.kind === "term" && item.term) {
     const t = item.term;
+    const runnerUp = runnerUpSense(t);
     return (
       <>
         <span className="truncate font-mono text-sm font-semibold text-fg">{t.term}</span>
-        <span className="line-clamp-2 text-sm font-medium leading-[1.6] text-fg">{t.gloss_zh}</span>
+        <span className={`${runnerUp ? "line-clamp-1" : "line-clamp-2"} text-sm font-medium leading-[1.6] text-fg`}>
+          {t.gloss_zh}
+        </span>
+        {runnerUp && (
+          <span data-testid="sense-runner-up" className="truncate text-xs text-mut2">
+            或 {runnerUp.gloss_zh}
+          </span>
+        )}
       </>
     );
   }

@@ -805,6 +805,17 @@ interface AppState {
     >,
   ) => void;
   updateTerm: (id: string, patch: Partial<Pick<TermCard, "term" | "gloss_en" | "gloss_zh">>) => void;
+  // Sense-picker plan, Lane 1: the user tapped the 或 runner-up on an
+  // ambiguous multi-sense term card. Swaps the DISPLAYED sense (gloss_en/
+  // gloss_zh/type/senseId) to the named one from the card's own ranked
+  // snapshot and records the pin (TermCard.pinnedSenseId) so dedupe.ts
+  // never swaps it back and deriveSenseContext treats the pinned
+  // sense's domain as full-weight evidence. Unlike updateTerm this is a
+  // LIVE affordance — a card's meaning is exactly what the listener
+  // needs to fix mid-meeting — so it is allowed in every status. No-op
+  // when the id or senseId is unknown. Pinning the sense the card
+  // already shows is allowed (it just locks it).
+  pinTermSense: (id: string, senseId: string) => void;
 
   // H1 fix (Sol adversarial review): null now ALSO covers "the
   // underlying storage.saveSession write failed" (previously null only
@@ -2903,6 +2914,38 @@ export const useApp = create<AppState>((set, get) => ({
       return;
     }
     set({ terms: get().terms.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
+  },
+
+  pinTermSense: (id, senseId) => {
+    const card = get().terms.find((t) => t.id === id);
+    const sense = card?.senses?.find((s) => s.senseId === senseId);
+    if (!card || !sense) return;
+    set({
+      terms: get().terms.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              gloss_en: sense.gloss_en,
+              gloss_zh: sense.gloss_zh,
+              type: sense.type ?? t.type,
+              senseId,
+              pinnedSenseId: senseId,
+              ambiguous: false,
+            }
+          : t,
+      ),
+    });
+    // useMeeting.ts's reactive sense-context effect re-derives the
+    // picker context from `terms` on this same change (the pin's
+    // domain enters domainWeights at 1.0), so no explicit
+    // setSenseContext call is needed here.
     if (get().status === "stopped" && get().segments.length > 0) {
       scheduleSessionSave(
         () => get().saveCurrentSession(),

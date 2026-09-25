@@ -289,7 +289,19 @@ export interface DetectedTerm {
   // itself imports FROM here), so every real producer (dictionary.ts)
   // and consumer validates/narrows against the real DomainTag enum at
   // its own boundary instead.
-  senses?: { senseId: string; gloss_en: string; gloss_zh: string; domain: string; score: number }[];
+  // `type` (optional, additive — Lane 1 of the sense-picker plan) is the
+  // sense's OWN TermType when it declared one, so a consumer swapping the
+  // displayed sense (dedupe.ts's in-place swap, the store's user pin) can
+  // carry the right badge along with the gloss; absent = inherit the
+  // card's current type.
+  senses?: {
+    senseId: string;
+    gloss_en: string;
+    gloss_zh: string;
+    domain: string;
+    score: number;
+    type?: TermType;
+  }[];
   // True when the top two sense scores are within 0.15 of each other,
   // or (only when a sense context is actually available) the chosen
   // sense's own domain carries zero weight in it — i.e. this pick is a
@@ -332,6 +344,16 @@ export interface TermCard extends DetectedTerm {
   count: number;
   source: DetectionSource;
   lastDictSeenAt?: number; // see ExpressionCard.lastDictSeenAt
+  // Sense-picker plan, Lane 1: the user tapped the 或 runner-up on an
+  // ambiguous multi-sense card and chose this sense for the rest of the
+  // meeting. Set by the store's pinTermSense; honoured by dedupe.ts's
+  // mergeTerms (no later dictionary hit swaps the displayed sense, no LLM
+  // hit overwrites the gloss, `ambiguous` stays false) and by apps/web's
+  // deriveSenseContext (the pinned sense's domain enters domainWeights at
+  // full weight — the user just told us what this meeting is about).
+  // Persisted with the session like every other card field; a fresh
+  // meeting starts with no terms, so no explicit reset is needed.
+  pinnedSenseId?: string;
 }
 
 // ---------- API contracts ----------

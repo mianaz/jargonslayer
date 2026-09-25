@@ -59,6 +59,7 @@ function makeTerm(overrides: Partial<TermCard> = {}): TermCard {
 // OWN action slots instead of an imported module.
 const REAL_UPDATE_CARD = useApp.getState().updateCard;
 const REAL_UPDATE_TERM = useApp.getState().updateTerm;
+const REAL_PIN_TERM_SENSE = useApp.getState().pinTermSense;
 const REAL_ADD_CUSTOM_ENTRY = useApp.getState().addCustomEntry;
 const REAL_SHOW_TOAST = useApp.getState().showToast;
 
@@ -121,6 +122,7 @@ describe("CardsPanel — v0.5 Wave-1 Feature 7 inline card/term edit", () => {
       customEntries: [],
       updateCard: REAL_UPDATE_CARD,
       updateTerm: REAL_UPDATE_TERM,
+      pinTermSense: REAL_PIN_TERM_SENSE,
       addCustomEntry: REAL_ADD_CUSTOM_ENTRY,
       showToast: REAL_SHOW_TOAST,
     });
@@ -408,6 +410,128 @@ describe("CardsPanel — v0.5 Wave-1 Feature 7 inline card/term edit", () => {
       expect(updateTermSpy).not.toHaveBeenCalled();
       expect(container!.querySelector('[aria-label="英文释义"]')).toBeNull();
       expect(container!.textContent).toContain("Annual Recurring Revenue");
+    });
+  });
+
+  describe("TermCardRow — ambiguous multi-sense card shows the 或 runner-up (sense-picker plan, Lane 1)", () => {
+    const SENSES = [
+      {
+        senseId: "customer-acquisition-cost",
+        gloss_en: "Customer Acquisition Cost",
+        gloss_zh: "获客成本",
+        domain: "sales",
+        score: 0.6,
+      },
+      {
+        senseId: "cancer-associated-cachexia",
+        gloss_en: "Cancer-Associated Cachexia",
+        gloss_zh: "癌症相关恶病质",
+        domain: "pharma",
+        score: 0.5,
+        type: "acronym" as const,
+      },
+    ];
+    function ambiguousCac(overrides: Partial<TermCard> = {}): TermCard {
+      return makeTerm({
+        id: "t-cac",
+        normKey: "CAC",
+        term: "CAC",
+        gloss_en: "Customer Acquisition Cost",
+        gloss_zh: "获客成本",
+        senseId: "customer-acquisition-cost",
+        senses: SENSES,
+        ambiguous: true,
+        ...overrides,
+      });
+    }
+    const runnerUpEls = () =>
+      Array.from(container!.querySelectorAll('[data-testid="sense-runner-up"]'));
+
+    it("renders exactly one 或 line naming the runner-up gloss, and it is a live pin button on the expanded card", async () => {
+      const pinSpy = vi.fn();
+      useApp.setState({
+        cards: [],
+        terms: [ambiguousCac()],
+        status: "listening",
+        pinTermSense: pinSpy,
+      });
+      render();
+      await act(async () => {
+        root!.render(<CardsPanel />);
+      });
+
+      const els = runnerUpEls();
+      expect(els).toHaveLength(1);
+      expect(els[0].textContent).toBe("或 癌症相关恶病质");
+      expect(els[0].tagName).toBe("BUTTON");
+      // never more than two glosses live: the chosen one + the 或 line
+      expect(container!.textContent).toContain("获客成本");
+
+      await act(async () => {
+        els[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(pinSpy).toHaveBeenCalledTimes(1);
+      expect(pinSpy).toHaveBeenCalledWith("t-cac", "cancer-associated-cachexia");
+    });
+
+    it("a confident (non-ambiguous, unpinned) multi-sense card stays one line", async () => {
+      useApp.setState({
+        cards: [],
+        terms: [ambiguousCac({ ambiguous: false })],
+        status: "listening",
+      });
+      render();
+      await act(async () => {
+        root!.render(<CardsPanel />);
+      });
+      expect(runnerUpEls()).toHaveLength(0);
+      expect(container!.textContent).not.toContain("或 ");
+    });
+
+    it("a pinned card keeps the 或 line (pointing at the OTHER sense) so the user can switch back", async () => {
+      useApp.setState({
+        cards: [],
+        terms: [
+          ambiguousCac({
+            ambiguous: false,
+            gloss_zh: "癌症相关恶病质",
+            gloss_en: "Cancer-Associated Cachexia",
+            senseId: "cancer-associated-cachexia",
+            pinnedSenseId: "cancer-associated-cachexia",
+          }),
+        ],
+        status: "listening",
+      });
+      render();
+      await act(async () => {
+        root!.render(<CardsPanel />);
+      });
+      const els = runnerUpEls();
+      expect(els).toHaveLength(1);
+      expect(els[0].textContent).toBe("或 获客成本");
+    });
+
+    it("the collapsed row shows the 或 line as plain text (the row itself is the expand button)", async () => {
+      // The panel auto-expands the newest three cards (AUTO_EXPANDED_COUNT);
+      // three filler terms push the ambiguous one into the collapsed tail.
+      useApp.setState({
+        cards: [],
+        terms: [
+          ambiguousCac({ id: "t-old", firstSeenAt: 1000, lastSeenAt: 1000 }),
+          makeTerm({ id: "f1", normKey: "ARR", firstSeenAt: 2000, lastSeenAt: 2000 }),
+          makeTerm({ id: "f2", normKey: "MRR", term: "MRR", firstSeenAt: 3000, lastSeenAt: 3000 }),
+          makeTerm({ id: "f3", normKey: "NPS", term: "NPS", firstSeenAt: 4000, lastSeenAt: 4000 }),
+        ],
+        status: "listening",
+      });
+      render();
+      await act(async () => {
+        root!.render(<CardsPanel />);
+      });
+      const els = runnerUpEls();
+      expect(els).toHaveLength(1);
+      expect(els[0].tagName).toBe("DIV");
+      expect(els[0].textContent).toBe("或 癌症相关恶病质");
     });
   });
 

@@ -2311,6 +2311,128 @@ describe("restoreLiveDraft — materializes a RecoveryBanner draft into history 
   });
 });
 
+describe("pinTermSense — sense-picker plan, Lane 1 (user pins the 或 runner-up on an ambiguous card)", () => {
+  const cacCard = {
+    id: "t-cac",
+    normKey: "CAC",
+    firstSeenAt: 9000,
+    lastSeenAt: 9000,
+    count: 1,
+    source: "dictionary" as const,
+    term: "CAC",
+    type: "metric" as const,
+    gloss_en: "Customer Acquisition Cost",
+    gloss_zh: "获客成本",
+    senseId: "customer-acquisition-cost",
+    ambiguous: true,
+    senses: [
+      {
+        senseId: "customer-acquisition-cost",
+        gloss_en: "Customer Acquisition Cost",
+        gloss_zh: "获客成本",
+        domain: "sales",
+        score: 0.6,
+      },
+      {
+        senseId: "cancer-associated-cachexia",
+        gloss_en: "Cancer-Associated Cachexia",
+        gloss_zh: "癌症相关恶病质",
+        domain: "pharma",
+        score: 0.5,
+        type: "acronym" as const,
+      },
+    ],
+  };
+
+  const REAL_SAVE = useApp.getState().saveCurrentSession;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useApp.setState({
+      terms: [cacCard],
+      segments: [makeSegment({ id: "seg-1" })],
+      status: "listening",
+      meetingGen: 1,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    useApp.setState({ terms: [], segments: [], status: "idle", saveCurrentSession: REAL_SAVE });
+  });
+
+  it("swaps the displayed sense (glosses, type, senseId), records the pin and clears ambiguous — while LIVE", () => {
+    useApp.getState().pinTermSense("t-cac", "cancer-associated-cachexia");
+    const t = useApp.getState().terms[0];
+    expect(t.gloss_zh).toBe("癌症相关恶病质");
+    expect(t.gloss_en).toBe("Cancer-Associated Cachexia");
+    expect(t.type).toBe("acronym");
+    expect(t.senseId).toBe("cancer-associated-cachexia");
+    expect(t.pinnedSenseId).toBe("cancer-associated-cachexia");
+    expect(t.ambiguous).toBe(false);
+    // the ranked snapshot is untouched — the popover still lists both
+    expect(t.senses).toHaveLength(2);
+    // bookkeeping untouched
+    expect(t.count).toBe(1);
+    expect(t.id).toBe("t-cac");
+  });
+
+  it("pinning the sense already shown locks it without changing the glosses; a sense without its own type inherits the card's", () => {
+    useApp.getState().pinTermSense("t-cac", "customer-acquisition-cost");
+    const t = useApp.getState().terms[0];
+    expect(t.gloss_zh).toBe("获客成本");
+    expect(t.type).toBe("metric");
+    expect(t.pinnedSenseId).toBe("customer-acquisition-cost");
+    expect(t.ambiguous).toBe(false);
+  });
+
+  it("unknown card id or senseId is a no-op (no throw, no state change)", () => {
+    const before = useApp.getState().terms;
+    useApp.getState().pinTermSense("nope", "cancer-associated-cachexia");
+    useApp.getState().pinTermSense("t-cac", "nope");
+    expect(useApp.getState().terms).toBe(before);
+  });
+
+  it("a later dictionary re-hit through applyDetection keeps the pinned sense even when the heuristic winner clears the margin", () => {
+    useApp.getState().pinTermSense("t-cac", "cancer-associated-cachexia");
+    useApp.getState().applyDetection(
+      {
+        expressions: [],
+        terms: [
+          {
+            term: "CAC",
+            type: "metric",
+            gloss_en: "Customer Acquisition Cost",
+            gloss_zh: "获客成本",
+            senseId: "customer-acquisition-cost",
+            ambiguous: false,
+            senses: [
+              { ...cacCard.senses[0], score: 1.6 },
+              { ...cacCard.senses[1], score: 0.2 },
+            ],
+          },
+        ],
+      },
+      "dictionary",
+    );
+    const t = useApp.getState().terms[0];
+    expect(useApp.getState().terms).toHaveLength(1);
+    expect(t.senseId).toBe("cancer-associated-cachexia");
+    expect(t.gloss_zh).toBe("癌症相关恶病质");
+    expect(t.count).toBe(2);
+    expect(t.ambiguous).toBe(false);
+  });
+
+  it("once stopped, a pin schedules the post-stop re-save like any other card mutation", async () => {
+    const saveSpy = vi.fn(async () => "sid");
+    useApp.setState({ status: "stopped", saveCurrentSession: saveSpy as never });
+    useApp.getState().pinTermSense("t-cac", "cancer-associated-cachexia");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(saveSpy).toHaveBeenCalled();
+  });
+});
+
 describe("updateCard / updateTerm — v0.5 Wave-1 Feature 7 inline card edit (committed-mutation tripwire + post-stop re-save)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
