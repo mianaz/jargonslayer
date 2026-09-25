@@ -25,6 +25,7 @@ import { getPackName } from "@jargonslayer/core/detect/packs";
 import { handleButtonKeyDown } from "@/lib/a11y";
 import { CATEGORY_LABELS, TERM_TYPE_LABELS } from "@/lib/cardLabels";
 import { toUnified, type UnifiedItem } from "@/lib/cards/unified";
+import { runnerUpSense } from "@/lib/cards/senseDisplay";
 import {
   cardToCustomEntry,
   customEntrySurfaces,
@@ -644,9 +645,11 @@ function TermCardRow({
   // v0.5 Wave-1 Feature 7 — see the identical block in ExpressionCardRow.
   const status = useApp((s) => s.status);
   const updateTerm = useApp((s) => s.updateTerm);
+  const pinTermSense = useApp((s) => s.pinTermSense);
   const canEdit = status === "stopped";
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<TermDraft>(() => draftFromTerm(term));
+  const runnerUp = runnerUpSense(term);
 
   useEffect(() => {
     if (!expanded && editing) setEditing(false);
@@ -707,6 +710,11 @@ function TermCardRow({
         <KnownAffordance onVote={onKnownVote} onSuppress={onKnownSuppress} />
         {badgeRow}
         <div className="mt-2 truncate text-sm text-mut">{term.gloss_zh}</div>
+        {runnerUp && (
+          <div data-testid="sense-runner-up" className="mt-0.5 truncate text-xs text-mut2">
+            或 {runnerUp.gloss_zh}
+          </div>
+        )}
       </div>
     );
   }
@@ -754,6 +762,25 @@ function TermCardRow({
         <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
           {term.gloss_zh}
         </div>
+      )}
+
+      {!editing && runnerUp && (
+        // The 或 line is the pin affordance: one tap makes the runner-up
+        // the card's meaning for the rest of the meeting (store's
+        // pinTermSense). Live-allowed by design — see that action's doc.
+        <button
+          type="button"
+          data-testid="sense-runner-up"
+          aria-label={`改为 ${runnerUp.gloss_zh}`}
+          title={term.pinnedSenseId !== undefined ? "已选定当前释义，点击改选" : "词典拿不准，点击改选这个释义"}
+          onClick={(e) => {
+            e.stopPropagation();
+            pinTermSense(term.id, runnerUp.senseId);
+          }}
+          className="mt-1 block max-w-full truncate text-left text-xs text-mut2 underline decoration-dotted underline-offset-2 hover:text-fg"
+        >
+          或 {runnerUp.gloss_zh}
+        </button>
       )}
 
       {canEdit && (

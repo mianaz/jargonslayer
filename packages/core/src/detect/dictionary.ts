@@ -1707,6 +1707,7 @@ interface RankedSense {
   gloss_zh: string;
   domain: DomainTag;
   score: number;
+  type?: TermType;
 }
 
 interface SenseSelection {
@@ -1801,6 +1802,9 @@ function selectSense(
       gloss_zh: sense.gloss_zh,
       domain: sense.domain,
       score,
+      // Only when the sense declares its own type — absent means
+      // "inherit", exactly as `chosen.type ?? entry.type` below reads it.
+      ...(sense.type !== undefined ? { type: sense.type } : {}),
     })),
     ambiguous,
   };

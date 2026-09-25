@@ -16,6 +16,11 @@ import { PACK_DOMAINS } from "@jargonslayer/core/detect/packs";
 // preference that predates it.
 const INFERRED_DOMAIN_WEIGHT = 1.0;
 const ENABLED_PACK_DOMAIN_WEIGHT = 0.5;
+// Sense-picker plan, Lane 1: a sense the user PINNED on an ambiguous
+// card (TermCard.pinnedSenseId) is the strongest statement about what
+// this meeting is about that we ever get — same weight as live
+// inference, never less.
+const PINNED_SENSE_DOMAIN_WEIGHT = 1.0;
 
 /** Type guard (not just a boolean check) so TS actually narrows
  *  `string` -> `DomainTag` at each call site below — a plain
@@ -43,13 +48,32 @@ export interface SenseContextDerivationInput {
    *  in @jargonslayer/core/types (that file is a dependency-free leaf,
    *  so it can't reference the real DomainTag union) — validated
    *  against DOMAIN_TAGS below before ever being used as a Record key. */
-  terms: { senses?: { domain: string }[] }[];
+  terms: {
+    senses?: { senseId?: string; domain: string }[];
+    /** The sense the card currently SHOWS (DetectedTerm.senseId). When
+     *  present and found in `senses`, its domain is what counts for
+     *  cooccurrence — not senses[0]: after a hysteresis-blocked swap
+     *  (dedupe.ts's AMBIGUOUS_MARGIN gate) or a user pin, the displayed
+     *  sense and the heuristic's top rank can legitimately differ, and
+     *  the card the user is reading is the truth we want to reinforce. */
+    senseId?: string;
+    /** See TermCard.pinnedSenseId (core types.ts). */
+    pinnedSenseId?: string;
+  }[];
+}
+
+function displayedSenseDomain(term: SenseContextDerivationInput["terms"][number]): string | undefined {
+  const senses = term.senses;
+  if (!senses || senses.length === 0) return undefined;
+  const shown = term.senseId !== undefined ? senses.find((s) => s.senseId === term.senseId) : undefined;
+  return (shown ?? senses[0]).domain;
 }
 
 /** domainWeights: inferred domains at 1.0, PACK_DOMAINS' domain for
  *  each EXPLICITLY-enabled pack at 0.5 (never downgrading an inferred
- *  1.0 — Math.max, not overwrite). cooccurrence: fraction of `terms`
- *  whose chosen sense carries each domain, out of ALL detected terms
+ *  1.0 — Math.max, not overwrite), and the domain of every user-PINNED
+ *  sense at 1.0. cooccurrence: fraction of `terms`
+ *  whose displayed sense carries each domain, out of ALL detected terms
  *  (including senseless ones, which dilute the fraction but never
  *  contribute to any domain's count). Missing/never-seen domains are
  *  simply absent from the returned maps — T3's scoring formula already
@@ -67,12 +91,22 @@ export function deriveSenseContext(input: SenseContextDerivationInput): SenseCon
     }
   }
 
+  for (const term of input.terms) {
+    if (term.pinnedSenseId === undefined) continue;
+    const pinned = term.senses?.find((s) => s.senseId === term.pinnedSenseId);
+    if (!pinned || !isDomainTag(pinned.domain)) continue;
+    domainWeights[pinned.domain] = Math.max(
+      domainWeights[pinned.domain] ?? 0,
+      PINNED_SENSE_DOMAIN_WEIGHT,
+    );
+  }
+
   const cooccurrence: Partial<Record<DomainTag, number>> = {};
   const total = input.terms.length;
   if (total > 0) {
     const counts: Partial<Record<DomainTag, number>> = {};
     for (const term of input.terms) {
-      const domain = term.senses?.[0]?.domain;
+      const domain = displayedSenseDomain(term);
       // Defensive re-validation against the real enum — see this
       // field's own doc above for why the TYPE alone can't guarantee
       // it (types.ts's DetectedTerm.senses[].domain is loosely string).
