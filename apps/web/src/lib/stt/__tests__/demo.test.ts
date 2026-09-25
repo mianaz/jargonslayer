@@ -6,19 +6,25 @@
 // word-tick cadence collapses to exact, assertable steps.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings, STTEvents, STTStatus } from "@jargonslayer/core/types";
-import { DemoEngine } from "../demo";
+import { DemoEngine, demoTranslationFor } from "../demo";
 
 type Recorded =
   | { kind: "status"; status: STTStatus; detail?: string }
-  | { kind: "interim"; text: string; speaker?: string }
-  | { kind: "final"; text: string; speaker?: string; startedAt?: number };
+  | { kind: "interim"; text: string; speaker?: string; sttSpeaker?: string }
+  | { kind: "final"; text: string; speaker?: string; sttSpeaker?: string; startedAt?: number };
 
 function makeRecorder(): { events: STTEvents; seen: Recorded[] } {
   const seen: Recorded[] = [];
   const events: STTEvents = {
-    onInterim: (text, speaker) => seen.push({ kind: "interim", text, speaker }),
+    onInterim: (text, speaker, sttSpeaker) => seen.push({ kind: "interim", text, speaker, sttSpeaker }),
     onFinal: (text, opts) =>
-      seen.push({ kind: "final", text, speaker: opts?.speaker, startedAt: opts?.startedAt }),
+      seen.push({
+        kind: "final",
+        text,
+        ...(opts?.speaker !== undefined ? { speaker: opts.speaker } : {}),
+        ...(opts?.sttSpeaker !== undefined ? { sttSpeaker: opts.sttSpeaker } : {}),
+        startedAt: opts?.startedAt,
+      }),
     onStatus: (status, detail) => seen.push({ kind: "status", status, detail }),
   };
   return { events, seen };
@@ -56,6 +62,7 @@ describe("DemoEngine", () => {
       kind: "interim",
       text: "Okay everyone, let's",
       speaker: "Sarah",
+      sttSpeaker: undefined,
     });
   });
 
@@ -95,8 +102,15 @@ describe("DemoEngine", () => {
     expect(finals).toHaveLength(16);
     expect(finals[0].text).toBe(FIRST_LINE);
     expect(finals[finals.length - 1].text).toBe(LAST_LINE);
-    // Three scripted speakers, all present.
-    expect(new Set(finals.map((f) => f.speaker))).toEqual(new Set(["Sarah", "Mike", "Lily"]));
+    // The listener's 4 lines ride the mic channel (shown as 我); the two
+    // remote speakers keep their names and carry no channel id.
+    const mic = finals.filter((f) => f.sttSpeaker === "CH_MIC");
+    expect(mic).toHaveLength(4);
+    expect(mic.every((f) => f.speaker === undefined)).toBe(true);
+    const remote = finals.filter((f) => f.sttSpeaker === undefined);
+    expect(new Set(remote.map((f) => f.speaker))).toEqual(new Set(["Sarah", "Lily"]));
+    // Every scripted final has a recorded translation to replay.
+    for (const f of finals) expect(demoTranslationFor(f.text)).toMatch(/[\u4e00-\u9fff]/);
 
     const last = seen[seen.length - 1];
     expect(last).toEqual({ kind: "status", status: "idle", detail: "demo_finished" });
@@ -132,5 +146,10 @@ describe("DemoEngine", () => {
       status: "idle",
       detail: "demo_finished",
     });
+  });
+
+  it("demoTranslationFor trims its input and misses on unscripted text", () => {
+    expect(demoTranslationFor(`  ${FIRST_LINE} `)).toBe(demoTranslationFor(FIRST_LINE));
+    expect(demoTranslationFor("not in the script")).toBeUndefined();
   });
 });

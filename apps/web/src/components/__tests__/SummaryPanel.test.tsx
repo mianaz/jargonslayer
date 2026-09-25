@@ -461,6 +461,15 @@ describe("SummaryPanel — export-path gate (v0.7.1 Chamber C)", () => {
     expect(container!.querySelector('[data-testid="export-cancel"]')).not.toBeNull();
   });
 
+  it("mid-meeting, the waiting state says the live export row exports what's transcribed so far", async () => {
+    useApp.setState({ status: "listening" });
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+    expect(container!.querySelector('[data-testid="waiting-export-hint"]')!.textContent).toContain("目前已转录的部分");
+  });
+
   // F6 fix (v0.7.1 train-2 adversarial review): oversized segments (too
   // long for gap-fill to ever pick up — GAP_MAX_TEXT_CHARS) used to be
   // invisible to this gate entirely, so a meeting with ONLY oversized

@@ -31,8 +31,6 @@ import {
   Play,
   Question,
   Selection,
-  Shield,
-  ShieldCheck,
   Stop,
   Translate,
   UploadSimple,
@@ -146,75 +144,11 @@ function formatElapsed(ms: number): string {
   return `${pad(min)}:${pad(sec)}`;
 }
 
-function DetectModeBadge() {
-  const detectMode = useApp((s) => s.detectMode);
-  const detectBusy = useApp((s) => s.detectBusy);
-  const aiDetect = useApp((s) => s.settings.aiDetect);
-  const updateSettings = useApp((s) => s.updateSettings);
-  const setDetectMode = useApp((s) => s.setDetectMode);
-
-  const config =
-    detectMode === "llm"
-      ? { label: "AI 模式", cls: "text-lab-green", Icon: ShieldCheck }
-      : detectMode === "dictionary"
-        ? { label: "词典模式", cls: "text-lab-orange", Icon: Shield }
-        : { label: "关闭", cls: "text-mut", Icon: null };
-
-  const content = (
-    <>
-      {detectBusy && (
-        <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent whitespace-nowrap" />
-      )}
-      {!detectBusy && config.Icon && <config.Icon size={14} weight="regular" />}
-      {config.label}
-    </>
-  );
-
-  // hidden <md (#55): the bottom StatusLine shows the same mode text,
-  // and the mobile header row needs the width for the import/start
-  // buttons (S10: the engine select that used to share this row moved
-  // to StatusLine's own bottom-bar dropdown — see engineOptions.ts).
-  // Borderless (E2E feedback 2026-07-11): the old bordered span read as
-  // a disabled control even though it never did anything — chrome with
-  // no affordance behind it is worse than plain text. Border removed in
-  // every mode, including the interactive one below.
-  if (detectMode === "off") {
-    return (
-      <span
-        className={`hidden items-center gap-1.5 px-2.5 py-1 font-mono text-xs md:inline-flex ${config.cls}`}
-      >
-        {content}
-      </span>
-    );
-  }
-
-  return (
-    // Clickable, mirroring StatusLine.tsx's statusline-detect-toggle
-    // (same E2E batch item): flips settings.aiDetect. The label derives
-    // from detectMode (the scheduler's runtime state, see
-    // detect/scheduler.ts), which the scheduler only re-reads on its
-    // next segment/batch — so the click ALSO echoes the expected mode
-    // synchronously, or an idle meeting would show a dead button. The
-    // scheduler's own onModeChange remains authoritative and corrects
-    // the echo if reality differs (e.g. key-less fallback downgrades
-    // llm back to dictionary). Deliberately duplicated here rather than
-    // extracted into a shared hook — see StatusLine.tsx's toggle for
-    // the twin copy.
-    <button
-      type="button"
-      data-testid="header-detect-toggle"
-      onClick={() => {
-        const next = !aiDetect;
-        updateSettings({ aiDetect: next });
-        setDetectMode(next ? "llm" : "dictionary");
-      }}
-      title="点击切换 AI 模式（词典模式始终开启）"
-      className={`hidden items-center gap-1.5 px-2.5 py-1 font-mono text-xs hover:text-fg md:inline-flex ${config.cls}`}
-    >
-      {content}
-    </button>
-  );
-}
+// The header's DetectModeBadge is
+// retired. Detect mode is one fact and gets one home, the StatusLine's
+// statusline-detect-toggle, which is interactive and sits beside the
+// other running-state chips (universal rule: each fact in exactly one
+// place per screen).
 
 // Auto meeting-context detection (field request: "need AI to auto
 // detect the context for better detection") — a small always-visible
@@ -394,7 +328,7 @@ function MobileImportButton({ onOpenImport }: { onOpenImport: () => void }) {
       onClick={onOpenImport}
       aria-label="导入"
       title="导入本地音频/视频或文稿"
-      className="flex h-8 w-8 shrink-0 items-center justify-center border border-edge bg-panel2 text-mut hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 md:hidden"
+      className="flex h-8 w-8 shrink-0 items-center justify-center border border-edge bg-panel2 text-mut hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 md:hidden coarse:h-11 coarse:w-11"
     >
       <UploadSimple size={14} weight="regular" />
     </button>
@@ -462,7 +396,7 @@ function TaskCenterLauncher({ onOpenTaskCenter }: { onOpenTaskCenter: () => void
       data-testid="btn-task-center"
       onClick={onOpenTaskCenter}
       title="后台任务"
-      className="relative flex h-9 items-center gap-1.5 border border-edge px-2.5 font-mono text-xs text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg whitespace-nowrap"
+      className="relative flex h-9 items-center gap-1.5 border border-edge px-2.5 coarse:h-11 font-mono text-xs text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg whitespace-nowrap"
     >
       <ListChecks size={16} weight="regular" />
       后台任务
@@ -641,7 +575,7 @@ function HamburgerMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="菜单"
-        className="flex h-9 w-9 items-center justify-center border border-edge text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg"
+        className="flex h-9 w-9 items-center justify-center border border-edge text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg coarse:h-11 coarse:w-11"
       >
         <List size={18} weight="regular" />
       </button>
@@ -1159,7 +1093,6 @@ export default function Header({
 
         <div className="ml-auto flex items-center gap-2">
           <ContextChip />
-          <DetectModeBadge />
           <ElapsedTimer />
 
           {(status === "idle" || status === "stopped") && (
@@ -1177,8 +1110,8 @@ export default function Header({
               // compete for this same row at all — they moved into the
               // ≡ menu — but iOS stays icon-only regardless; the row is
               // still tight without them).
-              className={`btn-terminal h-9 rounded-none bg-act font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap ${
-                IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
+              className={`btn-terminal h-9 coarse:h-11 rounded-none bg-act font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap ${
+                IS_IOS ? "flex w-9 coarse:w-11 items-center justify-center px-0" : "px-4"
               }`}
             >
               {IS_IOS ? <Play size={18} weight="fill" /> : "开始监听"}
@@ -1191,8 +1124,8 @@ export default function Header({
               disabled
               aria-label={IS_IOS ? "连接中" : undefined}
               title={IS_IOS ? "连接中" : undefined}
-              className={`h-9 cursor-not-allowed rounded-none bg-act/60 font-mono text-sm font-semibold text-ink whitespace-nowrap ${
-                IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
+              className={`h-9 coarse:h-11 cursor-not-allowed rounded-none bg-act/60 font-mono text-sm font-semibold text-ink whitespace-nowrap ${
+                IS_IOS ? "flex w-9 coarse:w-11 items-center justify-center px-0" : "px-4"
               }`}
             >
               {IS_IOS ? <CircleNotch size={18} weight="regular" className="animate-spin" /> : "连接中…"}
@@ -1206,8 +1139,8 @@ export default function Header({
               onClick={onPause}
               aria-label={IS_IOS ? "暂停" : undefined}
               title={IS_IOS ? "暂停" : undefined}
-              className={`h-9 rounded-none border border-edge font-mono text-sm text-fg hover:bg-panel3 whitespace-nowrap ${
-                IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
+              className={`h-9 coarse:h-11 rounded-none border border-edge font-mono text-sm text-fg hover:bg-panel3 whitespace-nowrap ${
+                IS_IOS ? "flex w-9 coarse:w-11 items-center justify-center px-0" : "px-4"
               }`}
             >
               {IS_IOS ? <Pause size={18} weight="regular" /> : "暂停"}
@@ -1221,8 +1154,8 @@ export default function Header({
               onClick={onResume}
               aria-label={IS_IOS ? "继续" : undefined}
               title={IS_IOS ? "继续" : undefined}
-              className={`btn-terminal h-9 rounded-none bg-act font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap ${
-                IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
+              className={`btn-terminal h-9 coarse:h-11 rounded-none bg-act font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap ${
+                IS_IOS ? "flex w-9 coarse:w-11 items-center justify-center px-0" : "px-4"
               }`}
             >
               {IS_IOS ? <Play size={18} weight="regular" /> : "继续"}
@@ -1236,8 +1169,8 @@ export default function Header({
               onClick={onStop}
               aria-label={IS_IOS ? "结束" : undefined}
               title={IS_IOS ? "结束" : undefined}
-              className={`btn-terminal flex h-9 items-center gap-2 rounded-none border border-lab-red font-mono text-sm font-semibold text-lab-red hover:bg-lab-red/10 whitespace-nowrap ${
-                IS_IOS ? "w-9 justify-center px-0" : "px-4"
+              className={`btn-terminal flex h-9 coarse:h-11 items-center gap-2 rounded-none border border-lab-red font-mono text-sm font-semibold text-lab-red hover:bg-lab-red/10 whitespace-nowrap ${
+                IS_IOS ? "w-9 coarse:w-11 justify-center px-0" : "px-4"
               }`}
             >
               <span className="dot-live h-2 w-2 rounded-full bg-lab-red whitespace-nowrap" />
@@ -1274,7 +1207,7 @@ export default function Header({
             onClick={onOpenHistory}
             aria-label="历史"
             title="历史"
-            className="flex h-9 w-9 items-center justify-center border border-edge text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg"
+            className="flex h-9 w-9 items-center justify-center border border-edge text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg coarse:h-11 coarse:w-11"
           >
             <ClockCounterClockwise size={18} weight="regular" />
           </button>

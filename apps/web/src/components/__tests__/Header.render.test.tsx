@@ -320,9 +320,10 @@ describe("Header — chip-saved (E2E batch item 1)", () => {
   });
 });
 
-// E2E batch item 2: mirrors StatusLine.test.tsx's detect-toggle
-// coverage for the header's own copy of the control (header-detect-toggle).
-describe("Header — header-detect-toggle (E2E batch item 2)", () => {
+// Detect mode lives only in the
+// StatusLine (statusline-detect-toggle, covered in StatusLine.test.tsx);
+// the header no longer repeats it in any mode.
+describe("Header — no detect-mode badge", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
@@ -338,13 +339,12 @@ describe("Header — header-detect-toggle (E2E batch item 2)", () => {
     useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", detectMode: "llm" });
   });
 
-  async function renderHeader() {
-    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
-      true;
+  it.each(["llm", "dictionary", "off"] as const)("detectMode %s: the header renders no mode label", async (mode) => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", detectMode: mode });
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-
     await act(async () => {
       root!.render(
         <Header
@@ -361,41 +361,37 @@ describe("Header — header-detect-toggle (E2E batch item 2)", () => {
         />,
       );
     });
-  }
-
-  it("clicking the badge flips settings.aiDetect and echoes detectMode synchronously, borderless throughout", async () => {
-    useApp.setState({
-      settings: { ...DEFAULT_SETTINGS, aiDetect: true },
-      status: "idle",
-      detectMode: "llm",
-    });
-    await renderHeader();
-
-    const toggle = container!.querySelector('[data-testid="header-detect-toggle"]');
-    expect(toggle).not.toBeNull();
-    expect(toggle!.tagName).toBe("BUTTON");
-    expect(toggle!.className).not.toMatch(/\bborder\b/);
-
-    await act(async () => {
-      toggle!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(useApp.getState().settings.aiDetect).toBe(false);
-    // Synchronous echo — same rationale as StatusLine's toggle: the
-    // scheduler only re-reads settings on its next segment/batch.
-    expect(useApp.getState().detectMode).toBe("dictionary");
-  });
-
-  it("detectMode 'off' renders a non-interactive, borderless span (no toggle button)", async () => {
-    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", detectMode: "off" });
-    await renderHeader();
 
     expect(container!.querySelector('[data-testid="header-detect-toggle"]')).toBeNull();
-    const badge = Array.from(container!.querySelectorAll("span")).find((el) =>
-      el.textContent?.includes("关闭"),
-    );
-    expect(badge).toBeDefined();
-    expect(badge!.className).not.toMatch(/\bborder\b/);
+    expect(container!.textContent).not.toContain("词典模式");
+    expect(container!.textContent).not.toContain("AI 模式");
+  });
+
+  it("the start, history and menu buttons grow to 44px on a coarse pointer", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", detectMode: "dictionary" });
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <Header
+          onStart={noop}
+          onPause={noop}
+          onResume={noop}
+          onStop={noop}
+          onDemo={noop}
+          onOpenHistory={noop}
+          onOpenSettings={noop}
+          onOpenHelp={noop}
+          onOpenImport={noop}
+          onOpenTaskCenter={noop}
+        />,
+      );
+    });
+    for (const sel of ['[data-testid="btn-start"]', '[data-testid="btn-history"]', 'button[aria-label="菜单"]']) {
+      expect(container!.querySelector(sel)!.className).toContain("coarse:h-11");
+    }
   });
 });
 

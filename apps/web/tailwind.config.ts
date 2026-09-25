@@ -4,6 +4,13 @@ export default {
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      // Touch-target floor (>=44px on touch, >=28px with a
+      // pointer): Tailwind 3.4 has no pointer variants, so `coarse:` is a
+      // raw media screen. Keyed on the input device, not the width, so an
+      // iPad gets touch targets and a narrow desktop window doesn't.
+      screens: {
+        coarse: { raw: "(pointer: coarse)" },
+      },
       colors: {
         // v3 主题基座:暗黑科技 · 会议 REPL (docs/DESIGN.md v3.1) — pure
         // neutral-black surface ladder, R=G=B outside of the lab-*

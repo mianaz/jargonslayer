@@ -99,7 +99,10 @@ describe("useMeeting start() — TranslationProvider.prepare() ordering (A6)", (
 
   it("translateEngine:'system' — Translator.create() fires BEFORE engine.start(), within start()'s own synchronous call (no await needed to observe it)", () => {
     installFakeTranslator();
-    useApp.setState((s) => ({ settings: { ...s.settings, translateEngine: "system" } }));
+    // A real capture engine: with the fresh-install default engine
+    // "demo", start() replays the demo's recorded translations instead
+    // (DemoTranslationProvider) and never primes a Translator.
+    useApp.setState((s) => ({ settings: { ...s.settings, engine: "webspeech", translateEngine: "system" } }));
 
     act(() => {
       // Exactly what a real click does: a synchronous call, result
@@ -112,6 +115,18 @@ describe("useMeeting start() — TranslationProvider.prepare() ordering (A6)", (
 
   it("translateEngine:'llm' (default) — prepare() is a no-op: no Translator.create() call, start() still reaches engine.start() normally", () => {
     const fake = installFakeTranslator();
+
+    act(() => {
+      void api!.start();
+    });
+
+    expect(fake.create).not.toHaveBeenCalled();
+    expect(callOrder).toEqual(["engine.start() called"]);
+  });
+
+  it("the demo (engine 'demo') never primes a real translator, even with translateEngine:'system' (it replays recorded translations)", () => {
+    const fake = installFakeTranslator();
+    useApp.setState((s) => ({ settings: { ...s.settings, engine: "demo", translateEngine: "system" } }));
 
     act(() => {
       void api!.start();

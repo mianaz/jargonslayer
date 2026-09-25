@@ -10,7 +10,7 @@
 // pattern (no @testing-library/react in this repo's test stack).
 
 import { act } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { useLatencyStats } from "../../lib/stt/latencyStats";
@@ -26,11 +26,17 @@ import StatusLine, {
   AI_STATUS_CHIP_GLYPH,
   AI_STATUS_CHIP_UNCONFIGURED_LABEL,
   DETECT_MODE_LABEL,
-  ENGINE_SELECT_PLACEHOLDER,
+  ENGINE_SELECT_DEMO_LABEL,
+  TRANSLATE_CHIP_ENGINE_LABEL,
+  TRANSLATE_CHIP_OFF_LABEL,
+  TRANSLATE_CHIP_UNAVAILABLE_LABEL,
+  translateUnavailableReason,
+  ENGINE_SELECT_IMPORT_LABEL,
   LOCAL_SIDECAR_LABEL,
   shortModelName,
   SIDECAR_DOWN_HINT_WEB,
 } from "../StatusLine";
+import { DEEPL_WEB_DISABLED_REASON, YOUDAO_WEB_DISABLED_REASON } from "@/components/settings/TranslationEngineRow";
 
 describe("StatusLine — detect-mode toggle", () => {
   let container: HTMLDivElement | null = null;
@@ -941,7 +947,7 @@ describe("StatusLine — engine dropdown", () => {
     expect(select().disabled).toBe(false);
   });
 
-  it("shows a disabled 选择引擎 placeholder while engine is demo (mirrors the old mobile <select>'s own placeholder)", async () => {
+  it("names the demo in a disabled 演示 placeholder while engine is demo (never a select with no value)", async () => {
     useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
     renderStatusLine();
     await act(async () => {
@@ -954,7 +960,18 @@ describe("StatusLine — engine dropdown", () => {
     );
     expect(placeholder).toBeDefined();
     expect(placeholder!.disabled).toBe(true);
-    expect(placeholder!.textContent).toBe(ENGINE_SELECT_PLACEHOLDER);
+    expect(placeholder!.textContent).toBe(ENGINE_SELECT_DEMO_LABEL);
+  });
+
+  it("names an import session in a disabled 导入 placeholder", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "import" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const placeholder = Array.from(select().querySelectorAll("option")).find((o) => o.value === "");
+    expect(placeholder!.textContent).toBe(ENGINE_SELECT_IMPORT_LABEL);
   });
 
   it("explains that recognizer and source are separate controls", async () => {
@@ -1286,6 +1303,13 @@ describe("StatusLine — 翻译 status chip", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
+  // A LIVE demo gets its own passive chip (演示翻译), so these
+  // live-meeting cases pin a real engine instead of inheriting the
+  // fresh-install default engine "demo".
+  beforeEach(() => {
+    useApp.setState((s) => ({ settings: { ...s.settings, engine: "whisper" } }));
+  });
+
   afterEach(() => {
     if (root) {
       act(() => root!.unmount());
@@ -1299,7 +1323,7 @@ describe("StatusLine — 翻译 status chip", () => {
       status: "idle",
       segments: [],
       translateStatus: { state: "off", pending: 0 },
-      settings: { ...s.settings, bilingualTranscript: false },
+      settings: { ...s.settings, bilingualTranscript: false, translateEngine: "system" },
     }));
     vi.unstubAllGlobals();
   });
@@ -1351,10 +1375,25 @@ describe("StatusLine — 翻译 status chip", () => {
     expect(container!.querySelector('[data-testid="statusline-translate-chip"]')).not.toBeNull();
   });
 
-  it("bilingualTranscript off renders a clickable 未译 button that flips the setting on", async () => {
+  it("a live demo shows a passive 演示翻译 chip even with the toggle off (names the replay, offers no toggle)", async () => {
     useApp.setState((s) => ({
       status: "listening",
-      settings: { ...s.settings, bilingualTranscript: false },
+      settings: { ...s.settings, engine: "demo", bilingualTranscript: false, language: "en-US", explainLanguage: "zh" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+    const el = container!.querySelector('[data-testid="statusline-translate-chip"]');
+    expect(el!.textContent).toBe("演示翻译");
+    expect(el!.tagName).toBe("SPAN");
+    expect(useApp.getState().settings.bilingualTranscript).toBe(false);
+  });
+
+  it("bilingualTranscript off renders a clickable 翻译：关 button that flips the setting on (reads as a setting)", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: false, translateEngine: "llm" },
     }));
     renderStatusLine();
     await act(async () => {
@@ -1362,7 +1401,8 @@ describe("StatusLine — 翻译 status chip", () => {
     });
 
     expect(chip().tagName).toBe("BUTTON");
-    expect(chip().textContent).toBe("未译");
+    expect(chip().textContent).toBe(TRANSLATE_CHIP_OFF_LABEL);
+    expect(chip().title).toContain("AI");
 
     await act(async () => {
       chip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -1411,7 +1451,7 @@ describe("StatusLine — 翻译 status chip", () => {
   it("tap-to-enable guard: differing pair still enables (unaffected by the guard)", async () => {
     useApp.setState((s) => ({
       status: "listening",
-      settings: { ...s.settings, bilingualTranscript: false, language: "en-US", explainLanguage: "zh" },
+      settings: { ...s.settings, bilingualTranscript: false, language: "en-US", explainLanguage: "zh", translateEngine: "llm" },
       toast: null,
     }));
     renderStatusLine();
@@ -1453,7 +1493,48 @@ describe("StatusLine — 翻译 status chip", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(chip().textContent).toContain("翻译 ✓");
+    expect(chip().textContent).toBe(`翻译：${TRANSLATE_CHIP_ENGINE_LABEL.system} ✓`);
+  });
+
+  it("an engine this browser can't run renders 翻译：不可用; clicking explains why and never enables the lane", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: false, translateEngine: "deepl" },
+      toast: null,
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toBe(TRANSLATE_CHIP_UNAVAILABLE_LABEL);
+    expect(chip().getAttribute("aria-disabled")).toBe("true");
+    await act(async () => {
+      chip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(useApp.getState().settings.bilingualTranscript).toBe(false);
+    expect(useApp.getState().toast).toBe(DEEPL_WEB_DISABLED_REASON);
+  });
+
+  it("系统翻译 is a live switch only where the browser has the Translator API", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: false, translateEngine: "system" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+    expect(chip().textContent).toBe(TRANSLATE_CHIP_UNAVAILABLE_LABEL);
+
+    act(() => root!.unmount());
+    container!.remove();
+    vi.stubGlobal("Translator", { availability: async () => "available", create: async () => ({}) });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+    expect(chip().textContent).toBe(TRANSLATE_CHIP_OFF_LABEL);
   });
 
   it("stalled shows 翻译暂停 in amber, title carries the reason", async () => {
@@ -2145,3 +2226,20 @@ describe("StatusLine — no mascot perch (retired)", () => {
     },
   );
 });
+
+describe("translateUnavailableReason", () => {
+  const web = { native: false, systemTranslatorSupported: false };
+  it("native shells run every engine", () => {
+    for (const e of ["system", "deepl", "youdao", "llm"] as const) {
+      expect(translateUnavailableReason(e, { native: true, systemTranslatorSupported: false })).toBeNull();
+    }
+  });
+  it("a plain browser can't reach DeepL/有道 and needs the Translator API for 系统翻译", () => {
+    expect(translateUnavailableReason("deepl", web)).toBe(DEEPL_WEB_DISABLED_REASON);
+    expect(translateUnavailableReason("youdao", web)).toBe(YOUDAO_WEB_DISABLED_REASON);
+    expect(translateUnavailableReason("system", web)).toMatch(/系统翻译/);
+    expect(translateUnavailableReason("system", { ...web, systemTranslatorSupported: true })).toBeNull();
+    expect(translateUnavailableReason("llm", web)).toBeNull();
+  });
+});
+

@@ -110,6 +110,35 @@ describe("ReviewDashboard — IA reorder + skeleton/stat-numeral primitives (UI 
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });
 
+  // With nothing due, the lead's one action is 翻卡浏览 when the
+  // caller can switch modes; with a card due it stays 开始复习 even then.
+  it("nothing due + onBrowse -> the CTA reads 翻卡浏览 and calls onBrowse, not onStartReview", async () => {
+    useApp.setState({ learnset: {} });
+    const onStartReview = vi.fn();
+    const onBrowse = vi.fn();
+    await act(async () => {
+      root!.render(
+        <ReviewDashboard cache={{}} loading={false} onStartReview={onStartReview} onBrowse={onBrowse} />,
+      );
+    });
+
+    const cta = container!.querySelector('[data-testid="start-review-cta"]') as HTMLButtonElement;
+    expect(cta.textContent).toBe("翻卡浏览");
+    await act(async () => {
+      cta.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onBrowse).toHaveBeenCalledTimes(1);
+    expect(onStartReview).not.toHaveBeenCalled();
+  });
+
+  it("a due card keeps 开始复习 even when onBrowse is supplied", async () => {
+    const onBrowse = vi.fn();
+    await act(async () => {
+      root!.render(<ReviewDashboard cache={{}} loading={false} onBrowse={onBrowse} />);
+    });
+    expect(container!.querySelector('[data-testid="start-review-cta"]')!.textContent).toBe("开始复习");
+  });
+
   // Without a caller-supplied onStartReview (e.g. this file's OWN bare
   // render calls above), the CTA stays usable standalone — falls back
   // to the original #due-queue scroll rather than becoming a dead
