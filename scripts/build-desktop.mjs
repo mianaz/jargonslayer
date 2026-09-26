@@ -1,4 +1,4 @@
-// v0.4 S3 chunk 1 (docs/design-explorations/s3-tauri-uv-blueprint.md) —
+// v0.4 S3 chunk 1 —
 // desktop web build: produces the static-export bundle Tauri's webview
 // loads (apps/web/out/), via BUILD_TARGET=desktop + NEXT_PUBLIC_LLM_
 // TRANSPORT=client (S2's client-side callProvider path — a desktop
@@ -11,14 +11,14 @@
 // by TEMPORARILY renaming apps/web/src/app/api out of the app dir for
 // the duration of the `next build` call, then renaming it back.
 //
-// Signal-safety is the whole point of this file (the blueprint's own
-// "gotcha" callout): a bare try/finally does NOT run on SIGINT/SIGTERM
-// the way it does on a normal thrown error — without an explicit signal
-// handler, Ctrl-C (or a CI job killed mid-build) leaves `_api_disabled`
-// renamed on disk. Left renamed, that would 404 the very next PLAIN
-// `npm run build` (app/api routes silently missing from the app dir)
-// and every future desktop build, until someone notices and renames it
-// back by hand. Three layers guard against that:
+// Signal-safety is the whole point of this file (a known "gotcha"): a
+// bare try/finally does NOT run on SIGINT/SIGTERM the way it does on a
+// normal thrown error — without an explicit signal handler, Ctrl-C (or
+// a CI job killed mid-build) leaves `_api_disabled` renamed on disk.
+// Left renamed, that would 404 the very next PLAIN `npm run build`
+// (app/api routes silently missing from the app dir) and every future
+// desktop build, until someone notices and renames it back by hand. Three
+// layers guard against that:
 //   1. A stale-rename check BEFORE doing anything else: if a previous
 //      run crashed (kill -9, power loss) between rename-out and
 //      rename-back, `_api_disabled` is restored first, so this run
@@ -36,7 +36,7 @@
 //      respond immediately instead of blocking on the whole build.
 //   3. The normal try/finally, for every other exit path (success,
 //      `next build` failing on its own, an unexpected throw).
-// S13 (docs/design-explorations/s13-ios-blueprint.md §D5/F4) — iOS static
+// S13 (D5/F4) — iOS static
 // export hits the exact same app/api-under-output:"export" wall as desktop
 // (see the header above), so this wrapper is parameterized by BUILD_TARGET
 // instead of forking a second script: default "desktop" is byte-identical

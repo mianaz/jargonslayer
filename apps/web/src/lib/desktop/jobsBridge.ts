@@ -67,8 +67,7 @@ function modelLabel(model: string): string {
   return MODEL_CATALOG.find((entry) => entry.id === model)?.label ?? model;
 }
 
-/** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
- *  Provision/Task 7) — true for SwitchModelProgress's three mlx-install
+/** S12a (v0.4.4, Task 7) — true for SwitchModelProgress's three mlx-install
  *  sub-phases (bootstrap.ts's ensureMlxExtras), false for the
  *  pre-existing "downloading"/"restarting" ones. A type guard (not a
  *  bare `in`/key check) so trackSwitchModel's own branch below narrows
@@ -269,8 +268,7 @@ export function trackInstallDiar(handle: DesktopBootstrapHandle): string {
   return id;
 }
 
-// --- os-speech-asset (S11, docs/design-explorations/
-// s11-osspeech-blueprint.md, Worker C) ---
+// --- os-speech-asset (S11, Worker C) ---
 
 // The four osspeech://status kinds (lib/stt/osSpeech.ts's own
 // OsSpeechStatusKind) this tracker ever reacts to — kept as its own

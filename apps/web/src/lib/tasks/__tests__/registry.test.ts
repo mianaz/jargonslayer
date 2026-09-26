@@ -68,7 +68,7 @@ describe("task registry lifecycle (#58)", () => {
     expect(diar.kind).toBe("diar-install");
   });
 
-  // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md):
+  // S11 (v0.4.3):
   // "os-speech-asset" joins the same list — jobsBridge.ts's
   // trackOsSpeechAsset is its only writer (desktop-only).
   it("startTask accepts the S11 os-speech-asset kind exactly like any other kind", () => {

@@ -1,4 +1,4 @@
-// v0.4 S2 (PLAN-v0.4 §1A/§4) — client-side LLM transport: the fetch
+// v0.4 S2 — client-side LLM transport: the fetch
 // implementation the client-side callProvider path issues provider
 // requests through, plus the feature flag that decides whether
 // detect/define/translate/summarize even USE that path at all.
@@ -11,7 +11,7 @@
 //    app init (`setTransport(tauriFetch)`) so every client-side
 //    provider call (Anthropic direct + openai-compat direct, see
 //    clientProvider.ts/providerCore.ts) transparently goes through it
-//    instead — native fetch, bypasses CORS uniformly (PLAN-v0.4 §1A).
+//    instead — native fetch, bypasses CORS uniformly.
 //    S2 itself adds NO tauri dependency; this is only the documented
 //    registration point S3 will use.
 // 2. The ON/OFF flag deciding whether lib/llm/client.ts's *Api

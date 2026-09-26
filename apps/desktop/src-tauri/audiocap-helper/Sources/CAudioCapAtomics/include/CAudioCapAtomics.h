@@ -4,7 +4,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
-// S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md) — a
+// S9.1 — a
 // minimal C11-atomics shim so AudioCapCore's SPSC ring buffer
 // (Ring.swift) and the shutdown flag (ShutdownSignal.swift) can do
 // genuinely lock-free cross-thread bookkeeping from the CoreAudio

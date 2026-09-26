@@ -1,5 +1,5 @@
-// JargonSlayer desktop shell — S3 chunks 2-3 (docs/design-explorations/
-// s3-tauri-uv-blueprint.md). Chunk 2 scaffolded the plugin registration;
+// JargonSlayer desktop shell — S3 chunks 2-3.
+// Chunk 2 scaffolded the plugin registration;
 // chunk 3 (this file's invoke_handler + the paths/uv/server/provision
 // modules) adds Rust-owned uv provisioning + sidecar process lifecycle.
 //
@@ -9,7 +9,7 @@
 // also means we never get a chance to double-provision from two
 // concurrently-running instances, blueprint §Critical details).
 //
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §D3) — none of the
+// S13 (§D3) — none of the
 // modules below are needed on iOS v1 (mic-only 系统识别 via a native
 // plugin, no sidecar/uv/provisioning/app-audio-tap/oauth). Gated
 // `#[cfg(desktop)]` rather than deleted so the macOS build stays exactly
@@ -45,7 +45,7 @@ mod osspeech_ios;
 // plugin's Swift translate controller is the iOS one).
 #[cfg(target_os = "ios")]
 mod systranslate_ios;
-// S13.1 (docs/design-explorations/s13-ios-blueprint.md) — the iOS
+// S13.1 — the iOS
 // simulator spike harness (spike_flags/spike_report), armed by the
 // `--spike-osspeech` launch arg — see devspike_ios.rs's own header
 // comment. Same inclusion posture as osspeech_ios above.
@@ -184,8 +184,7 @@ pub fn run() {
             secret::secret_delete,
             proxy::os_proxy_summary,
         ])
-        // v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md)
-        // — the audiocap TCC-attribution spike rig: inert unless
+        // v0.4 S9.1 — the audiocap TCC-attribution spike rig: inert unless
         // JARGONSLAYER_SPIKE_AUDIOCAP=1 (see audiocap::maybe_spawn_spike's
         // own doc comment). Lives in `.setup()`, not behind any command/UI
         // affordance, because the spike's whole point is that the PACKAGED
@@ -209,7 +208,7 @@ pub fn run() {
     // Fail loudly and early instead.
     #[cfg(all(mobile, not(target_os = "ios")))]
     compile_error!(
-        "S13's mobile shell is iOS-only; add an Android lane (plugin dep + bridge module) before building for Android — see docs/design-explorations/s13-ios-blueprint.md"
+        "S13's mobile shell is iOS-only; add an Android lane (plugin dep + bridge module) before building for Android"
     );
 
     // S13 §D3/§2 + §6 F6 — mobile (iOS v1) shell: the os-speech plugin

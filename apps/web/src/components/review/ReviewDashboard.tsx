@@ -217,7 +217,7 @@ function TopExpressions({
   );
 
   if (loading) {
-    // Static by law (DESIGN.md v3.9c) — 10 skeleton rows shaped like
+    // Static by law — 10 skeleton rows shaped like
     // the real top-10 list below (same count/size), no spinner text.
     return (
       <div className="mt-2 space-y-2" aria-hidden="true">

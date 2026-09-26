@@ -623,9 +623,8 @@ describe("HamburgerMenu — btn-caption (S14 悬浮字幕), web host", () => {
   });
 });
 
-// v0.4.7 Lane C — tri-state privacy label (docs/design-explorations/
-// stt-provider-wiring-2026-07.md §4/§9 D5-D7 + Lane C addendum, Opus
-// C5): EnginePostureChip's own wiring onto RETENTION_COPY[
+// v0.4.7 Lane C — tri-state privacy label (D5-D7, Opus C5):
+// EnginePostureChip's own wiring onto RETENTION_COPY[
 // resolveEngineRetentionClass(...)] — engineOptions.test.ts already
 // pins the resolver/table logic in isolation; this pins that the DOM
 // actually reflects it (label text, hint title, color class), plus the

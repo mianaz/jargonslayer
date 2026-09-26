@@ -725,8 +725,7 @@ export function useMeeting(): UseMeetingResult {
           }
           useApp.getState().setStatus(status, status === "connecting" ? detail : undefined);
           // Preview-lane trial notice (v0.5 closeout item 3, tightened
-          // for BYOK preview — docs/design-explorations/byok-preview-
-          // blueprint.md D3): fires once per meeting start, only for a
+          // for BYOK preview, D3): fires once per meeting start, only for a
           // session actually riding the server-minted credential — real
           // BYOK traffic must never see a toast claiming a trial cap
           // that doesn't apply to it. `engine.kind === "soniox"` is
@@ -820,8 +819,7 @@ export function useMeeting(): UseMeetingResult {
       },
     };
 
-    // v0.4.7 Lane B (glossary -> recognizer bias, docs/design-
-    // explorations/stt-provider-wiring-2026-07.md §3, D8): ONE lexicon
+    // v0.4.7 Lane B (glossary -> recognizer bias, D8): ONE lexicon
     // snapshot, built HERE (read via existing store selectors, same
     // moment `settings` above was read) and passed explicitly into
     // engine.start() — adapters never read the store for this
@@ -1073,8 +1071,7 @@ export function useMeeting(): UseMeetingResult {
     // v0.7: fresh meeting, fresh translate-state chip (the queue's own
     // onState only starts emitting once segments flow).
     useApp.getState().setTranslateStatus({ state: "off", pending: 0 });
-    // v0.5 Wave-1 Feature 6 / A6 (docs/design-explorations/
-    // v05-wave1-blueprint.md §1 Feature 6 + §5 A6): provider KIND is
+    // v0.5 Wave-1 Feature 6 / A6: provider KIND is
     // decided once here (mirrors attachEngine's own settings.engine
     // snapshot just below) and, when it resolves to the on-device
     // Chrome provider, prepare() MUST fire synchronously, inside THIS

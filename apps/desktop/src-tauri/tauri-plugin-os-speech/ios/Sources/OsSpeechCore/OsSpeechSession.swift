@@ -15,7 +15,7 @@ import Speech
 import UIKit
 @preconcurrency import AVFoundation
 
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §D6/§3 Lane B) —
+// S13 (§D6/§3 Lane B) —
 // the in-process port of macOS's SpeechAnalyzerSession.run (pattern
 // source: apps/desktop/src-tauri/audiocap-helper/Sources/AudioCapCore/
 // SpeechAnalyzerSession.swift). Same phase ordering (mic permission ->

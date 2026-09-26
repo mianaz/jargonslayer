@@ -1,4 +1,4 @@
-// MV3 stateless coordinator (PLAN-v0.4 S6, §1C decision: the side
+// MV3 stateless coordinator (v0.4 S6, by design: the side
 // panel IS the app; this worker's only job is telling Chrome "clicking
 // the toolbar action opens the side panel" — the documented pattern
 // for wiring an action click to the panel without a manual

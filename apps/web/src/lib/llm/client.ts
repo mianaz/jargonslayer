@@ -32,7 +32,7 @@ import {
   type LlmTelemetryDomain,
   type LlmTelemetryErrorKind,
 } from "./telemetry";
-// v0.4 S2 (PLAN-v0.4 §1A/§4) — client-side callProvider path: an
+// v0.4 S2 — client-side callProvider path: an
 // internal, default-OFF flag (llmTransport.ts's useClientTransport)
 // lets every *Api function below call the provider directly instead of
 // routing through /api/* — the path S3's Tauri desktop build runs
@@ -1117,11 +1117,10 @@ async function translateViaClient(
 }
 
 // ---------------------------------------------------------------
-// AI transcript correction (v0.5 Wave-1 Feature 2, batch/review-gated
-// — docs/design-explorations/v05-wave1-blueprint.md §1 Feature 2 + §5
+// AI transcript correction (v0.5 Wave-1 Feature 2, batch/review-gated,
 // A5). Isomorphic like translate above: correctViaNext (server route)
 // and correctViaClient (desktop/iOS, which strip app/api) both funnel
-// through the SAME tasks/correct.ts module. §5 A5: "correction rides
+// through the SAME tasks/correct.ts module. A5: "correction rides
 // the detect-domain config" — resolveTaskCreds(settings, "detect"),
 // same domain define already rides (see AiStatusPanel.tsx's own "与检测
 // 共用配置" precedent) — no dedicated "correct" LlmTaskDomain/LlmCallKind

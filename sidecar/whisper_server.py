@@ -19,8 +19,7 @@ Protocol v2 (per connection):
           process's --partials default (absent = server default, see
           WhisperServer.emit_partials / _partials_enabled)
         - "initial_prompt": str, optional (v0.4.7 Lane B, glossary ->
-          recognizer bias, docs/design-explorations/stt-provider-
-          wiring-2026-07.md §3/D3) — a biasing hint threaded into
+          recognizer bias, D3) — a biasing hint threaded into
           every faster-whisper transcribe() call on this connection
           (both partial and final, see WhisperServer._transcribe).
           Ignored (never read) by the parakeet-mlx backend below — an
@@ -1258,9 +1257,8 @@ class WhisperServer:
 
 
 # =================================================================
-# S12b: parakeet-mlx backend (docs/design-explorations/s12-mlx-
-# blueprint.md §C R2/R3/R4 + §E L5 — L5's live-probe outcome (M1)
-# SUPERSEDES §C R2's stream-commit-primary design; this implements the
+# S12b: parakeet-mlx backend (R2/R3/R4 + L5 — L5's live-probe outcome
+# (M1) SUPERSEDES R2's stream-commit-primary design; this implements the
 # L5 batch-final + streaming-partials HYBRID, not the R2 original).
 # Active only when backend_for_model(model) == "parakeet-mlx" (see
 # that pure function, defined alongside PARAKEET_MODEL further down
@@ -2578,8 +2576,7 @@ class JobManager:
     def start_download_job(self, model: str) -> tuple[Optional[str], Optional[str]]:
         """Register a queued model-download job and kick off its
         background worker thread — decision B's :8766 model-switch
-        path (docs/design-explorations/s4-model-wizard-blueprint.md):
-        the server is already healthy/live here (unlike first-run,
+        path: the server is already healthy/live here (unlike first-run,
         which uses --download-only instead — see run_download_only),
         so this reuses the same job/poll surface as start_job/
         start_url_job. Runs concurrently with the live server (disk-
@@ -2709,8 +2706,7 @@ class JobManager:
             # S12a Q6: thread this manager's own CLI/env token (the
             # SAME self.hf_token diarization already falls back to,
             # see __init__) into the download itself — previously NO
-            # token reached downloads at all (s12-mlx-blueprint.md §B
-            # finding 10/§C R1).
+            # token reached downloads at all (R1).
             download_model_snapshot(model, on_progress, hf_token=self.hf_token, cancel_event=cancel_event)
             self._set(job_id, status="done", progress=1.0, status_detail=None)
         except DownloadCancelled:
@@ -3355,8 +3351,7 @@ def health_payload(model_name: str, installed: bool, ready: bool, error: Optiona
 # /download-model's validator, and --download-only all read from this
 # one list (previously hand-duplicated inline in argparse's choices=).
 # download_model_snapshot is the one shared helper behind BOTH
-# download paths (decision B, docs/design-explorations/
-# s4-model-wizard-blueprint.md): --download-only (first-run one-shot,
+# download paths (decision B): --download-only (first-run one-shot,
 # see run_download_only) and JobManager.start_download_job (:8766
 # model-switch job) — "one shared helper, only invocation + progress
 # transport differ." Every huggingface_hub/tqdm import below is
@@ -3370,8 +3365,7 @@ def health_payload(model_name: str, installed: bool, ready: bool, error: Optiona
 # when a whisper model is what's being loaded.
 # =================================================================
 
-# S12a (v0.4.4, MLX local-STT lane, docs/design-explorations/
-# s12-mlx-blueprint.md §C/R1) — parakeet-tdt-0.6b-v3 rides the SAME
+# S12a (v0.4.4, MLX local-STT lane, R1) — parakeet-tdt-0.6b-v3 rides the SAME
 # MODEL_CHOICES/download/validate machinery as every whisper model
 # (decision Q1: "a model under `whisper`, not a new engine"); see
 # PARAKEET_REPO_ID/PARAKEET_ALLOW_PATTERNS below for its registry
@@ -3405,10 +3399,9 @@ MODEL_DOWNLOAD_ALLOW_PATTERNS = [
 ]
 
 # mlx-community/parakeet-tdt-0.6b-v3's repo id + allow_patterns —
-# verified LIVE two ways (s12-mlx-blueprint.md §B finding 12 / §C R1,
-# 2026-07-16): (1) the HF repo's own file listing has config.json,
-# model.safetensors, tokenizer.model, tokenizer.vocab, vocab.txt
-# (+README/.gitattributes); (2) the installed parakeet_mlx==0.5.2
+# verified LIVE two ways (R1, 2026-07-16): (1) the HF repo's own file listing
+# has config.json, model.safetensors, tokenizer.model, tokenizer.vocab,
+# vocab.txt (+README/.gitattributes); (2) the installed parakeet_mlx==0.5.2
 # wheel's utils.from_pretrained (unzipped, NOT installed into any venv
 # — see requirements-mlx.in's own note) calls
 # `hf_hub_download(repo, "config.json", cache_dir=cache_dir)` and
@@ -3503,10 +3496,9 @@ def check_disk_space(total_bytes: int, check_dir: str) -> None:
 
 # Static repo-id map for the 6 whisper-family MODEL_CHOICES entries —
 # DELIBERATELY not a lazy `from faster_whisper.utils import _MODELS`
-# lookup (S12a fix round F3, HIGH, Sol3, 2026-07-16 adversarial pair —
-# docs/design-explorations/s12-mlx-blueprint.md §D). faster_whisper is
-# absent from the mlx venv's lock by design (requirements-mlx.lock
-# pins only parakeet-mlx + websockets; §C R1: "faster_whisper imports
+# lookup (S12a fix round F3, HIGH, Sol3, 2026-07-16 adversarial pair).
+# faster_whisper is absent from the mlx venv's lock by design (requirements-mlx.lock
+# pins only parakeet-mlx + websockets; R1: "faster_whisper imports
 # stay lazy inside FasterWhisperBackend... one file runs under either
 # venv") — but the ORIGINAL lazy `_MODELS` import here still ran for
 # EVERY non-parakeet model, including when this same whisper_server.py
@@ -3704,12 +3696,11 @@ def download_model_snapshot(
     more with (total, total) at the very end, so a caller always sees
     100% on success even if no finer-grained call ever fired). Shared
     by --download-only (first-run one-shot, see run_download_only) and
-    JobManager.start_download_job (:8766 model-switch job) — decision B
-    of docs/design-explorations/s4-model-wizard-blueprint.md: "one
-    shared helper, only invocation + progress transport differ."
+    JobManager.start_download_job (:8766 model-switch job) — decision B:
+    "one shared helper, only invocation + progress transport differ."
     repo_id/allow_patterns come from the model->(repo_id, allow_
     patterns) registry (_repo_id_for_model/_allow_patterns_for_model
-    above, s12-mlx-blueprint.md §C R1).
+    above, R1).
 
     Runs under the process's own HF_HOME (set by the Rust launcher
     exactly like load_model()'s WhisperModel(...) call already relies
@@ -3721,9 +3712,8 @@ def download_model_snapshot(
     both resolve huggingface_hub's own default (HF_HUB_CACHE, itself
     derived from HF_HOME) identically. Introducing a divergent
     cache_dir here would silently break that and trigger a second
-    full download at load time (s12-mlx-blueprint.md §B finding 10 —
-    the exact bug this invariant avoids); see test_download.py's cache-
-    root-invariant section.
+    full download at load time (the exact bug this invariant avoids); see
+    test_download.py's cache-root-invariant section.
 
     `hf_token` (S12a Q6/F11): threaded from the caller's own --hf-token/
     $HF_TOKEN (JobManager.self.hf_token / args.hf_token — the SAME
@@ -3784,8 +3774,8 @@ def download_model_snapshot(
     # itself derived from HF_HOME — respected exactly as load_model()'s
     # WhisperModel(...) call already relies on. `total` here is already
     # the honest per-model figure (allow_patterns-filtered — ~2.51GB
-    # for parakeet, not a stale ~1GB estimate — s12-mlx-blueprint.md §B
-    # finding 12), so this ×1.2 precheck floor is honest too.
+    # for parakeet, not a stale ~1GB estimate), so this ×1.2 precheck floor is
+    # honest too.
     check_disk_space(total, hf_constants.HF_HUB_CACHE)
 
     # F6 (review-round fix): devnull is THIS function's own resource —
@@ -3842,8 +3832,7 @@ def run_download_only(model: str, hf_token: Optional[str] = None) -> bool:
     """--download-only mode body (decision B's first-run one-shot
     path, see main()): run download_model_snapshot, emitting
     newline-delimited JSON progress lines to stdout for the Rust
-    launcher to parse (line-based — see docs/design-explorations/
-    s4-model-wizard-blueprint.md's Anchors: tqdm's own \\r bars won't
+    launcher to parse (line-based — tqdm's own \\r bars won't
     survive run_venv_python_streaming), then a final download_done/
     download_error line. Returns True on success, False on failure —
     main() turns this into the process exit code. `hf_token` (S12a
@@ -4140,7 +4129,7 @@ class LazyWhisperModel:
 
 def normalize_hf_token(token: Optional[str]) -> Optional[str]:
     """Normalize an --hf-token/$HF_TOKEN value (S12a fix round F8,
-    LOW, Sol8 — docs/design-explorations/s12-mlx-blueprint.md §D): a
+    LOW, Sol8): a
     whitespace-only string ("   ") is truthy in Python, so left un-
     normalized it would make print_banner's `diarize_enabled=bool(
     args.hf_token)` advertise diarization as armed, and every down-

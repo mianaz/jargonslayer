@@ -1,5 +1,4 @@
-// S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
-// item #3 / Chunk C) — pure Settings-patch/copy helpers shared by
+// S10 field-fix (item #3 / Chunk C) — pure Settings-patch/copy helpers shared by
 // OnboardingByokStep.tsx / OnboardingDiarizeStep.tsx, split out so
 // they're unit-testable independent of those files' own
 // connectOpenRouterDesktop/openExternal imports (S10 Chunk A, worker

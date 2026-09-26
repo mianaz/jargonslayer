@@ -1,6 +1,6 @@
-// Extension capture duplication parity test (tech-debt ledger #3,
-// docs/TECH-DEBT-LEDGER-2026-07.md item 3): apps/extension/src/capture/
-// vendors these 6 files verbatim from apps/web/src/lib/stt/ — 4
+// Extension capture duplication parity test (tech-debt item #3):
+// apps/extension/src/capture/ vendors these 6 files verbatim from
+// apps/web/src/lib/stt/ — 4
 // byte-identical, 2 (webSpeech.ts/webSpeechSession.ts) differing ONLY in
 // their own diagLog import path (extension's lib/diag.ts vs web's
 // diag/log.ts — the two apps' diag modules live in different places).

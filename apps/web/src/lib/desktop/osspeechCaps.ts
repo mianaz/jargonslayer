@@ -1,8 +1,7 @@
-// S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md,
-// Worker C) — Zero-Install 系统识别 (SpeechAnalyzer) macOS-floor gating,
-// mirroring audiocapCaps.ts's own single-flight probe/cache/fail-open
+// S11 (v0.4.3, Worker C) — Zero-Install 系统识别 (SpeechAnalyzer) macOS-floor
+// gating, mirroring audiocapCaps.ts's own single-flight probe/cache/fail-open
 // shape for osspeech's OWN Rust command, os_speech_capabilities()
-// (§2.4) — a fully separate probe/cache from audiocapCaps.ts's
+// — a fully separate probe/cache from audiocapCaps.ts's
 // audiocap_capabilities(): different engine, different wire shape (adds
 // locales/installedLocales), and the blueprint's own Q4 keeps the
 // Rust-side probe-memo lifetime independent per command. See

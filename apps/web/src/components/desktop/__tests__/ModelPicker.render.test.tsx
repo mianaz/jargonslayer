@@ -6,8 +6,7 @@
 // test.tsx's Enter/Space keyboard-activation pattern (same shared
 // lib/a11y.ts helper under the hood).
 //
-// S12 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Gating F13 + worker A3) — this suite mocks BOTH modelCatalog.ts and
+// S12 (v0.4.4, gating F13 + worker A3) — this suite mocks BOTH modelCatalog.ts and
 // mlxCaps.ts rather than exercising the REAL MODEL_CATALOG:
 //   - modelCatalog.ts: worker A2 owns modelCatalog.test.ts's own
 //     invariants on the SHIPPED catalog (order/labels/sizes/etc) —

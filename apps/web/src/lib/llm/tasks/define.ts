@@ -1,4 +1,4 @@
-// Isomorphic "define" task (v0.4 S2, PLAN-v0.4 §1A/§4) — shared by
+// Isomorphic "define" task (v0.4 S2) — shared by
 // app/api/define/route.ts and lib/llm/client.ts's client-side path.
 // See tasks/detect.ts's header comment for the general contract
 // (server-only concerns never enter this module).

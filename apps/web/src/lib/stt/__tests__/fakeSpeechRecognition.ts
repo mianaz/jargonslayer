@@ -230,8 +230,8 @@ export class FakeSpeechRecognition extends EventTarget {
       this.stallConsumed = true;
     }
     // A genuinely stalled/untranscribable-block recognizer produces
-    // NOTHING at all (that's the whole premise those scenarios test —
-    // see the diagnosis in stt-vad-supervisor.md) — bail before even
+    // NOTHING at all (that's the whole premise those scenarios test)
+    // — bail before even
     // the proactive finalization check below.
     if (this.stalled || isInRange(now, script.quietRanges)) return;
 

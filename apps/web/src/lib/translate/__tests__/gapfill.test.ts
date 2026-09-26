@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// v0.7.1 translation train-2, Chamber B (docs/design-explorations/
-// v071-translation-train2-blueprint.md §Chamber B). gapfill.ts's public
+// v0.7.1 translation train-2, Chamber B. gapfill.ts's public
 // API is PINNED (worker C's export-gate imports it directly) — these
 // tests exercise the runner against the REAL zustand store (same
 // convention as TranscriptPanel.f1f2.test.tsx), with only the LLM error

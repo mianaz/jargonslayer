@@ -1,4 +1,4 @@
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4) — IS_IOS/
+// S13 (D4) — IS_IOS/
 // IS_TAURI derivation. Both consts are real import-time values baked
 // from process.env at module-load time (same as IS_DESKTOP — see
 // platform/desktop.ts's own header comment), so exercising every env

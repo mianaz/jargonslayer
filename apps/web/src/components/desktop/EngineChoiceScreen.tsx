@@ -1,7 +1,6 @@
 "use client";
 
-// S11 osspeech blueprint (docs/design-explorations/s11-osspeech-
-// blueprint.md, §3 Worker D, §Q5, Miana-veto #1) — the wizard's NEW
+// S11 osspeech (Worker D, Q5, Miana-veto #1) — the wizard's NEW
 // first screen on macOS 26+: a two-card choice between the zero-install
 // system engine (SpeechAnalyzer) and today's local Whisper sidecar.
 // Mounted by DesktopWizard.tsx INSTEAD of the existing ConsentScreen

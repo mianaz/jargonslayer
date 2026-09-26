@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// v0.5 Wave-1 Feature 6 (docs/design-explorations/v05-wave1-blueprint.md
-// §1 Feature 6 + §5 A6). jsdom has no Translator at all — that IS the
+// v0.5 Wave-1 Feature 6 (A6). jsdom has no Translator at all — that IS the
 // "absent"/"unsupported" path every test below that doesn't explicitly
 // install a fake one exercises. IS_TAURI-true resolution is covered in
 // providers.tauri.test.ts (a separate file — vi.mock is file-scoped/

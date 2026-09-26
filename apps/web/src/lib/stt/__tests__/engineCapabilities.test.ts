@@ -1,5 +1,5 @@
 // EngineCapability contract (v0.4.7 STT provider wiring, Lane A —
-// docs/design-explorations/stt-provider-wiring-2026-07.md, §9 D5/D6/D7).
+// D5/D6/D7).
 // engineOptions.test.ts/.desktop.test.ts/.ios.test.ts already pin
 // ENGINE_OPTIONS' exact byte-for-byte shape per platform — those keep
 // passing unmodified as the "projection reproduces today's gating
@@ -146,8 +146,7 @@ describe("resolveWebspeechRetentionClass — D7 two-layer truth, runtime overlay
 //      by applyTierDefaults on every platform that can persist it — the
 //      hosted preview build genuinely never has the local sidecar
 //      process, unaffected by BYOK preview D3.
-//   2. byokOnly (BYOK preview, docs/design-explorations/byok-preview-
-//      blueprint.md D3): the INVERSE now — no longer gate-locked
+//   2. byokOnly (BYOK preview D3): the INVERSE now — no longer gate-locked
 //      (engineOptionGate's own PREVIEW_TIER branch only reads
 //      sidecarOnly), and applyTierDefaults leaves it SURVIVING instead
 //      of coercing it away, wherever the PLATFORM pass hasn't already
@@ -220,8 +219,7 @@ describe("cross-invariant: sidecarOnly stays gate-locked, byokOnly no longer is 
   });
 });
 
-// v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-blueprint.md
-// §5 A4): provider-aware capability overlay — resolveTabAudioCloudProvider's
+// v0.5 Wave-1 Feature 4 (A4): provider-aware capability overlay — resolveTabAudioCloudProvider's
 // sanitization contract and resolveEngineCapability's truth table.
 describe("resolveTabAudioCloudProvider — A4 sanitization", () => {
   it("returns 'deepgram' only for the literal value 'deepgram'", () => {

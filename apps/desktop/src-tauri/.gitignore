@@ -6,7 +6,7 @@
 # will have schema files for capabilities auto-completion
 /gen/schemas
 
-# S13 (docs/design-explorations/s13-ios-blueprint.md, §D8) — `tauri ios init`
+# S13 (§D8) — `tauri ios init`
 # generates gen/apple/ with its own .gitignore containing exactly these three
 # entries; the lead commits the rest of gen/apple/ at integration (Xcode
 # project, generated bindings, Assets.xcassets, Info.plist — it holds signing/

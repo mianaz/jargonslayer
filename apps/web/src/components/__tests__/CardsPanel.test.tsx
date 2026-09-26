@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// v0.5 Wave-1 Feature 7 (inline card/term edit, docs/design-explorations/
-// v05-wave1-blueprint.md §1 Feature 7). createRoot/act pattern, real
+// v0.5 Wave-1 Feature 7 (inline card/term edit). createRoot/act pattern, real
 // zustand store (mirrors AiStatusPanel.test.tsx) — updateCard/updateTerm
 // are spied via a setState override (TaskCenterDrawer.desktop.test.tsx's
 // own `showToastSpy` precedent), everything else rides the real store.

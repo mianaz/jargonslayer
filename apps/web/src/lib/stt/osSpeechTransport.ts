@@ -1,4 +1,4 @@
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §2/§6 D2, Lane D)
+// S13 (D2, Lane D)
 // — the ONLY place osspeech's event transport branches by platform.
 // Desktop: the existing macOS global events "osspeech://transcript"/
 // "osspeech://status" via getListen() — byte-identical to what

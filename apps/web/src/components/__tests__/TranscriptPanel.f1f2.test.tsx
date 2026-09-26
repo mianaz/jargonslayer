@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 //
 // v0.5 Wave-1 Features 1+2 (TranscriptPanel header: selection-mode bulk
-// assign, live latch visibility, AI 校正 button gating — docs/design-
-// explorations/v05-wave1-blueprint.md §1 F1/F2). Real zustand store
+// assign, live latch visibility, AI 校正 button gating). Real zustand store
 // (LookupPopover.defineModel.test.tsx's precedent) — CorrectionReview's
 // own client-transport call is mocked so this file never needs a real
 // network layer; F2's actual review-surface behavior is covered by

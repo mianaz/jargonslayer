@@ -1,7 +1,6 @@
 "use client";
 
-// v0.4 S3 chunk 6 (docs/design-explorations/s3-tauri-uv-blueprint.md,
-// §Chunk 6) — the first-run provisioning wizard: a full-screen overlay
+// v0.4 S3 chunk 6 — the first-run provisioning wizard: a full-screen overlay
 // (mounted by DesktopBootstrap.tsx, which owns the actual lib/desktop/
 // bootstrap.ts handle) rendered whenever the user needs to either
 // consent to a local install, watch it run, recover from a step error,
@@ -317,9 +316,8 @@ function ConsentScreen({
           )}
         </div>
 
-        {/* S12 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
-           §C Q8/L1, worker A3 + B2) — ModelPicker.tsx itself needs no
-           branching for parakeet: it's gated independently on mlxOnly/
+        {/* S12 (v0.4.4, Q8/L1, worker A3 + B2) — ModelPicker.tsx itself
+           needs no branching for parakeet: it's gated independently on mlxOnly/
            mlxCaps (worker A3) — selectable on supported Apple Silicon,
            disabled-with-reason otherwise; §F FB10 additionally hides any
            DEFINITIVELY-unsupported mlx row here specifically (product
@@ -681,8 +679,7 @@ export default function DesktopWizard({
 }
 
 // ---------------------------------------------------------------
-// S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
-// item #3 / Chunk C) — two OPTIONAL, SKIPPABLE onboarding steps shown
+// S10 field-fix (item #3 / Chunk C) — two OPTIONAL, SKIPPABLE onboarding steps shown
 // AFTER the provisioning flow above. Deliberately NOT woven into the
 // phase switch in the default export above: provisionMachine.ts stays
 // completely untouched, and DesktopWizard's own phase-driven behavior

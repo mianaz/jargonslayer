@@ -139,8 +139,7 @@ describe("pipInstallDiar", () => {
   });
 });
 
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C R1 +
-// Provision) — the separate, hash-locked MLX venv's own builders.
+// S12a (v0.4.4, R1 + provision) — the separate, hash-locked MLX venv's own builders.
 describe("venvCreateMlx", () => {
   it("targets paths.mlxVenvDir with the pinned python minor, no --clear by default", () => {
     expect(venvCreateMlx(paths)).toEqual({

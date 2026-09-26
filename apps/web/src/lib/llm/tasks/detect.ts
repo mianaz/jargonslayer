@@ -1,4 +1,4 @@
-// Isomorphic "detect" task (v0.4 S2, PLAN-v0.4 §1A/§4) — the shared
+// Isomorphic "detect" task (v0.4 S2) — the shared
 // orchestration app/api/detect/route.ts (server, Next.js) and
 // lib/llm/client.ts's client-side path (browser/Tauri, BYOK-only) both
 // call: prompt assembly (@jargonslayer/core/llm/prompts) -> provider

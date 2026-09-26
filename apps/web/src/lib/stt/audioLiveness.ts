@@ -26,8 +26,7 @@ const CHANNEL_KEYS: readonly AudioChannel[] = ["mic", "system", "default"];
 // older/foreign helper build). The real predicate below is duration-based
 // (WINDOW_LOUD_MS_MIN); this single-sample-max floor is what it degrades
 // to when that duration signal isn't available. Measured quiet-room PEAK
-// is 0.027 (docs/design-explorations/dual-capture-2026-08.md:41 — NOT the
-// 0.022 figure a prior revision of this comment cited, which was actually
+// is 0.027 (NOT the 0.022 figure a prior revision of this comment cited, which was actually
 // the AEC-leakage probe, a different measurement). The old AUDIO_FLOOR
 // (0.03) sat only ~11% above that floor — one loud keystroke/cough could
 // clear it — so this fallback is raised to 0.06, roughly double the

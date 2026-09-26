@@ -712,8 +712,7 @@ describe("addFinal — v0.5 Wave-1 Feature 1 live latch", () => {
   });
 });
 
-// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md) —
-// seedChannelAlias is the pure helper store.ts's addFinal wraps (same
+// Dual capture v1 — seedChannelAlias is the pure helper store.ts's addFinal wraps (same
 // "pure helper tested standalone, thin store action tested for
 // integration" split as applySpeakerUpdateToSegments/aliasesAfterRename
 // above).
@@ -3207,7 +3206,7 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(s.engine).toBe("webspeech");
   });
 
-  it("preview tier leaves a saved BYOK cloud engine (tabaudio-cloud) selectable — v0.5 Wave-1 F4 / §5 A4 + BYOK preview D3 (docs/design-explorations/byok-preview-blueprint.md): survives UNCONDITIONALLY, same as full tier — a keyless pick fails honestly at start, not this coercion's job", () => {
+  it("preview tier leaves a saved BYOK cloud engine (tabaudio-cloud) selectable — v0.5 Wave-1 F4 / A4 + BYOK preview D3: survives UNCONDITIONALLY, same as full tier — a keyless pick fails honestly at start, not this coercion's job", () => {
     const s = applyTierDefaults(withEngine("tabaudio-cloud"), true, true);
     expect(s.engine).toBe("tabaudio-cloud");
   });
@@ -3282,8 +3281,7 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
   });
 });
 
-// BYOK preview (docs/design-explorations/byok-preview-blueprint.md D3):
-// applyTierDefaults' optional 4th param (`sonioxPreviewLane`) is now
+// BYOK preview (D3): applyTierDefaults' optional 4th param (`sonioxPreviewLane`) is now
 // VESTIGIAL — soniox/deepgram/tabaudio-cloud all survive preview
 // UNCONDITIONALLY (see the describe block above), so this argument can
 // no longer change the outcome for any engine. Kept in the function
@@ -3808,7 +3806,7 @@ describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coer
   });
 });
 
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §6) + iOS-cloud
+// S13 + iOS-cloud
 // round (post-v0.6.0, 手机版显然应该允许云端): iOS's ENGINE_OPTIONS is
 // osspeech + the three BYOK cloud mic engines (engineOptions.ts's
 // IOS_ENGINE_OPTIONS) — the 3rd (isIos) argument is additive,
@@ -4106,8 +4104,7 @@ describe("modeForPersistedEngine — full migration matrix (every STTEngineKind 
   });
 });
 
-// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md) —
-// the scoped exception to "mode always back-derives from engine": for
+// Dual capture v1 — the scoped exception to "mode always back-derives from engine": for
 // desktop osspeech, a TRUSTWORTHY prior source (the 4th param, passed by
 // a caller ONLY when the engine was ALREADY osspeech — see every real
 // call site: StatusLine's EngineDropdown, SettingsDialog's ENGINE_CARDS,
@@ -4261,7 +4258,7 @@ describe("migrateSettings — mode back-derivation end-to-end (§5 A3, real web 
     expect(migrateSettings({ engine: "browser-whisper" } as Partial<Settings>).mode).toBe("import");
   });
 
-  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+  // Dual capture v1:
   // this ambient test env is WEB (IS_DESKTOP/IS_IOS both false import-
   // time consts), where applyPlatformEngineDefaults already coerces a
   // saved osspeech away to tabaudio BEFORE the mode mapper ever sees it

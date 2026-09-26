@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// v0.5 Wave-1 Feature 2 (AI transcript correction, batch/review-gated —
-// docs/design-explorations/v05-wave1-blueprint.md §1 Feature 2 + §5
+// v0.5 Wave-1 Feature 2 (AI transcript correction, batch/review-gated,
 // A5). Mocks @/lib/llm/client (network layer) and drives the REAL
 // zustand store (LookupPopover.defineModel.test.tsx's own precedent).
 

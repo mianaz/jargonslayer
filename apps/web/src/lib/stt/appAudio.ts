@@ -1,5 +1,4 @@
-// Native app/system audio capture engine (S9, docs/design-explorations/
-// s9-app-audio-tap-blueprint.md): transcribes the OTHER side of a
+// Native app/system audio capture engine (S9): transcribes the OTHER side of a
 // native-app call (Zoom/Teams/WeChat app — NOT a browser tab, which
 // tabAudio.ts already covers via getDisplayMedia; macOS Chrome's
 // getDisplayMedia can only ever capture tab audio, so this is the one
@@ -189,8 +188,7 @@ export class AppAudioEngine implements STTEngine {
   private stopEndedResolve: (() => void) | null = null;
   private stopEndedTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // S9 live-failure investigation (docs/design-explorations/
-  // s9-app-audio-tap-blueprint.md) — the field export showed ZERO
+  // S9 live-failure investigation — the field export showed ZERO
   // appaudio diag entries even though a capture had actually run, so
   // this engine had no visibility into which of three things happened:
   // (a) the tap captured pure silence, (b) the Channel delivered a

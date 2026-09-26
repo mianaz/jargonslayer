@@ -3,8 +3,8 @@
 // Live-detected expression cards + terms, merged into one unified list
 // (user directive: terms must NOT be small chips). The chinese
 // explanation / gloss_zh row is the hero of every card (fg +
-// font-medium, leading-[1.7]) — see docs/DESIGN.md color lock.
-// v3 terminal reskin (docs/DESIGN.md v3.3/v3.1): cards are flat "blocks"
+// font-medium, leading-[1.7]).
+// v3 terminal reskin: cards are flat "blocks"
 // — border-l-2 status bar in the category hue + bg-panel + hairline
 // separation, radius 0-2px. Every expression category gets its own
 // lab-* hue (CATEGORY_COLOR below); all terms share one lab-cyan bar
@@ -37,8 +37,8 @@ import {
   type TermCard,
 } from "@jargonslayer/core/types";
 
-// Left-bar + category-chip hue per expression category (docs/DESIGN.md
-// v3 spec, exact mapping). "other" has no lab-* hue of its own — it maps
+// Left-bar + category-chip hue per expression category (exact
+// mapping). "other" has no lab-* hue of its own — it maps
 // to neutral `mut`, same as terms' non-colored type chip. Full class
 // strings (not bare color names) so Tailwind's static JIT scan can find
 // every class literally in source — a template-interpolated color name
@@ -279,8 +279,7 @@ function useFocusRing(
 }
 
 // ---------- v0.5 Wave-1 Feature 7: inline card/term edit ----------
-// SHIP scope, docs/design-explorations/v05-wave1-blueprint.md §1
-// Feature 7: stopped/loaded sessions only (sidesteps the live
+// SHIP scope: stopped/loaded sessions only (sidesteps the live
 // mergeDetections clobber hazard — see the file's own doc). Reuses
 // GlossaryPanel's EntryRow local editing+draft+save/cancel PATTERN,
 // but keeps each card's existing layout (only the editable text nodes

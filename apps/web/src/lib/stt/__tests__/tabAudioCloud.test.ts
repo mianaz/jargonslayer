@@ -1,5 +1,4 @@
-// TabAudioCloudEngine (v0.5 Wave-1 Feature 4, docs/design-explorations/
-// v05-wave1-blueprint.md §1 Feature 4 + §5 A4): getDisplayMedia capture
+// TabAudioCloudEngine (v0.5 Wave-1 Feature 4, A4): getDisplayMedia capture
 // (mirrors tabAudio.ts/acquireCancellation.test.ts's own coverage of
 // that shape) routed into a module-mocked SonioxTransport/
 // DeepgramTransport — "a transport was constructed at all, with the

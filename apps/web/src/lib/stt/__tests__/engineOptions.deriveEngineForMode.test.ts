@@ -1,5 +1,4 @@
-// v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
-// v05-wave1-blueprint.md §1 Feature 5 + §5 A3/A4) — deriveEngineForMode's
+// v0.5 Wave-1 Feature 5 (mode-first UI, A3/A4) — deriveEngineForMode's
 // own matrix (mode × platform × key/floor presence), mirroring
 // store.test.ts's modeForPersistedEngine matrix test style. Unlike
 // ENGINE_OPTIONS (module-scope IS_DESKTOP/IS_IOS, needs vi.mock +
@@ -90,8 +89,7 @@ describe("deriveEngineForMode", () => {
   // osspeech floor; a keyed cloud pick was respected, same rule as the
   // web branch below.
   //
-  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md)
-  // amends this SURGICALLY: osspeech now has a real AEC mic producer,
+  // Dual capture v1 amends this SURGICALLY: osspeech now has a real AEC mic producer,
   // so a mic-tile click RETAINS osspeech when it's ALREADY the current
   // engine (same "deliberate pick survives a mic-tile click" posture
   // whisper/soniox/deepgram already get below) — every other

@@ -1,5 +1,5 @@
 // swift-tools-version:5.9
-// S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md) —
+// S9.1 —
 // jargonslayer-audiocap: the CoreAudio process-tap helper, a second
 // externalBin alongside uv (D2). Built by ../../../../scripts/
 // build-audiocap.mjs, staged as binaries/jargonslayer-audiocap-<triple>.

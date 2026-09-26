@@ -1,5 +1,5 @@
-// v0.4 S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
-// Chunk A, item 2 + Q1 verdict) — the RFC 8252 loopback OAuth callback
+// v0.4 S10 field-fix (Chunk A, item 2 + Q1 verdict) —
+// the RFC 8252 loopback OAuth callback
 // listener backing "Connect with OpenRouter" on desktop. Q1's own
 // grounds (blueprint, docs-verified): OpenRouter's PKCE docs bless
 // "localhost callbacks ... on any port" and never mention custom

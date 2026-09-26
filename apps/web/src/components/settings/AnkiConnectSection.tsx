@@ -1,7 +1,6 @@
 "use client";
 
-// AnkiConnect settings subcomponent (v0.5 Wave-1 Feature 9, docs/design-
-// explorations/v05-wave1-blueprint.md §1 Feature 9 + §5 A8/A9). A
+// AnkiConnect settings subcomponent (v0.5 Wave-1 Feature 9, A8/A9). A
 // self-contained, props-driven block per the blueprint's SettingsDialog
 // contention rule (§2: "each lane delivers its section as a
 // self-contained subcomponent... referenced by a SINGLE import + render

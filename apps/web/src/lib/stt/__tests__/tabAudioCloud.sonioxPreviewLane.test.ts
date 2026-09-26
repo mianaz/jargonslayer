@@ -1,7 +1,6 @@
 // tabAudioCloud — Soniox preview lane (SONIOX_PREVIEW_LANE): the mint
 // path is scoped to a genuinely soniox-RESOLVED session only. BYOK
-// preview (docs/design-explorations/byok-preview-blueprint.md D3)
-// dropped the old "start() ALWAYS routes through Soniox regardless of
+// preview (D3) dropped the old "start() ALWAYS routes through Soniox regardless of
 // the persisted tabAudioCloudProvider" force — effectiveProvider now
 // honestly reflects Settings.tabAudioCloudProvider even on this lane,
 // same as tabAudioCloud.test.ts's own ambient provider-dispatch

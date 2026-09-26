@@ -1,5 +1,5 @@
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C Gating
-// F13, fail-CLOSED) — `mlx_capabilities()`: the Parakeet-v3/MLX backend's
+// S12a (v0.4.4, §C Gating F13, fail-CLOSED) —
+// `mlx_capabilities()`: the Parakeet-v3/MLX backend's
 // own capability probe, mirroring osspeech.rs's/audiocap.rs's own
 // `*_capabilities()` shape (a plain, never-`Err` command — see
 // `audiocap_capabilities`'s own doc comment for the precedent this

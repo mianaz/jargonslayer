@@ -1,5 +1,4 @@
-// v0.4 S3 chunk 5 (docs/design-explorations/s3-tauri-uv-blueprint.md,
-// §Chunk 5) — the ONLY module in this app that ever imports
+// v0.4 S3 chunk 5 — the ONLY module in this app that ever imports
 // `@tauri-apps/*`. Every import below is a DYNAMIC import() gated by a
 // LITERAL `process.env.NEXT_PUBLIC_DESKTOP === "1" ||
 // process.env.NEXT_PUBLIC_IOS === "1"` check living in THIS SAME
@@ -20,10 +19,9 @@
 // the right import everywhere else (provisionRunner.ts, bootstrap.ts)
 // since those files never write an `import()` of their own.
 //
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4, normative)
-// — TAURI_BUILD widens this gate from "macOS desktop build" to "any
-// Tauri shell build" (macOS desktop OR iOS): BOTH env-var checks stay
-// inline literals for the exact same reason as above, so a pure web
+// S13 (D4, normative) — TAURI_BUILD widens this gate from "macOS desktop
+// build" to "any Tauri shell build" (macOS desktop OR iOS): BOTH env-var
+// checks stay inline literals for the exact same reason as above, so a pure web
 // build (neither var set) still folds the whole expression to `false`
 // at build time and every `@tauri-apps/*` import() below tree-shakes
 // out of that bundle entirely.
@@ -63,9 +61,8 @@ export type ListenFn = <T>(event: string, handler: (event: TauriEvent<T>) => voi
 export type TauriFetchFn = typeof fetch;
 
 /** Matches `@tauri-apps/api/core`'s `Channel<ArrayBuffer>` closely
- *  enough for this app's one consumer (S9.3, docs/design-explorations/
- *  s9-app-audio-tap-blueprint.md's D5 — stt/appAudio.ts's AppAudioEngine
- *  receives the app-audio helper's batched PCM chunks over one of
+ *  enough for this app's one consumer (S9.3/D5 — stt/appAudio.ts's
+ *  AppAudioEngine receives the app-audio helper's batched PCM chunks over one of
  *  these) — trimmed to the one thing that caller does with it: read
  *  `onmessage` fires, same as InvokeFn/ListenFn's own "close enough"
  *  contract above. Monomorphic to ArrayBuffer (unlike Channel's own

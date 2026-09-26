@@ -1,5 +1,4 @@
-// v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md,
-// slice S9.1) — jargonslayer-audiocap: the CoreAudio process-tap
+// v0.4 S9.1 (slice S9.1) — jargonslayer-audiocap: the CoreAudio process-tap
 // helper, a second externalBin alongside uv (D2). This module is S9.1's
 // own scope ONLY: the bare-file-name sidecar constant (mirrors uv.rs's
 // UV_SIDECAR_PROGRAM) plus an env-gated spike rig that spawns the
@@ -217,8 +216,7 @@ pub fn maybe_spawn_spike(app: &tauri::AppHandle) {
 }
 
 // ============================================================================
-// S9.2 (docs/design-explorations/s9-app-audio-tap-blueprint.md, slice
-// S9.2) — the real command surface: audiocap_capabilities() /
+// S9.2 (slice S9.2) — the real command surface: audiocap_capabilities() /
 // start_app_audio() / stop_app_audio(), spawn+supervise+resample+batch,
 // the audiocap://status side-channel, generation guard, and the
 // startup orphan sweep. Everything above this banner is S9.1's own

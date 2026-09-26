@@ -1,5 +1,4 @@
-// v0.4 S3 chunk 5 (docs/design-explorations/s3-tauri-uv-blueprint.md,
-// §Chunk 5) — the effect interpreter: turns provisionMachine.ts's
+// v0.4 S3 chunk 5 — the effect interpreter: turns provisionMachine.ts's
 // declarative Effect[] into real invoke()/listen() calls against the
 // Rust commands chunk 3 shipped (apps/desktop/src-tauri/src/{paths,uv,
 // server,provision}.rs), and folds the results back into the
@@ -146,8 +145,7 @@ export interface RunnerDeps {
    *  hermetic, instant unit tests (a recorded fake never actually
    *  waits). */
   sleep?: (ms: number) => Promise<void>;
-  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-   *  Q6/§3.5 HF-token) — a LIVE read of the user's configured
+  /** S12a (v0.4.4, HF-token) — a LIVE read of the user's configured
    *  Settings.hfToken, threaded into the prewarmModel/startServer
    *  effects' own invoke payloads below (see runStepEffect) so Rust's
    *  `prewarm_model`/`start_server` can set `HF_TOKEN` in the download/

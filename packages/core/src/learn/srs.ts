@@ -1,8 +1,7 @@
 // SM-2-lite scheduler for the learn-set (#48 step 2 — real SRS
 // review). FSRS was rejected by the design pass (its calibration
-// advantage needs data volumes a single user never produces — see
-// docs/design-explorations/48-learning-loop.md Q3); this is ~15 lines,
-// deterministic, unit-testable. All thresholds are named constants —
+// advantage needs data volumes a single user never produces); this is
+// ~15 lines, deterministic, unit-testable. All thresholds are named constants —
 // Miana dogfoods and tunes them directly, no adaptive machinery.
 
 import type { LearnRecord } from "./types";

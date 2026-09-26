@@ -165,7 +165,7 @@ export default function Home() {
     if (IS_DESKTOP || IS_IOS) {
       void hydration.then(() => warmSystemTranslateProbeForStartup(useApp.getState().settings));
     }
-    // S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4/D6) —
+    // S13 (D4/D6) —
     // iOS init: ONLY the LLM transport wiring (bootstrap.ts's own
     // initIos() doc comment) — no wizard/update-check chrome, so unlike
     // DesktopBootstrap below this needs no component of its own, the
