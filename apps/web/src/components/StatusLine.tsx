@@ -1,6 +1,6 @@
 "use client";
 
-// v3 主题基座 vim 状态线 (docs/DESIGN.md v3.3): bottom bar mounted below
+// v3 主题基座 vim 状态线: bottom bar mounted below
 // <main> in page.tsx. Left = inverted status block reading store
 // status; middle = detect mode + audio-privacy sentence; right =
 // {cards+terms} counter, then the task tray.
@@ -139,7 +139,7 @@ interface AudioSourceOption {
   caveat?: string;
 }
 
-// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+// Dual capture v1:
 // "dual" (麦克风+系统) joins the desktop-only "system-audio" entry —
 // picking it always resolves to osspeech (deriveEngineForMode's own
 // "dual" branch, engineOptions.ts; isModeLegalForPlatform pins the

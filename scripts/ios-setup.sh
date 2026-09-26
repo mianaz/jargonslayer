@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# S13 (docs/design-explorations/s13-ios-blueprint.md §3 Lane E / §4 risk 2)
-# — idempotent iOS toolchain bootstrap. Safe to re-run: every step is a
-# presence-check first, act only if missing.
+# S13 (Lane E) — idempotent iOS toolchain bootstrap. Safe to re-run:
+# every step is a presence-check first, act only if missing.
 #
 # This machine's DEFAULT `cargo` is Homebrew's (no iOS cross targets, can't
 # build aarch64-apple-ios). The rustup-managed toolchain under ~/.cargo/bin

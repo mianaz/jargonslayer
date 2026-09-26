@@ -5,10 +5,9 @@
 // pure-core/thin-shell split as sttSupervisor.ts and
 // webSpeechSession.ts).
 //
-// Research: docs/research/stt-live-engines-2026-07.md item #1 (kill
-// criteria: gate purely on runtime available() — esp. for zh, where
-// the spec explainer lists zh-CN/zh-TW but the memo's shipped
-// Chrome-139 pack enumerations were observed omitting Chinese).
+// Kill criteria: gate purely on runtime available() — esp. for zh,
+// where the spec explainer lists zh-CN/zh-TW but shipped Chrome-139
+// pack enumerations were observed omitting Chinese.
 //
 // Verified API shapes (MDN, 2026-07):
 //   SpeechRecognition.available({langs, quality?, processLocally?})

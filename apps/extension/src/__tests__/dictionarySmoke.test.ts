@@ -1,11 +1,11 @@
 // Proves @jargonslayer/core resolves and runs correctly under this
 // app's own tsconfig + Vite/vitest bundler resolution (npm workspace
 // symlink + core's package.json "exports": {"./*": "./src/*.ts"}
-// subpath-pattern map, consumed here exactly like apps/web does — see
-// PLAN-v0.4 S6 requirement 7). NOT a re-test of scanDictionary's own
-// matching logic — packages/core/src/detect/__tests__/dictionary.test.ts
-// already covers that exhaustively; this only needs to prove the
-// import resolves and returns real data in this workspace.
+// subpath-pattern map, consumed here exactly like apps/web does). NOT a
+// re-test of scanDictionary's own matching logic —
+// packages/core/src/detect/__tests__/dictionary.test.ts already covers that
+// exhaustively; this only needs to prove the import resolves and returns real
+// data in this workspace.
 
 import { describe, expect, it } from "vitest";
 

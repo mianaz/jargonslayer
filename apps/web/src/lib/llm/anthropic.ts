@@ -4,7 +4,7 @@
 // is not in the approved dependency list, so this relies on the
 // import graph — only api/detect and api/summarize import it.)
 //
-// v0.4 S2 (PLAN-v0.4 §1A/§4): the provider-request-shaping/parsing
+// v0.4 S2: the provider-request-shaping/parsing
 // logic this file used to own outright (zod schemas, JSON extraction,
 // the openai-compat raw-fetch path, CallJsonOptions) now lives in
 // providerCore.ts — isomorphic, safe for the new client-side

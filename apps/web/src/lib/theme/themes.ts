@@ -5,7 +5,7 @@
 // first theme to travel the full engine pipeline: validated by
 // schema.ts, injected by apply.ts via setProperty, never a CSS string).
 //
-// docs/DESIGN.md v3.5 roadmap: this registry is the "open engine, only
+// Roadmap: this registry is the "open engine, only
 // built-ins for now" foundation — a future community theme source
 // would validate against ThemeSchema and slot in beside these two, but
 // no loader for that exists yet (out of scope for v0.2.1).
@@ -125,7 +125,7 @@ export const TERMINAL_LIGHT_THEME: ThemeDefinition = {
 
 // ---------------------------------------------------------------------
 // #52 "theme批" (v0.2.5-ish): four of the seven archived visual
-// explorations (docs/design-explorations/) tokenized as real builtins.
+// explorations tokenized as real builtins.
 // Each is its OWN design language (not a terminal reskin), so unlike
 // TERMINAL_LIGHT_THEME's monochrome-act mirror, `act` here is each
 // theme's own signature accent hue (the color its exploration actually
@@ -140,7 +140,7 @@ export const TERMINAL_LIGHT_THEME: ThemeDefinition = {
 //
 // lab-* stay bound to the app's FIXED category slots (idiom=orange,
 // slang=red, indirect=yellow, phrase=green, metaphor=purple, all
-// terms=cyan — see DESIGN.md v3.1) but each theme supplies its own hue
+// terms=cyan) but each theme supplies its own hue
 // for that slot. None of the four source HTMLs implements all six
 // categories, so absent hues were invented in the same pigment family
 // as the theme's real accents (documented per-token below) rather than
@@ -158,7 +158,7 @@ export const TERMINAL_LIGHT_THEME: ThemeDefinition = {
 // tokens, shuimo's zhusha-deep) it was already close to AA and needed
 // only a small nudge, called out per-token below.
 
-// 水墨 shuimo — docs/design-explorations/preview-1-shuimo.html ("国画
+// 水墨 shuimo ("国画
 // 水墨 · 宣纸朱批" — ink-wash + rice-paper cinnabar annotations). LIGHT
 // scheme (verified against the source: `body{ background: var(--paper)
 // }`, --paper #F6F1E5 — the palette reads pale/light despite being
@@ -213,7 +213,7 @@ export const SHUIMO_THEME: ThemeDefinition = {
   },
 };
 
-// 魔典 grimoire — docs/design-explorations/preview-2-grimoire.html
+// 魔典 grimoire
 // (leather-bound spellbook: dark leather page, gilt-edged parchment
 // cards). DARK scheme (`body{ background: var(--bg-leather) }`,
 // #17120E). The source has no flat elevation ladder either — its
@@ -261,7 +261,7 @@ export const GRIMOIRE_THEME: ThemeDefinition = {
   },
 };
 
-// 黑色电影 noir — docs/design-explorations/preview-5-noir.html ("黑金
+// 黑色电影 noir ("黑金
 // 编辑部" black-gold editorial / "黑色大教堂×杂志排印"). DARK scheme
 // (`body{ background: var(--black) }`, #050505). The most
 // monochrome-restrained of the four sources — only gold + wine as
@@ -312,7 +312,7 @@ export const NOIR_THEME: ThemeDefinition = {
   },
 };
 
-// 青绿 qinglv — docs/design-explorations/preview-7-qinglv.html (青绿
+// 青绿 qinglv (青绿
 // 山水 mineral-green-and-blue landscape painting). DARK scheme —
 // **flagged during mapping**: the task's provisional read guessed
 // qinglv might be light-schemed; the source's actual `body{ background:
@@ -370,8 +370,8 @@ export const QINGLV_THEME: ThemeDefinition = {
 
 // ---------------------------------------------------------------------
 // v0.5.1 appearance sprint: the last two of the seven archived design
-// explorations (docs/design-explorations/) tokenized as real builtins —
-// preview-4-terminal.html was always just the terminal reskin (already
+// explorations tokenized as real builtins —
+// the terminal exploration was always just the terminal reskin (already
 // the shipping default, never needed its own builtin), so this pair
 // completes all seven sources. Same per-token discipline as the #52
 // batch above (verbatim / AA-cousin / invented-in-family, documented
@@ -380,7 +380,7 @@ export const QINGLV_THEME: ThemeDefinition = {
 // as a small FILL usually needs a brighter/darker AA-text cousin to
 // carry real text on our panels instead).
 
-// 像素 8bit — docs/design-explorations/preview-3-8bit.html ("方向3:
+// 像素 8bit ("方向3:
 // 8-bit 屠龙任务日志" — pixel-shell/readable-core: retro game chrome
 // around a fully-legible modern-font Chinese body; meetings become
 // dragon-boss fights, jargon becomes loot). DARK scheme (`body{
@@ -446,7 +446,7 @@ export const EIGHT_BIT_THEME: ThemeDefinition = {
   },
 };
 
-// 笔记 sketch — docs/design-explorations/preview-6-sketch.html ("方向
+// 笔记 sketch ("方向
 // 6 课堂笔记本 · Notion 气质 × 铅笔手绘 × 荧光笔" — Notion-style ruled
 // notebook page, pencil-sketch chrome, highlighter/red-pen annotations
 // standing in for jargon/explanations). LIGHT scheme (`body{ background:

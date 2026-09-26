@@ -1,4 +1,4 @@
-// S13.1 (docs/design-explorations/s13-ios-blueprint.md) — the iOS
+// S13.1 — the iOS
 // simulator spike harness. There is no tap-automation surface on
 // `simctl` (unlike XCUITest), so the only way to get end-to-end evidence
 // out of a simulator run is to have the app drive itself and write what

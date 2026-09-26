@@ -1,4 +1,4 @@
-// S9.2 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D5) —
+// S9.2 (D5) —
 // batches resampled i16 mono PCM samples into ~16 KB little-endian byte
 // buffers before they ever reach the Tauri Channel: "batched ~16 KB
 // (matches the worklet's granularity), never per-IOProc-callback sends"

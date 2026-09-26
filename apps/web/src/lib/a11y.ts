@@ -88,7 +88,7 @@ export interface UseOverlayA11yOptions {
 }
 
 /**
- * Overlay/dialog a11y contract (DESIGN.md v3.9b): role=dialog +
+ * Overlay/dialog a11y contract: role=dialog +
  * aria-modal, document Escape → onClose, Tab trap within containerRef,
  * initial focus on the first focusable inside (not the container —
  * see BottomSheet.tsx FIX 7), focus restore on close. SSR-safe.

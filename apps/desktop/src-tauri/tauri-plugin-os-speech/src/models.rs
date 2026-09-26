@@ -1,5 +1,4 @@
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §2 pinned wire
-// contract, Lane B) — the shapes crossing the Rust<->Swift
+// S13 (§2 pinned wire contract, Lane B) — the shapes crossing the Rust<->Swift
 // `run_mobile_plugin` boundary. Defined ONCE here (not duplicated in the
 // app crate's osspeech_ios.rs) and re-exported via lib.rs's `pub use
 // models::*`, mirroring the tauri-apps geolocation plugin's own

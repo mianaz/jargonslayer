@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// v0.7.1 translation train-2 (docs/design-explorations/
-// v071-translation-train2-blueprint.md's own 有道 API contract) —
+// v0.7.1 translation train-2 (有道 API contract) —
 // YoudaoTranslationProvider. Mirrors providers.test.ts's own
 // DeepLTranslationProvider describe block (jsonResponse helper,
 // setTransport/resetTransport, makeSettings) — see that file's own

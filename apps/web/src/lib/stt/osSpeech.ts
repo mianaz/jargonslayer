@@ -1,5 +1,4 @@
-// Zero-Install 系统识别 engine (S11, docs/design-explorations/
-// s11-osspeech-blueprint.md): desktop-only, macOS 26+ on-device
+// Zero-Install 系统识别 engine (S11): desktop-only, macOS 26+ on-device
 // transcription via Apple's SpeechAnalyzer, riding the SAME CoreAudio
 // process tap appaudio.ts already taps (jargonslayer-audiocap's new
 // "transcribe" mode — byte-identical capture path up to the ring, see
@@ -26,8 +25,7 @@
 //     resolvedLocale?, supportedLocales? }, kind one of the CLOSED set
 //     below (OsSpeechStatusKind).
 //
-// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md,
-// Rust side: apps/desktop/src-tauri/src/osspeech.rs): `source` is
+// Dual capture v1 (Rust side: apps/desktop/src-tauri/src/osspeech.rs): `source` is
 // "mic"|"system"|"dual" — omitted (or "system") is byte-identical to
 // every pre-dual-capture caller, the Rust command's own default.
 // `channel` ("mic"|"system") rides ONLY a transcript whose session
@@ -55,8 +53,7 @@ import { IS_DESKTOP } from "../platform/desktop";
 import { listenOsSpeechAudioStats, listenOsSpeechStatus, listenOsSpeechTranscript } from "./osSpeechTransport";
 import { projectForOsSpeechContextualJson } from "./lexicon";
 import { pushAudioWindow } from "./audioLiveness";
-// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
-// the two channel-tagged stable speaker ids — store.ts owns the
+// Dual capture v1: the two channel-tagged stable speaker ids — store.ts owns the
 // speakerAliases/seedChannelAlias machinery these feed, so the literals
 // live there and this file imports rather than hand-typing a second
 // copy. No import cycle: jobsBridge.ts above already pulls in store.ts
@@ -295,7 +292,7 @@ export class OsSpeechEngine implements STTEngine {
       return;
     }
 
-    // S13 (docs/design-explorations/s13-ios-blueprint.md, §2/§6 D2): both
+    // S13 (D2): both
     // subscriptions go through osSpeechTransport.ts's shim, the ONE place
     // that branches desktop's macOS global events vs iOS's plugin-scoped
     // ones — this engine's own generation-guard/latch logic is unchanged

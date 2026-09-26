@@ -16,10 +16,9 @@
 //     import, and no code path that reaches for `document`/`window`,
 //     since any of those would throw or fail to resolve in this
 //     DOM-free environment.
-// This is a supplement to (not a replacement for) the grep check in
-// PLAN-v0.4 S1's verification matrix — grep catches source text, this
-// catches anything that only breaks at actual module-evaluation/call
-// time.
+// This is a supplement to (not a replacement for) a source-text grep
+// check — grep catches source text, this catches anything that only
+// breaks at actual module-evaluation/call time.
 import { describe, expect, it } from "vitest";
 import * as types from "../types";
 import * as dictionaryData from "../detect/dictionary-data";

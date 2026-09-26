@@ -4,7 +4,7 @@
 // flip-card visuals (FlashCard) but grades on the 3-button SM-2-lite
 // scale (不认识/模糊/认识) instead of PracticeDeck's mastered/not toggle.
 // Deliberately does NOT replace 翻卡浏览 — the two modes ship in
-// parallel per the design (usage decides later, see PLAN-v0.3.0.md).
+// parallel per the design (usage decides later).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "@/lib/store";

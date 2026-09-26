@@ -21,7 +21,7 @@ sidecar/*.wav
 # ffmpeg.wasm runtime copied from node_modules on postinstall
 /apps/web/public/ffmpeg/
 
-# internal working docs (strategy/research/spec drafts) — private nested repo, never public
+# local-only notes, never committed
 /docs/
 
 # CRXJS/Vite build output (S6) — the loadable unpacked extension,
@@ -36,7 +36,7 @@ sidecar/*.wav
 # tracked in the script, not git.
 /apps/desktop/src-tauri/binaries/
 
-# v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md) —
+# v0.4 S9.1 —
 # the jargonslayer-audiocap sidecar binary, built per-machine by
 # `node scripts/build-audiocap.mjs` from apps/desktop/src-tauri/
 # audiocap-helper/ (a Swift package, no download/checksum to pin — the

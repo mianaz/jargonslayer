@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// v0.5 Wave-1 Feature 1 (per-segment speaker assignment, docs/design-
-// explorations/v05-wave1-blueprint.md §1 Feature 1 + §5 A2). Exercises
+// v0.5 Wave-1 Feature 1 (per-segment speaker assignment, A2). Exercises
 // the REAL zustand store (mirrors LookupPopover.defineModel.test.tsx's
 // own precedent for this pattern) — no mocks, since every action here
 // is a pure store mutation, no network call.

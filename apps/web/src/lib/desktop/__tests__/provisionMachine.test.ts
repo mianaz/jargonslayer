@@ -174,8 +174,7 @@ describe("transition — CHECK_RESULT", () => {
   });
 });
 
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Provision, F14) — marker capability-check + quarantine: a
+// S12a (v0.4.4, provision F14) — marker capability-check + quarantine: a
 // parakeet-family marker must be capability-checked BEFORE ever
 // reaching STARTING (Sol finding #14's fix), never a health-timeout
 // restart loop.

@@ -124,7 +124,7 @@ describe("scanDictionary — Bug B fix: cross-pack collisions no longer delete a
   });
 });
 
-// Lane Q (v0.7.8 decision record, docs/ROADMAP.md): the two tests above
+// Lane Q (v0.7.8 decision record): the two tests above
 // only spot-check the two REPORTED collisions (SAM, regression). This
 // computes the FULL inventory over ALL_TERM_ENTRIES — the UNMERGED flat
 // list, since mergeTermTables has already resolved every collision by

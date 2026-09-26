@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Plain-assert self-test for whisper_server.py's S12b parakeet-mlx
-backend (docs/design-explorations/s12-mlx-blueprint.md §C R2/R3/R4 +
-§E L5 — the batch-final + streaming-partials HYBRID that supersedes §C
-R2's stream-commit-primary design). Mirrors test_whisper_protocol.py's
-own style/harness exactly: no pytest, no network, no real model, no
-server start — module import is side-effect free.
+backend (R2/R3/R4 + L5 — the batch-final + streaming-partials HYBRID
+that supersedes R2's original stream-commit-primary design). Mirrors
+test_whisper_protocol.py's own style/harness exactly: no pytest, no network,
+no real model, no server start — module import is side-effect free.
 
 This file runs under the BASE sidecar venv (sidecar/.venv), which
 never has mlx/parakeet_mlx installed (§C R1: those live only in the

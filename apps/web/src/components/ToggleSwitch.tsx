@@ -20,16 +20,16 @@
 // overflowing the border on one side while the unchecked rest position
 // sat flush; the new left-0.5/top-1/2 + translate-x-4 pairing is
 // symmetric (2px inset all around at both extremes). Track border
-// upgraded edge -> edge2 (unchecked): edge is a passive hairline
-// (DESIGN.md), too low-contrast for a control's own outline. Hover
+// upgraded edge -> edge2 (unchecked): edge is a passive hairline,
+// too low-contrast for a control's own outline. Hover
 // reuses the app's existing tokens (bg-act/85 for checked, matching
 // every other primary button's hover idiom; panel3 "hover/active
 // surface" for unchecked) rather than inventing new colors. Transition
 // timing: the track's background-color/border-color ride .btn-tactile's
 // own transition (already reduced-motion-safe, globals.css); the
 // thumb's translate needs its own (nothing else here touches it), so
-// duration-150 ease-out + an explicit motion-reduce override (DESIGN.md:
-// "all decorative motion collapses ... no exceptions").
+// duration-150 ease-out + an explicit motion-reduce override (design
+// law: "all decorative motion collapses ... no exceptions").
 import { handleButtonKeyDown } from "@/lib/a11y";
 
 export interface ToggleSwitchProps {

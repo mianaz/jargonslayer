@@ -8,7 +8,7 @@ import Translation
 import Darwin
 #endif
 
-// S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md) —
+// S9.1 —
 // jargonslayer-audiocap: the CLI entry point. Argument parsing + the
 // macOS-version gate live here (see AudioCapError's own doc comment for
 // why CLI-usage errors are NOT part of the typed NDJSON error
@@ -1043,8 +1043,8 @@ func runTranscribeDual(excludePID: pid_t, locale: String, durationSeconds: Doubl
         Task {
             // durationSeconds is force-nil for BOTH dual sessions — the
             // 2026-08-02 spike observed the duration cutoff hanging
-            // `run` ≥90s when it lands mid-utterance
-            // (dual-capture-2026-08.md §spike 6). Dual's only lifecycle
+            // `run` ≥90s when it lands mid-utterance (spike 6).
+            // Dual's only lifecycle
             // is the shared ShutdownSignal (stdin EOF / signals).
             async let sessionA = SpeechAnalyzerSession().run(
                 locale: locale,

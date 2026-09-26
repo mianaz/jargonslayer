@@ -61,8 +61,7 @@ describe("engineOptionGate — soniox preview lane ON", () => {
     expect(engineOptionGate(soniox, null)).toEqual({ disabled: false, title: SONIOX_PREVIEW_TRIAL_TITLE });
   });
 
-  // BYOK preview (docs/design-explorations/byok-preview-blueprint.md
-  // D3): tabaudio-cloud no longer gets the trial title — its runtime
+  // BYOK preview (D3): tabaudio-cloud no longer gets the trial title — its runtime
   // provider is now an honest reflection of Settings.
   // tabAudioCloudProvider (tabAudioCloud.ts's own effectiveProvider),
   // which may resolve to Deepgram (no trial at all), so a blanket

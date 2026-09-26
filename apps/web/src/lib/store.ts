@@ -299,7 +299,7 @@ export function aliasesAfterRename(
 }
 
 // ---------------------------------------------------------------
-// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md) —
+// Dual capture v1 —
 // osSpeech.ts's channel-tagged transcript events resolve straight to a
 // DISPLAY speaker at addFinal time (no later speaker_update — the
 // channel is known synchronously on the SAME final), but ride the exact
@@ -337,8 +337,7 @@ export function seedChannelAlias(
 
 // ---------------------------------------------------------------
 // v0.5 Wave-1 Feature 1 (owner amendment — unbounded roster, default
-// unassigned, multi-select, retroactive-following, live latch; docs/
-// design-explorations/v05-wave1-blueprint.md §1 Feature 1 + §5 A2) —
+// unassigned, multi-select, retroactive-following, live latch; A2) —
 // pure helpers for the manual speaker roster + per-segment assignment,
 // same "thin store action wraps an extracted pure function" pattern as
 // the realtime-diarization helpers immediately above.
@@ -478,7 +477,6 @@ interface AppState {
   status: MeetingStatus;
   statusDetail: string | null;
   // On-device Web Speech (Chrome 139+, `processLocally` — see
-  // docs/research/stt-live-engines-2026-07.md item #1 and
   // lib/stt/onDeviceSpeech.ts): which mode the ACTIVE webspeech
   // session actually reported at start (STTEvents.onEngineMode, wired
   // through useMeeting.ts). Lets StatusLine's privacy indicator show
@@ -572,8 +570,7 @@ interface AppState {
   // post-meeting
   summary: SummaryResult | null;
   summarizing: boolean;
-  // v0.5 Wave-1 Feature 2 (AI transcript correction, batch/review-gated
-  // — docs/design-explorations/v05-wave1-blueprint.md §1 Feature 2 + §5
+  // v0.5 Wave-1 Feature 2 (AI transcript correction, batch/review-gated,
   // A5): true while the batch correction call is in flight. Review
   // state itself (proposed changes, per-row accept/ignore) lives in the
   // CorrectionReview component, not here — this flag only gates the
@@ -792,8 +789,7 @@ interface AppState {
   // own doc. CorrectionReview.tsx is the one caller that acts on this;
   // every other caller may ignore the return value unchanged.
   updateSegmentText: (segmentId: string, text: string) => boolean;
-  // v0.5 Wave-1 Feature 7 (inline card edit, docs/design-explorations/
-  // v05-wave1-blueprint.md §1 Feature 7): patches editable fields by id
+  // v0.5 Wave-1 Feature 7 (inline card edit): patches editable fields by id
   // — expression/meaning/chinese_explanation/plain_english for a card,
   // term/gloss_en/gloss_zh for a term. Same committed-mutation tripwire
   // as updateSegmentText above (status==="stopped" only, fix #A5's
@@ -944,9 +940,8 @@ interface AppState {
  *  no longer offers, so it's coerced to this platform's own equivalent
  *  instead of surviving as an orphaned value nothing can select again.
  *
- *  S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
- *  item #1): desktop ALSO coerces a persisted "webspeech" to "whisper"
- *  (the local sidecar mic engine) — Tauri's WKWebView has no
+ *  S10 field-fix (item #1): desktop ALSO coerces a persisted "webspeech" to
+ *  "whisper" (the local sidecar mic engine) — Tauri's WKWebView has no
  *  SpeechRecognition API at all, so webspeech has never once worked on
  *  desktop (unlike tabaudio, which at least had a picker-shaped reason
  *  to exist there before S9). Wave 2 drops webspeech from the desktop
@@ -963,7 +958,7 @@ interface AppState {
  *  below is the only real caller, feeding it the actual IS_DESKTOP) —
  *  mirrors applyTierDefaults' own shape immediately below.
  *
- *  S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md):
+ *  S11 (v0.4.3):
  *  web also coerces a stored "osspeech" to "tabaudio" — osspeech is
  *  Tauri-only (desktop's macOS SpeechAnalyzer helper has no web
  *  equivalent), the identical D6 rationale appaudio's own web-side
@@ -971,7 +966,7 @@ interface AppState {
  *  (Q8): the macOS-26 floor is an engineOptions.ts option-gate + a
  *  start_os_speech runtime re-check, not a platform swap.
  *
- *  S13 (docs/design-explorations/s13-ios-blueprint.md, §6) + iOS-cloud
+ *  S13 + iOS-cloud
  *  round (post-v0.6.0, 手机版显然应该允许云端): iOS's ENGINE_OPTIONS is
  *  osspeech + the three BYOK cloud mic engines (soniox/deepgram/
  *  elevenlabs — engineOptions.ts's IOS_ENGINE_OPTIONS documents why
@@ -992,8 +987,7 @@ interface AppState {
  *  already exists on desktop/web pickers (or is coerced there by the
  *  branches below).
  *
- *  v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-blueprint.
- *  md §1 Feature 4 + §5 A4): desktop ALSO coerces a persisted
+ *  v0.5 Wave-1 Feature 4 (A4): desktop ALSO coerces a persisted
  *  "tabaudio-cloud" to "appaudio" — same D7 rationale as "tabaudio"
  *  itself immediately below (WKWebView has no tab-share picker to fail
  *  into, cloud backend or not) — tabaudio-cloud is web-only for v0.5
@@ -1076,8 +1070,8 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *      (migrateSettings still feeds it; other call sites pass it) but
  *      is no longer read here.
  *
- *  BYOK cloud engines — soniox/deepgram/tabaudio-cloud (docs/design-
- *  explorations/byok-preview-blueprint.md D3): deliberately NOT in
+ *  BYOK cloud engines — soniox/deepgram/tabaudio-cloud (D3):
+ *  deliberately NOT in
  *  group 1 — all three survive on preview UNCONDITIONALLY, selectable
  *  exactly like full tier. A keyless pick fails honestly at start (each
  *  engine's own start() reports a missing-key zh error — stt/soniox.ts,
@@ -1295,9 +1289,8 @@ function isValidMode(x: unknown): x is Settings["mode"] {
  *  iOS; demo->platform's legal default capture mode; unknown->platform
  *  default; NEVER url.
  *
- *  `persistedOsSpeechMode` (dual capture v1, docs/design-explorations/
- *  dual-capture-2026-08.md) — SCOPED EXCEPTION to the rest of this
- *  function's "mode always back-derives from engine" rule, desktop
+ *  `persistedOsSpeechMode` (dual capture v1) — SCOPED EXCEPTION to the rest
+ *  of this function's "mode always back-derives from engine" rule, desktop
  *  osspeech only: when the engine was ALREADY osspeech before this call
  *  (a caller passes its own pre-write `settings.mode`/`draft.mode` here
  *  ONLY in that case — see StatusLine/SettingsDialog/TutorialOverlay's

@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// ImportHub — initialTab prop (v0.5 Wave-1 Feature 5, mode-first UI,
-// docs/design-explorations/v05-wave1-blueprint.md §1 Feature 5).
+// ImportHub — initialTab prop (v0.5 Wave-1 Feature 5, mode-first UI).
 // ModeSelector's 导入/链接 tiles open this SAME dialog instance (page.tsx
 // owns the open-state) on a specific starting tab instead of always
 // landing on 文件. Mirrors ImportHub.warningsToast.test.tsx's own mock

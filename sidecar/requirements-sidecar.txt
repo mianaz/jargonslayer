@@ -1,9 +1,8 @@
 # Desktop sidecar dependencies (v0.4 S3 chunk 2) — the subset of
 # sidecar/requirements.txt this project's Tauri shell actually bundles
 # and provisions via uv for the desktop STT path (whisper_server.py
-# only — see docs/design-explorations/s3-tauri-uv-blueprint.md's
-# Anchors section: "agent_server.py / pyannote / claude-agent-sdk NOT
-# on the desktop STT path").
+# only — agent_server.py / pyannote / claude-agent-sdk are NOT on the
+# desktop STT path).
 #
 # Exact pins (not ranges), chosen INSIDE requirements.txt's own ranges
 # so `uv pip install --python <venv> -r requirements-sidecar.txt` is

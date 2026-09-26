@@ -1,4 +1,4 @@
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §D1/§3 Lane B) —
+// S13 (§D1/§3 Lane B) —
 // the iOS-only native plugin fronting the ported SpeechAnalyzer session
 // core (ios/Sources/). Scaffolded via `tauri plugin new os-speech
 // --no-api --no-example --ios` (tauri-cli 2.11.4) from the tauri-apps

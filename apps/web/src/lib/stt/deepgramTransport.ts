@@ -1,5 +1,5 @@
-// Deepgram cloud STT transport (v0.4.7 stt-provider-wiring, Lane D —
-// docs/design-explorations/stt-provider-wiring-2026-07.md §5/§9). SAME
+// Deepgram cloud STT transport (v0.4.7 stt-provider-wiring, Lane D).
+// SAME
 // AudioWorklet downsampling (16kHz mono int16 PCM) sonioxTransport.ts
 // uses — reusing /worklets/pcm-processor.js verbatim — piped over a
 // WebSocket to Deepgram's real-time listen endpoint. Modeled on

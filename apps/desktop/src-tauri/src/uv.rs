@@ -173,7 +173,7 @@ pub fn validate_uv_args(args: &[String], roots: &UvRoots) -> Result<(), String> 
         }
         // S12a §C "Transactional venv build" (Provision state machine) —
         // the `--clear` variant, used on retry: discharges the retry-
-        // poisoning debt at V040-VERIFICATION-RUNPLAN.md:35 (`uv venv`
+        // poisoning debt (`uv venv`
         // previously had no way to force a clean rebuild of a possibly-
         // half-written venv dir). Same validation as the plain 4-element
         // shape above, plus the literal trailing `--clear` flag — a
@@ -320,8 +320,8 @@ pub fn emit_uv_log(app: &tauri::AppHandle, stream: &'static str, line: impl Into
 }
 
 /// S12a §C "Provision state machine" F16 — a single-flight guard against
-/// the "stale processes keep mutating the venv" retry-poisoning gap
-/// (V040-VERIFICATION-RUNPLAN.md:35): `run_uv` previously spawned and
+/// the "stale processes keep mutating the venv" retry-poisoning gap:
+/// `run_uv` previously spawned and
 /// immediately discarded its own child handle (`let (mut rx, _child) =
 /// command.spawn()...` below, pre-fix) — nothing in this app's own
 /// process ever tracked whether a PRIOR run_uv invocation's uv process

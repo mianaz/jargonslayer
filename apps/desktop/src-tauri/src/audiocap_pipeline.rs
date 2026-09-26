@@ -1,4 +1,4 @@
-// S9.2 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D5) —
+// S9.2 (D5) —
 // composes downmix + Resampler + Batcher into the one pure pipeline
 // audiocap.rs's session task drives with parsed Framing v1 records.
 // Kept pure/tauri-free like its two components so it stays testable

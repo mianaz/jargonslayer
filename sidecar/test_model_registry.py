@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Plain-assert self-test for whisper_server.py's S12a model->(repo_id,
-allow_patterns) registry (docs/design-explorations/s12-mlx-blueprint.md
-§C R1, §B findings 10/12) — no pytest. Split out of test_download.py
+allow_patterns) registry (R1) — no pytest. Split out of test_download.py
 (which deliberately never imports huggingface_hub/faster_whisper — see
 its own module docstring) because these checks need a controlled fake
 import surface for BOTH packages to prove things at the huggingface_hub
@@ -21,10 +20,9 @@ Covers:
   - _repo_id_for_model / _allow_patterns_for_model (the registry's two
     halves): parakeet resolves to its static PARAKEET_REPO_ID; every
     whisper-family model resolves via the static WHISPER_REPO_IDS map
-    — NO faster_whisper import at all (S12a fix round F3, HIGH, Sol3,
-    docs/design-explorations/s12-mlx-blueprint.md §D — the ORIGINAL
-    lazy `from faster_whisper.utils import _MODELS` lookup broke
-    switching back from parakeet to a whisper model once the server
+    — NO faster_whisper import at all (S12a fix round F3, HIGH, Sol3 —
+    the ORIGINAL lazy `from faster_whisper.utils import _MODELS`
+    lookup broke switching back from parakeet to a whisper model once the server
     ran under the mlx venv, which never installs faster_whisper).
     Two dedicated F3 sections: (1) a base-venv drift guard asserting
     WHISPER_REPO_IDS matches the REAL installed faster_whisper.utils.
@@ -147,9 +145,8 @@ check(
 
 # =================================================================
 # _repo_id_for_model / _allow_patterns_for_model — the registry's two
-# halves. Since the S12a fix round (F3, HIGH, Sol3 — docs/design-
-# explorations/s12-mlx-blueprint.md §D), _repo_id_for_model no longer
-# imports faster_whisper AT ALL for whisper-family models — it's a
+# halves. Since the S12a fix round (F3, HIGH, Sol3), _repo_id_for_model
+# no longer imports faster_whisper AT ALL for whisper-family models — it's a
 # static WHISPER_REPO_IDS dict lookup. The two sections below are F3's
 # own required tests: (1) a base-venv drift guard against the REAL
 # installed faster_whisper.utils._MODELS (guarded/SKIP if unavailable,
@@ -612,7 +609,7 @@ if _HUB_AVAILABLE:
 
 # =================================================================
 # parse_args(): --model accepts the parakeet id (argparse choices=
-# MODEL_CHOICES, s12-mlx-blueprint.md task item 5 — "every allowlist").
+# MODEL_CHOICES — "every allowlist").
 # =================================================================
 
 _saved_argv = sys.argv
@@ -656,11 +653,10 @@ finally:
 
 # =================================================================
 # normalize_hf_token / parse_args's ONE normalization point (S12a fix
-# round F8, LOW, Sol8 — docs/design-explorations/s12-mlx-blueprint.md
-# §D): a whitespace-only --hf-token/$HF_TOKEN value must become None,
-# not a truthy garbage token (pre-fix, print_banner's diarize_enabled=
-# bool(args.hf_token) would falsely advertise diarization as armed,
-# and JobManager/WhisperServer would send the garbage as an actual
+# round F8, LOW, Sol8): a whitespace-only --hf-token/$HF_TOKEN value must
+# become None, not a truthy garbage token (pre-fix, print_banner's
+# diarize_enabled=bool(args.hf_token) would falsely advertise diarization as
+# armed, and JobManager/WhisperServer would send the garbage as an actual
 # Authorization value). Covers the pure function directly AND both
 # real sources parse_args() unifies through the one args.hf_token
 # attribute — the CLI flag and the $HF_TOKEN env fallback (--hf-

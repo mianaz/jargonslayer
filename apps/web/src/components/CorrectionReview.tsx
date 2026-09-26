@@ -1,9 +1,8 @@
 "use client";
 
-// v0.5 Wave-1 Feature 2 (AI transcript correction, batch/review-gated —
-// docs/design-explorations/v05-wave1-blueprint.md §1 Feature 2 + §5
+// v0.5 Wave-1 Feature 2 (AI transcript correction, batch/review-gated,
 // A5). Separate from TranscriptPanel (only a header button touches that
-// file — see the blueprint's §2 contention-resolution note): this owns
+// file): this owns
 // the ENTIRE correction flow — fetch, diff review, per-row accept/
 // ignore, batch retranslate of accepted rows.
 

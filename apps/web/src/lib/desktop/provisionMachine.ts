@@ -1,5 +1,4 @@
-// v0.4 S3 chunk 4 (docs/design-explorations/s3-tauri-uv-blueprint.md,
-// §Chunk 4) — the pure first-run-wizard state machine:
+// v0.4 S3 chunk 4 — the pure first-run-wizard state machine:
 //
 //   CHECKING -> HEALTHY (adopt)
 //            -> STARTING (marker present+valid, probe dead — "provisioned-
@@ -29,8 +28,7 @@ import { PINNED_PYTHON_MINOR, pipInstall, pythonInstall, venvCreate } from "./uv
 
 // ---- steps ----
 
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Provision) — "INSTALL_MLX" joins the step vocabulary as a real
+// S12a (v0.4.4) — "INSTALL_MLX" joins the step vocabulary as a real
 // ProvisionStep identity (type/label completeness + a future S12b
 // wizard-path entry point), DELIBERATELY left OUT of STEP_ORDER below
 // and out of stepEffect's/startStep's auto-advance support (see

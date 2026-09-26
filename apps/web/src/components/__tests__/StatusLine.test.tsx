@@ -273,10 +273,8 @@ describe("StatusLine — sidecar-down tooltip", () => {
 });
 
 // ---------------------------------------------------------------
-// On-device Web Speech privacy posture (docs/research/
-// stt-live-engines-2026-07.md item #1; upgraded to the v0.4.7 Lane C
-// tri-state retention label, docs/design-explorations/
-// stt-provider-wiring-2026-07.md §4/§9 D5-D7): the privacy segment
+// On-device Web Speech privacy posture (upgraded to the v0.4.7 Lane C
+// tri-state retention label, D5-D7): the privacy segment
 // shows the same green "本地处理 · 音频不出设备" hint whisper/tabaudio use
 // whenever the ACTIVE webspeech session reported on-device mode
 // (store.sttEngineMode, written by useMeeting.ts's onEngineMode
@@ -1425,7 +1423,7 @@ describe("StatusLine — 翻译 status chip", () => {
     expect(chip().tagName).not.toBe("BUTTON");
     expect(chip().textContent).toContain("翻译");
     expect(chip().textContent).not.toContain("✓");
-    // text-mut, not text-mut2: the law (DESIGN.md) forbids mut2 on zh words.
+    // text-mut, not text-mut2: mut2 is never used on zh words.
     expect(chip().className).toContain("text-mut ");
   });
 

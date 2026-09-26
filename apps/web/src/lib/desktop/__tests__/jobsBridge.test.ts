@@ -234,8 +234,7 @@ describe("trackSwitchModel", () => {
     expect(task(id).stage).toBe(""); // untouched — startTask's own initial stage
   });
 
-  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-  // Provision/Task 7) — an mlx-family switch's leading extras phase
+  // S12a (v0.4.4, Provision/Task 7) — an mlx-family switch's leading extras phase
   // gets its OWN "mlx-install" task row, separate from the
   // "model-download" row trackSwitchModel already starts immediately.
   describe("mlx-install task row (§C Provision/Task 7)", () => {
@@ -688,7 +687,7 @@ describe("trackInstallDiar", () => {
   });
 });
 
-// S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) — a
+// S11 (v0.4.3) — a
 // PUSH-style driver rather than a subscribe-a-Promise-returning-action
 // one (unlike trackSwitchModel/trackInstallDiar above): both
 // OsSpeechEngine's own osspeech://status listener and osspeechCaps.ts's

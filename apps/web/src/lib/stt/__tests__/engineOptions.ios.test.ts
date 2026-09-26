@@ -1,6 +1,5 @@
-// ENGINE_OPTIONS — iOS-only coverage (S13, docs/design-explorations/
-// s13-ios-blueprint.md, §6; widened by the iOS-cloud round, post-v0.6.0
-// 手机版显然应该允许云端). IS_IOS is a module-scope import-time const
+// ENGINE_OPTIONS — iOS-only coverage (S13; widened by the iOS-cloud
+// round, post-v0.6.0 手机版显然应该允许云端). IS_IOS is a module-scope import-time const
 // (lib/platform/ios.ts) — vi.mock affects this whole file, so this lives
 // in its own file rather than a describe block inside engineOptions.
 // test.ts/engineOptions.desktop.test.ts, mirroring that pair's own

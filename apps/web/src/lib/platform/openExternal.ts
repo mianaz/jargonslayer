@@ -1,13 +1,12 @@
-// S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
-// Chunk A) — the ONE helper every desktop external link migrates to
-// (this sprint's own wave-2 HANDOFF list covers every existing call
+// S10 field-fix (Chunk A) — the ONE helper every desktop external link
+// migrates to (this sprint's own wave-2 HANDOFF list covers every existing call
 // site). WKWebView/wry cannot usefully navigate itself to an arbitrary
 // `https://` URL (SettingsDialog.tsx's pre-S10 `window.location.href`
 // dead-end — blueprint triage table item 2), so a Tauri build routes
 // through the system browser via tauri-plugin-opener instead of the
 // ordinary web new-tab open.
 //
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §6 F6) — gate
+// S13 (F6) — gate
 // widened from `IS_DESKTOP` to `IS_TAURI`: the opener plugin is
 // iOS-supported too (D3), registered on both platforms (Lane A), so an
 // iOS build must route through it the same as desktop — `window.open`

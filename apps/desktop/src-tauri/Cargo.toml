@@ -29,8 +29,8 @@ tauri-plugin-shell = "2"
 # Settings.proxyUrl (SettingsDialog.tsx) actually works — without it,
 # reqwest silently ignores a socks ClientOptions.proxy at runtime.
 tauri-plugin-http = { version = "2", features = ["socks"] }
-# S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
-# Chunk A) — desktop external-link opens (OAuth authorize URL, update
+# S10 field-fix (Chunk A) —
+# desktop external-link opens (OAuth authorize URL, update
 # download page, pyannote/HF gated-model links) via the system browser.
 # See capabilities/default.json's own opener:allow-open-url grant.
 tauri-plugin-opener = "2"
@@ -59,7 +59,7 @@ url = "2"
 # url itself, made explicit now for the same "already-transitive, made
 # explicit for direct use" reason url was above.
 percent-encoding = "2"
-# S9.2 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D5) —
+# S9.2 (D5) —
 # device-native -> 16kHz mono resampling for the audiocap pipeline.
 # Pinned to the pre-1.0 Vec<Vec<f32>>-style API (FftFixedIn + the
 # Resampler trait's process/process_partial) rather than the crate's own
@@ -126,7 +126,7 @@ keyring = { version = "3", features = ["apple-native"] }
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
 
-# S13 (docs/design-explorations/s13-ios-blueprint.md, §6 F8, Lane B) —
+# S13 (§6 F8, Lane B) —
 # the iOS native os-speech plugin (Rust src/ + ios/ SwiftPM package,
 # same crate this dep+lock addition lands with — cargo loads a path-dep's
 # manifest at resolution time even for a target that isn't currently

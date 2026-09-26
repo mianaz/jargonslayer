@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* v3 主题基座:暗黑科技 · 会议 REPL (docs/DESIGN.md v3.1) — terminal is
+/* v3 主题基座:暗黑科技 · 会议 REPL — terminal is
    the default (and, for now, only) theme; [data-theme="terminal"] is
    included so a future <html data-theme="..."> switch keeps working
    the day a sibling skin ships (v3.5 roadmap).
@@ -38,7 +38,7 @@
   /* v0.2.1 contrast fix: raised from #5c5c5c (2.8:1 vs panel, failing
      WCAG AA) to #8c8c8c, which clears >=4.5:1 against every panel
      level (ink/panel/panel2/panel3) while staying visibly darker than
-     --mut (see docs/DESIGN.md v3.1 and lib/theme/themes.ts's
+     --mut (see lib/theme/themes.ts's
      TERMINAL_THEME, which mirrors this value 1:1). mut2 carries real
      Chinese content text in several components (hint copy, disabled-
      state labels, table headers), not just decoration, so it must
@@ -60,7 +60,7 @@
   --act: #ffffff;
   --act-rgb: 255 255 255;
 
-  /* warn *text* tier (docs/DESIGN.md v3.1 rule 3): fills use lab-red on
+  /* warn *text* tier: fills use lab-red on
      small elements only; warn-colored text uses this AA-safe softer red.
      (The migration-era acc/acc2/gold/warn/font-display aliases are
      retired — no component references remain as of 2026-07-06.) */
@@ -142,7 +142,7 @@
    .glassable-panel exist in these components' className unconditionally
    but do nothing until the attribute is present. Two classes, not one,
    because the tagged surfaces sit at two different steps of the
-   existing bg-panel/bg-panel2 elevation ladder (DESIGN.md) — collapsing
+   existing bg-panel/bg-panel2 elevation ladder — collapsing
    an already-"raised" surface (bg-panel2: dialogs/popovers/hover card)
    to the same tint as a "base" one (bg-panel: drawers/import hub) would
    erase that elevation distinction the moment blur turns on, so each
@@ -270,7 +270,7 @@ html[data-fs="xl"] {
   @apply font-mono font-light tabular-nums;
 }
 
-/* skeleton loading placeholder — static by law (DESIGN.md v3.9c) — do
+/* skeleton loading placeholder — static by law — do
    not add pulse/shimmer. Size per use site with width/height
    utilities; this class only supplies the fill. */
 .skeleton {
@@ -340,7 +340,7 @@ html[data-fs="xl"] {
 }
 
 /* highlighted expression inside transcript — recolored to the v3
-   lab-orange "expression" hue (docs/DESIGN.md v3.1: lab-orange is the
+   lab-orange "expression" hue (lab-orange is the
    expression-highlight-underline token). */
 .hl-expr {
   @apply px-0.5 text-lab-orange underline decoration-lab-orange/70 decoration-dotted underline-offset-4 cursor-pointer;
@@ -353,7 +353,7 @@ html[data-fs="xl"] {
 }
 
 /* highlighted term inside transcript — lab-cyan is the reserved
-   term-highlight-underline token (tailwind.config.ts / DESIGN.md). */
+   term-highlight-underline token (tailwind.config.ts). */
 .hl-term {
   @apply px-0.5 text-lab-cyan underline decoration-lab-cyan/70 decoration-dotted underline-offset-4 cursor-pointer;
   background: rgb(var(--lab-cyan-rgb) / 0.08);
@@ -405,7 +405,7 @@ html[data-fs="xl"] {
 }
 
 /* v3 terminal-theme press feedback for the primary white-on-black
-   action button (docs/DESIGN.md v3.6): same scale-down tactile as
+   action button: same scale-down tactile as
    .btn-tactile, kept as a distinct class so terminal-specific chrome
    (sharp corners, act-token background) can live alongside it without
    coupling to the v1/v2 button. */

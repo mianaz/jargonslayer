@@ -26,8 +26,7 @@ export type STTEngineKind =
   | "webspeech"
   | "whisper"
   | "tabaudio"
-  // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-
-  // blueprint.md §1 Feature 4 + §5 A4): tab audio WITHOUT the local
+  // v0.5 Wave-1 Feature 4 (A4): tab audio WITHOUT the local
   // sidecar — getDisplayMedia capture piped into a CLOUD STT backend
   // (Soniox or Deepgram, see Settings.tabAudioCloudProvider) instead of
   // tabaudio's local faster-whisper sidecar. ONE kind covers both cloud
@@ -44,14 +43,12 @@ export type STTEngineKind =
   // value to appaudio on desktop.
   | "tabaudio-cloud"
   // v0.4 S4: Soniox cloud STT (BYOK, experimental until the zh-en
-  // benchmark clears it — docs/design-explorations/s4-model-wizard-
-  // blueprint.md §E). Preview tier must never offer it: it joins
+  // benchmark clears it). Preview tier must never offer it: it joins
   // whisper/tabaudio's triple gate (ENGINE_CARDS/Header previewLocked +
   // store.ts applyTierDefaults coercion + key field disabled).
   | "soniox"
-  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
-  // Lane D): Deepgram Nova-3 cloud STT — second cloud engine, same BYOK
-  // triple gate as soniox above (ENGINE_CARDS byokOnly + store.ts
+  // v0.4.7 (Lane D): Deepgram Nova-3 cloud STT — second cloud engine,
+  // same BYOK triple gate as soniox above (ENGINE_CARDS byokOnly + store.ts
   // applyTierDefaults coercion + key field disabled). English-only in
   // v0.4.7 (Nova-3's language=multi has no Chinese — soniox stays the
   // zh-en code-switching engine); lights up web + desktop from the one
@@ -67,7 +64,7 @@ export type STTEngineKind =
   // from the one browser-WS adapter (elevenLabsTransport.ts), no iOS v1
   // capture path.
   | "elevenlabs"
-  // S9 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D7):
+  // S9 (D7):
   // desktop-only native app/system audio capture via a CoreAudio
   // process tap (apps/desktop/src-tauri's audiocap helper) — the
   // Zoom/Teams/WeChat-app case tabaudio can never cover (getDisplayMedia
@@ -80,7 +77,7 @@ export type STTEngineKind =
   // components-layer surfaces — ENGINE_CARDS/Header/SettingsDialog/
   // TutorialOverlay/history export labels/tier gating).
   | "appaudio"
-  // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
+  // S11 (v0.4.3) —
   // Zero-Install 系统识别: desktop-only, macOS 26+ on-device transcription
   // via Apple's SpeechAnalyzer, riding the SAME CoreAudio process tap
   // appaudio already taps (no local Whisper sidecar, no PCM ever leaving
@@ -107,8 +104,7 @@ export interface TranscriptSegment {
   // auto-update (see store.ts renameSpeaker/applySpeakerUpdate).
   sttSeg?: number;
   sttSpeaker?: string;
-  // v0.5 Wave-1 Feature 1 (per-segment speaker assignment, docs/design-
-  // explorations/v05-wave1-blueprint.md §1 Feature 1 + §5 A2): true once
+  // v0.5 Wave-1 Feature 1 (per-segment speaker assignment, A2): true once
   // this segment's `speaker` was set by an explicit user action (single
   // assign / bulk multi-select / "this and after" / the live latch —
   // see store.ts's assignSegmentsSpeaker/assignSpeakerFollowing/addFinal)
@@ -171,14 +167,13 @@ export interface STTEvents {
   // wsTransport.ts's DiarStatusMessage and useMeeting.ts's one-shot
   // toast for it.
   onDiarStatus?: (state: "unavailable" | "error" | "ready", detail?: string) => void;
-  // STT VAD supervisor (docs/design-explorations/stt-vad-supervisor.md):
+  // STT VAD supervisor:
   // a one-time "steer to a different engine" toast — e.g. Web Speech
   // hearing continuous speech it can't transcribe (language mismatch).
   // Advisory only: MUST NOT stop the meeting (never routed through
   // onStatus("error")) — the engine keeps retrying on its own backoff.
   onNotice?: (msg: string) => void;
   // On-device Web Speech (Chrome 139+, `processLocally` — see
-  // docs/research/stt-live-engines-2026-07.md item #1 and
   // lib/stt/onDeviceSpeech.ts's decision core): fires once per engine
   // session, right after the session actually starts, with the mode
   // it ended up running in (post any defensive cloud fallback — never
@@ -189,8 +184,7 @@ export interface STTEvents {
   onEngineMode?: (mode: "on-device" | "cloud") => void;
 }
 
-// v0.4.7 Lane B (glossary -> recognizer bias, docs/design-explorations/
-// stt-provider-wiring-2026-07.md §3/D3/D8): ONE tiered, deduped,
+// v0.4.7 Lane B (glossary -> recognizer bias, D3/D8): ONE tiered, deduped,
 // priority-ordered (highest priority first) term list, built ONCE per
 // engine.start() call at the meeting-start callsite
 // (apps/web/src/hooks/useMeeting.ts's attachEngine) and passed
@@ -460,8 +454,7 @@ export interface TranslateResponse {
 }
 
 // ---------- AI transcript correction (v0.5 Wave-1 Feature 2, batch/
-// review-gated — docs/design-explorations/v05-wave1-blueprint.md §1
-// Feature 2 + §5 A5). Mirrors TranslateRequest/TranslateResponse above:
+// review-gated — A5). Mirrors TranslateRequest/TranslateResponse above:
 // segments keyed by id, corrections returned keyed by id. Isomorphic —
 // implemented through ONE shared task module consumed by both
 // app/api/correct/route.ts (web) and correctViaClient (desktop/iOS,
@@ -592,8 +585,7 @@ export interface Settings {
   uiMode: "simple" | "advanced";
 
   engine: STTEngineKind;
-  // v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
-  // v05-wave1-blueprint.md §1 Feature 5 + §5 A3): the user's INTENT —
+  // v0.5 Wave-1 Feature 5 (mode-first UI, A3): the user's INTENT —
   // what she's trying to capture — kept as its own persisted field
   // rather than inferred from `engine` alone, because intent and
   // mechanism can legitimately diverge (StatusLine's engine dropdown
@@ -611,7 +603,7 @@ export interface Settings {
   // treated as absent, not blindly trusted) and NEVER derived as "url"
   // (a returning user is never silently dropped into the URL-ingest tab).
   //
-  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+  // Dual capture v1:
   // "dual" (麦克风+系统) is a THIRD desktop-only source, legal only for
   // the "osspeech" engine (isModeLegalForPlatform, store.ts). Unlike
   // every other engine (mode always back-derives from engine, A3's
@@ -624,12 +616,11 @@ export interface Settings {
   micId?: string;
   language: string; // BCP-47, for Web Speech API
   whisperUrl: string; // local sidecar websocket
-  // v0.4 S3 chunk 6 (docs/design-explorations/s3-tauri-uv-blueprint.md,
-  // architecture decision 6) — desktop build only, meaningless (never
-  // read) on a web build. "managed" (default): the desktop app itself
-  // provisions + spawns the local Whisper sidecar (see lib/desktop/
-  // {provisionMachine,bootstrap}.ts) and whisperUrl above is fixed/
-  // greyed in SettingsDialog. "external": today's manual-install
+  // v0.4 S3 chunk 6 (architecture decision 6) — desktop build only,
+  // meaningless (never read) on a web build. "managed" (default): the
+  // desktop app itself provisions + spawns the local Whisper sidecar (see
+  // lib/desktop/{provisionMachine,bootstrap}.ts) and whisperUrl above is
+  // fixed/greyed in SettingsDialog. "external": today's manual-install
   // behavior (README「本地版安装」) — the user runs their own sidecar,
   // whisperUrl stays editable, probe-only. migrateSettings's
   // defaults-fold + sanitizeRestoredSettings's Object.keys(DEFAULT_
@@ -705,8 +696,7 @@ export interface Settings {
   autoExport: boolean; // write session .md/.json to a chosen folder on save
   webhookUrl: string; // "" = off; POST session JSON after meeting
   exportFrontmatter: boolean; // YAML frontmatter on exported markdown
-  // v0.5 Wave-1 Feature 9 (AnkiConnect connector, docs/design-
-  // explorations/v05-wave1-blueprint.md §1 Feature 9 + §5 A8): fires an
+  // v0.5 Wave-1 Feature 9 (AnkiConnect connector, A8): fires an
   // `addNotes` POST to a local AnkiConnect instance on session save
   // (like webhookUrl/autoExport above), reusing the existing flashcard
   // projection (customEntryToFlashcard). No credential field —
@@ -784,7 +774,7 @@ export interface Settings {
   // (→ hasSonioxKey), but history/autoExport.ts's stripKeyMaterial is a
   // HAND-LISTED strip — sonioxKey must be added there (S4 chunk 6).
   sonioxKey: string;
-  // v0.4.7 (stt-provider-wiring-2026-07.md, Lane D): Deepgram BYOK API
+  // v0.4.7 (Lane D): Deepgram BYOK API
   // key for the "deepgram" cloud engine; "" = engine unavailable. Sent
   // ONLY via deepgramTransport.ts's WebSocket Sec-WebSocket-Protocol
   // handshake to api.deepgram.com (never a URL param, never a JSON
@@ -810,7 +800,6 @@ export interface Settings {
   // own precedent above.
   elevenLabsKey: string;
   // v0.5 Wave-1 Feature 4 (tab audio without the sidecar, cloud path —
-  // docs/design-explorations/v05-wave1-blueprint.md §1 Feature 4 + §5
   // A4): which BYOK cloud backend the "tabaudio-cloud" engine (see
   // STTEngineKind above) transports the tab's getDisplayMedia capture
   // to — reuses sonioxKey/deepgramKey above (no separate credential
@@ -836,7 +825,6 @@ export interface Settings {
   // tsx's 实时转录预览 row.
   partials: boolean;
   // On-device Web Speech (Chrome 139+, `processLocally` — see
-  // docs/research/stt-live-engines-2026-07.md item #1 and
   // lib/stt/onDeviceSpeech.ts's decision core): webspeech-only. When
   // on AND the browser reports a local model available for
   // `language`, recognition runs fully on-device — audio never
@@ -853,8 +841,7 @@ export interface Settings {
   // explainLanguage !== "en" (translating English into English is a
   // no-op); default off (existing single-line transcript unchanged).
   bilingualTranscript: boolean;
-  // v0.5 Wave-1 Feature 6 (configurable translation engines, docs/
-  // design-explorations/v05-wave1-blueprint.md §1 Feature 6 + §5 A6):
+  // v0.5 Wave-1 Feature 6 (configurable translation engines, A6):
   // which TranslationProvider the live bilingual-transcript queue
   // (lib/translate/queue.ts) resolves through — "system" (default as of
   // the translation-rework wave 1, on-device, free — Chrome's Translator
@@ -952,8 +939,7 @@ export interface Settings {
   // default; any other id goes through the engine's applyTheme()
   // pipeline.
   themeId: string;
-  // v0.5.1 appearance sprint (custom theme editor, docs/design-
-  // explorations/v051-appearance-blueprint.md D1): user-authored/
+  // v0.5.1 appearance sprint (custom theme editor, D1): user-authored/
   // imported themes, persisted like every other setting. Typed
   // structurally here (mirroring lib/theme/schema.ts's ThemeDefinition/
   // ThemeTokens shape field-for-field) rather than imported from it —
@@ -1305,8 +1291,7 @@ export function sessionToMeta(s: MeetingSession): SessionMeta {
 
 export type CustomEntryKind = "expression" | "term";
 
-// v0.5 Wave-1 Feature 8 (named custom dictionary packs, docs/design-
-// explorations/v05-wave1-blueprint.md §1 Feature 8 + §5 A7): a named,
+// v0.5 Wave-1 Feature 8 (named custom dictionary packs, A7): a named,
 // independently toggleable group of CustomEntry rows — a separate
 // persisted slice (own IDB key, mirroring lib/history/glossary.ts's own
 // storage; NOT a Settings field, so pack CRUD doesn't round-trip

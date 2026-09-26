@@ -12,7 +12,7 @@ const nextConfig = {
   ...(process.env.NEXT_PUBLIC_BASE_PATH
     ? { basePath: process.env.NEXT_PUBLIC_BASE_PATH }
     : {}),
-  // v0.4 S1 dual-target hook (PLAN-v0.4 §1A): Tauri's desktop shell
+  // v0.4 S1 dual-target hook: Tauri's desktop shell
   // wraps a static-export webview, so BUILD_TARGET=desktop must emit
   // `output: "export"` — API routes don't run in that target (S2
   // moves detect/define/translate/summarize to a client-side
@@ -22,11 +22,11 @@ const nextConfig = {
   // route with no static params / server-only code) — that's S2+S3's
   // job to resolve, not this session's. Web builds (BUILD_TARGET unset
   // or anything else) are completely unaffected.
-  // v0.4 S3 chunk 1 (docs/design-explorations/s3-tauri-uv-blueprint.md) —
+  // v0.4 S3 chunk 1 —
   // the static export can't use next/image's server-side optimizer (no
   // server exists in the Tauri webview target), so the desktop branch
   // also opts into images.unoptimized alongside output:"export".
-  // S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4/F4) —
+  // S13 (D4/F4) —
   // widened from desktop-only to "any Tauri shell target" (macOS
   // desktop OR iOS): iOS is ALSO a static-export webview with no server
   // (blueprint F4 — iOS's own frontend build goes through the same
@@ -64,7 +64,7 @@ const nextConfig = {
     // NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT above (an unset var isn't
     // reliably inlined by DefinePlugin) — see src/lib/deployTier.ts.
     NEXT_PUBLIC_DEPLOY_TIER: process.env.NEXT_PUBLIC_DEPLOY_TIER ?? "",
-    // v0.4 S2 (PLAN-v0.4 §1A/§4) — client-side callProvider path:
+    // v0.4 S2 — client-side callProvider path:
     // "client" routes detect/define/translate/summarize straight to
     // the LLM provider (BYOK only) instead of /api/*; unset/anything
     // else keeps today's behavior byte-identical. Same explicit-
@@ -93,8 +93,8 @@ const nextConfig = {
       process.env.BUILD_TARGET === "desktop" || process.env.BUILD_TARGET === "ios"
         ? (process.env.NEXT_PUBLIC_LLM_TRANSPORT ?? "")
         : "server",
-    // v0.4 S3 chunk 1 (docs/design-explorations/s3-tauri-uv-blueprint.md,
-    // architecture decision 5) — desktop-context flag: read via
+    // v0.4 S3 chunk 1 (architecture decision 5) — desktop-context
+    // flag: read via
     // src/lib/platform/desktop.ts's IS_DESKTOP. Unlike NEXT_PUBLIC_LLM_
     // TRANSPORT above, there is no ambient value to forward/contain here:
     // desktop-ness isn't a separately-set env var a shared CI environment
@@ -107,7 +107,7 @@ const nextConfig = {
     // means exactly "macOS desktop shell" (see src/lib/platform/ios.ts's
     // own header comment) and must stay "" on an iOS build.
     NEXT_PUBLIC_DESKTOP: process.env.BUILD_TARGET === "desktop" ? "1" : "",
-    // S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4) — iOS
+    // S13 (D4) — iOS
     // build-context flag, mirrors NEXT_PUBLIC_DESKTOP's own derivation
     // exactly (entirely DERIVED from BUILD_TARGET, no ambient value to
     // contain, same explicit-default-via-`env` requirement) — "1" only

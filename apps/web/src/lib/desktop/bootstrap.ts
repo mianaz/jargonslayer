@@ -1,5 +1,4 @@
-// v0.4 S3 chunk 5 (docs/design-explorations/s3-tauri-uv-blueprint.md,
-// §Chunk 5 + §Data flow) — desktop app init: "① setTransport(plugin-
+// v0.4 S3 chunk 5 — desktop app init: "① setTransport(plugin-
 // http fetch) -> ② runs the provision flow: fetch app_paths -> build
 // machine initial() -> drive transitions with provisionRunner until
 // HEALTHY / NEEDS_PROVISION-wizard-required / TERMINAL_ERROR". The
@@ -69,8 +68,7 @@
 // labels only, matching that module's own "never transcript content"
 // privacy rule.
 //
-// S4 chunk 2 addition (docs/design-explorations/s4-model-wizard-
-// blueprint.md, decision B): a downloadProgress$ subscription surface +
+// S4 chunk 2 addition (decision B): a downloadProgress$ subscription surface +
 // currentDownloadProgress() snapshot getter — mirrors log$/notifyLog's
 // own shape exactly (a listener Set + a notify function), fed by
 // provisionRunner.ts's runnerDeps.onDownloadProgress the same way onLog
@@ -93,8 +91,7 @@ import { probeSidecar, type SidecarProbeResult } from "../stt/sidecarHealth";
 // (pollJobUntilDone exists there but is module-private, and lib/stt/
 // is off this chunk's touch list either way).
 import { httpBaseFromWs, pollJob } from "../stt/upload";
-// S11 osspeech blueprint (docs/design-explorations/s11-osspeech-
-// blueprint.md, §3 Worker D, §A4): a plain top-level import — mirrors
+// S11 osspeech (Worker D): a plain top-level import — mirrors
 // this file's own probeSidecar/httpBaseFromWs imports above (a stateless
 // utility module), NOT the store.ts/llmTransport.ts injected-dependency
 // shape, since osspeechCaps.ts carries no mutable "current instance"
@@ -703,8 +700,7 @@ export interface DesktopBootstrapHandle {
    *  or failure), same "both ends" contract as currentDownloadProgress. */
   currentSwitchModelProgress: () => SwitchModelProgress | null;
   /** SettingsDialog's 说话人分离 「安装扩展」 button (S5 chunk 2,
-   *  docs/design-explorations/s5-diarization-addon-blueprint.md decision
-   *  B): installs the optional pyannote/diarization add-on into the
+   *  decision B): installs the optional pyannote/diarization add-on into the
    *  ALREADY-provisioned venv via the exact SAME run_uv pip-install
    *  shape INSTALL_DEPS already uses, just targeting
    *  requirements-diar.txt instead of requirements-sidecar.txt
@@ -988,8 +984,7 @@ export interface BootstrapDeps {
    *  already-tested wiring untouched rather than growing its blast
    *  radius to cover a second, independent caller. */
   sleep?: (ms: number) => Promise<void>;
-  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-   *  Q6/§3.5 HF-token) — a LIVE read of the user's configured
+  /** S12a (v0.4.4, HF-token) — a LIVE read of the user's configured
    *  Settings.hfToken, threaded into runnerDeps below (provisionRunner.
    *  ts's own RunnerDeps.readHfToken, for the prewarmModel/startServer
    *  effects) AND read directly by performSwitchModel's own restart
@@ -1781,8 +1776,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     }
   }
 
-  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-   *  R1/Provision, F16) — Phase 1 of an mlx-family switch (§C Q5's
+  /** S12a (v0.4.4, F16) — Phase 1 of an mlx-family switch (the
    *  two-phase provision): builds+validates the separate, hash-locked
    *  MLX venv AHEAD of performSwitchModel's own existing bucket 1
    *  (model download) below — the "extras validated (atomic mark) ->
@@ -1817,7 +1811,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
    *  the full rationale, mirrored in provisionRunner.ts's identical
    *  probeMlxUsable). ANY failure of that first attempt self-heals with
    *  exactly ONE retry using `--clear` (discharges the uv-venv
-   *  retry-poisoning debt, V040-VERIFICATION-RUNPLAN.md:35) before
+   *  retry-poisoning debt) before
    *  finally rethrowing the retry attempt's own error. Step (4)'s
    *  "atomic valid-mark" is likewise realized implicitly: a
    *  successfully-completed attempt (venv created, lock installed,
@@ -2675,8 +2669,7 @@ async function resolveIsMeetingActive(): Promise<() => boolean> {
   };
 }
 
-/** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
- *  Q6/§3.5 HF-token) — the real BootstrapDeps.readHfToken
+/** S12a (v0.4.4, HF-token) — the real BootstrapDeps.readHfToken
  *  implementation. Mirrors resolveIsMeetingActive immediately above
  *  exactly (same dynamic-import + hydration-gate-ONCE + "hand back a
  *  plain SYNCHRONOUS closure over the already-resolved `useApp`
@@ -2816,8 +2809,7 @@ export function resetDesktopBootstrap(): void {
 }
 
 // ---------------------------------------------------------------
-// initIos() — S13 (docs/design-explorations/s13-ios-blueprint.md, §6
-// D4/D6) — the iOS init path. ONLY the LLM transport wiring
+// initIos() — S13 (D4/D6) — the iOS init path. ONLY the LLM transport wiring
 // (setTransport(tauri-plugin-http fetch), byte-identical to
 // bootstrapDesktop's own step ① above) — none of initDesktop's
 // sidecar/uv/wizard machinery: v1 iOS ships no uv/server/provision
@@ -2918,8 +2910,7 @@ async function bootstrapIos(): Promise<void> {
   const tauriFetch = await getTauriFetch();
   setTransport(tauriFetch);
 
-  // S13.1 (docs/design-explorations/s13-ios-blueprint.md) — spike
-  // harness gate: `spike_flags` echoes this launch's own argv
+  // S13.1 — spike harness gate: `spike_flags` echoes this launch's own argv
   // (devspike_ios.rs), armed only by `xcrun simctl launch … --spike-
   // osspeech`. The dynamic import keeps iosSpike.ts's own
   // createEngine/osSpeech pull out of every ordinary iOS build/boot —

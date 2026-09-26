@@ -1,9 +1,8 @@
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Gating F13) — parakeet/MLX capability-snapshot probe: native arm64
-// (not Rosetta) + macOS >= 14.0 + mlx pinned (the lockfile fixes the
+// S12a (v0.4.4, gating F13) — parakeet/MLX capability-snapshot probe: native
+// arm64 (not Rosetta) + macOS >= 14.0 + mlx pinned (the lockfile fixes the
 // version), mirroring audiocapCaps.ts's own single-flight probe/cache
-// shape for THIS module's own Rust command, mlx_capabilities() (§3.4 /
-// §C Gating) — a fully separate probe/cache from audiocapCaps.ts's
+// shape for THIS module's own Rust command, mlx_capabilities() — a
+// fully separate probe/cache from audiocapCaps.ts's
 // audiocap_capabilities()/osspeechCaps.ts's os_speech_capabilities():
 // different engine, different wire shape ({mlxSupported, reason}).
 //

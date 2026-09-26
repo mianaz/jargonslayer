@@ -1,7 +1,6 @@
 "use client";
 
-// v0.5 Wave-1 Feature 1 (per-segment speaker assignment, docs/design-
-// explorations/v05-wave1-blueprint.md §1 Feature 1 + §5 A2): a single
+// v0.5 Wave-1 Feature 1 (per-segment speaker assignment, A2): a single
 // popover component covers BOTH the per-segment chip/"+ 说话人" flow
 // (one segment) and the selection-mode bulk-assign flow (many segments)
 // — `request.segmentIds` is a one-element array for the single case, so

@@ -1,6 +1,6 @@
 "use client";
 
-// Terminal titlebar (docs/DESIGN.md v3.3, preview-4-terminal.html):
+// Terminal titlebar:
 // top strip = mono path-style title + ⌘K hint (the v3.3-era three fake
 // window dots were removed in v0.2.1 — decorative macOS chrome that
 // didn't earn its place, see 可读性与主题机制 polish pass);
@@ -336,7 +336,7 @@ function MobileImportButton({ onOpenImport }: { onOpenImport: () => void }) {
 }
 
 // Compact tri-state privacy chip for the ACTIVE engine (v0.4.7 Lane C,
-// docs/design-explorations/stt-provider-wiring-2026-07.md §4/§9 D5-D7),
+// D5-D7),
 // so at a glance the user knows where their audio goes AND what the
 // vendor retains — not just local/cloud. demo has no audio at all, so
 // it renders nothing here (the demo menu item itself makes that
@@ -1039,7 +1039,7 @@ export default function Header({
        information on screen — "jargonslayer" (wordmark), engine·posture
        (pills + chip), "N cards" (StatusLine) — and made the frame feel
        heavy. The strip and its ⌘K placeholder chip are gone; the brand
-       row below is now the whole header. docs/DESIGN.md updated. */}
+       row below is now the whole header. */}
     {/* iOS-cloud round: layout.tsx's viewportFit:"cover" makes the
        webview lay out under the system status bar (native full-bleed),
        so on iOS this bar carries the top inset ITSELF — bg extends to

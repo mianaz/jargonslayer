@@ -1,4 +1,4 @@
-// S9.2 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D5) —
+// S9.2 (D5) —
 // the Rust-side DECODER for Framing v1, jargonslayer-audiocap's stdout
 // wire format. The ENCODER (audiocap-helper/Sources/AudioCapCore/
 // Framing.swift) is golden-bytes tested on the Swift side; this file's

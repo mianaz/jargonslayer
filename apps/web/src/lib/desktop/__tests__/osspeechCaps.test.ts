@@ -1,7 +1,6 @@
-// S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md,
-// Worker C) — osspeechCaps.ts, mirroring audiocapCaps.test.ts's own
+// S11 (v0.4.3, Worker C) — osspeechCaps.ts, mirroring audiocapCaps.test.ts's own
 // coverage shape for the probe/cache/gating half, plus NEW coverage for
-// preinstallOsSpeech (§A2). tauriApi is mocked the same way appAudio.
+// preinstallOsSpeech (A2). tauriApi is mocked the same way appAudio.
 // test.ts/audiocapCaps.test.ts do; "../../stt/osSpeech" (the shared
 // OSSPEECH_TERMINAL_STATUS_KINDS constant) and "../jobsBridge"
 // (trackOsSpeechAsset) are ALSO mocked — this file only needs to prove

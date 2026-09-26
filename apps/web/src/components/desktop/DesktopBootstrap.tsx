@@ -1,7 +1,6 @@
 "use client";
 
-// v0.4 S3 chunk 6 (docs/design-explorations/s3-tauri-uv-blueprint.md,
-// §Chunk 6) — mounted once from app/page.tsx: calls initDesktop() on
+// v0.4 S3 chunk 6 — mounted once from app/page.tsx: calls initDesktop() on
 // mount (idempotent — a no-op on every render after the first, and a
 // stable NOT_DESKTOP handle on an ordinary web build, see bootstrap.ts)
 // and renders DesktopWizard.tsx whenever the handle's state means the

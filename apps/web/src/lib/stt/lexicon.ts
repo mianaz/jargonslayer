@@ -1,5 +1,5 @@
-// v0.4.7 Lane B — glossary -> recognizer bias (docs/design-explorations/
-// stt-provider-wiring-2026-07.md §3, decision record D1/D3/D8).
+// v0.4.7 Lane B — glossary -> recognizer bias (decision record
+// D1/D3/D8).
 // Generalizes S11/Q11's glossary-only osSpeech.ts contextualStrings
 // builder (osSpeech.ts's own buildContextualJson, now migrated onto
 // this shared module) into the tiered lexicon every biasable engine

@@ -9,7 +9,7 @@
 // Costumes draw ON TOP of the body inside each pose's own transform
 // group (the awake set rides .bit-sway so hats sway with the head).
 // Fixed accent hexes are deliberate: a costume is a ≤24px "label"
-// element (DESIGN.md v3.1's own size class for non-neutral hue), and
+// element (the design system's size class for non-neutral hue), and
 // its identity colors must survive being worn under ANY theme — the
 // manual override (Settings.bitCostume) lets 魔典's hat appear on the
 // terminal theme, so costume colors cannot resolve through theme

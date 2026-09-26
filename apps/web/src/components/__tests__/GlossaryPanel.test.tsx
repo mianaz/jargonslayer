@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// v0.5 Wave-1 Feature 8 (named custom dictionary packs, docs/design-
-// explorations/v05-wave1-blueprint.md §1 F8 + §5 A7/A9) — pack UI
+// v0.5 Wave-1 Feature 8 (named custom dictionary packs, A7/A9) — pack UI
 // smoke test. createRoot/act pattern, real zustand store for entry
 // CRUD (CardsPanel.test.tsx precedent); glossary.ts's PACK functions
 // are module-mocked (packs are glossary.ts's own registry, NOT zustand

@@ -1,5 +1,5 @@
-// v0.4.7 Lane B — glossary -> recognizer bias (docs/design-explorations/
-// stt-provider-wiring-2026-07.md §3, D1/D3/D8). Isolates buildMeetingLexicon
+// v0.4.7 Lane B — glossary -> recognizer bias (D1/D3/D8). Isolates
+// buildMeetingLexicon
 // from the (large, real) built-in dictionary tables by mocking
 // packTermsForBias — same "test only what THIS module owns" discipline
 // dictionary.test.ts already uses for glossaryLookup/remotePacksRegistry.

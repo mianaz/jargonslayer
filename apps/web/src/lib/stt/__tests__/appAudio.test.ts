@@ -1,5 +1,4 @@
-// AppAudioEngine (S9.3, docs/design-explorations/s9-app-audio-tap-
-// blueprint.md): WsTransport itself is NOT module-mocked here (unlike
+// AppAudioEngine (S9.3): WsTransport itself is NOT module-mocked here (unlike
 // acquireCancellation.test.ts's TabAudioEngine coverage) — "bytes
 // flow"/"drain" are exactly what this engine's own contract needs
 // proving, so tests run the REAL WsTransport against a fake WebSocket

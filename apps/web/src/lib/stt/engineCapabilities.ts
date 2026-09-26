@@ -1,8 +1,7 @@
 "use client";
 
 // v0.4.7 STT provider wiring — Lane A, the BLOCKING foundation lane
-// (docs/design-explorations/stt-provider-wiring-2026-07.md, §2 + §9
-// decision record D5/D6/D7). One descriptor per LIVE capture engine —
+// (decision record D5/D6/D7). One descriptor per LIVE capture engine —
 // the per-engine capability CONTRACT other lanes bind to: Lane B
 // (glossary -> recognizer bias) reads `biasSupport`, Lane C (tri-state
 // privacy label) reads `retentionClass`, Lane D (Deepgram adapter)
@@ -208,8 +207,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     byokOnly: true,
     keyField: "sonioxKey",
   },
-  // v0.4.7 Lane D (docs/design-explorations/stt-provider-wiring-2026-07.md
-  // §5/§9) — second cloud engine, English-only (no `languages`/`biasSupport`
+  // v0.4.7 Lane D — second cloud engine, English-only (no `languages`/`biasSupport`
   // field distinguishes this from soniox's zh-en scope: D5 cut `languages`
   // from the contract entirely, so the English-only story lives in
   // SettingsDialog.tsx's card copy instead).
@@ -246,8 +244,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     byokOnly: true,
     keyField: "elevenLabsKey",
   },
-  // v0.5 Wave-1 Foundation (F4 tab-audio-cloud, docs/design-
-  // explorations/v05-wave1-blueprint.md §1 Feature 4 + §5 A4): STATIC
+  // v0.5 Wave-1 Foundation (F4 tab-audio-cloud, A4): STATIC
   // DEFAULT row — required because ENGINE_CAPABILITIES is
   // Record<LiveEngineKind, …> and "tabaudio-cloud" widened that union
   // (see this file's own header comment on that discipline). retention/
@@ -305,8 +302,7 @@ const TAB_AUDIO_CLOUD_PROVIDER_LABEL: Record<TabAudioCloudProvider, string> = {
  *  ModeSelector.tsx's "已选…引擎：Y" hint is this function's one live
  *  consumer.
  *
- *  BYOK preview (docs/design-explorations/byok-preview-blueprint.md
- *  D3): honest selection ALWAYS — mirrors tabAudioCloud.ts's own
+ *  BYOK preview (D3): honest selection ALWAYS — mirrors tabAudioCloud.ts's own
  *  effectiveProvider fix EXACTLY, dropping the M2-era (Sol review
  *  2026-07-20) Soniox-preview-lane force this function used to apply.
  *  tabaudio-cloud is now a first-class preview engine (engineOptionGate

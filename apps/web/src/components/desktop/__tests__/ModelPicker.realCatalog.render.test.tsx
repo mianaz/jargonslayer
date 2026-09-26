@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// S12b worker B2 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
-// §C L1/§E) — ModelPicker.render.test.tsx mocks BOTH modelCatalog.ts AND
+// S12b worker B2 (v0.4.4, L1) — ModelPicker.render.test.tsx mocks BOTH modelCatalog.ts AND
 // mlxCaps.ts, so nothing in that suite ever exercises the REAL, shipped
 // MODEL_CATALOG (worker B2's own task spec calls this out explicitly:
 // "make sure at least one test exercises the REAL catalog entry, not

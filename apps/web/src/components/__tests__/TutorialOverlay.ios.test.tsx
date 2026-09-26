@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// TutorialOverlay — iOS-only coverage (S13, docs/design-explorations/
-// s13-ios-blueprint.md, §6 Sol F5). IS_IOS is a module-scope import-time
+// TutorialOverlay — iOS-only coverage (S13, Sol F5). IS_IOS is a module-scope import-time
 // const, so this needs its own file/vi.mock, mirroring engineOptions.
 // desktop.test.ts's own split for the identical constraint. Verified
 // (worker report, see task): this overlay mounts unconditionally from
