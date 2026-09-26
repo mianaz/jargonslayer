@@ -474,8 +474,7 @@ describe("WebSpeechEngine — engine-level", () => {
     });
   });
 
-  // ---- on-device Web Speech (processLocally, Chrome 139+ —
-  // docs/research/stt-live-engines-2026-07.md item #1) ----
+  // ---- on-device Web Speech (processLocally, Chrome 139+) ----
 
   describe("on-device Web Speech (processLocally)", () => {
     it("applies processLocally and announces mode 'on-device' when availability is 'available' and the pref is on", async () => {

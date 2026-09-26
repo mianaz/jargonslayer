@@ -1551,8 +1551,7 @@ describe("SettingsDialog — AI 检测 翻译引擎: engineTouched drives transl
 });
 
 // ---------------------------------------------------------------
-// 标签页音频·云端 engine card (v0.5 Wave-1 Feature 4, docs/design-
-// explorations/v05-wave1-blueprint.md §1 Feature 4 + §5 A4). Web-only
+// 标签页音频·云端 engine card (v0.5 Wave-1 Feature 4, A4). Web-only
 // (ambient test env is the web build) — has no key input of its own,
 // unlike Soniox/Deepgram above, so it gets a hint pointing back at
 // those cards instead of a key field of its own.

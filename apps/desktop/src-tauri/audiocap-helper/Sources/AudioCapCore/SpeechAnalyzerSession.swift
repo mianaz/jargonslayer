@@ -716,10 +716,9 @@ private struct AssetDownloadAborted: Error {}
 /// payload to `targetFormat` via ONE `AVAudioConverter` instance (spike:
 /// "converter instance carries resampler state across chunks") and
 /// yields into the analyzer's input stream. This is THE
-/// impossible-by-construction boundary the blueprint's #1 risk is about
-/// — s11-spike-findings-speechanalyzer.md's own words: "feeding
-/// SpeechAnalyzer a wrong-format stream buffer SIGTRAPs the process...
-/// a process crash, NOT a thrown error." Every allocation/conversion
+/// impossible-by-construction boundary the #1 risk is about: feeding
+/// SpeechAnalyzer a wrong-format stream buffer SIGTRAPs the process —
+/// a process crash, NOT a thrown error. Every allocation/conversion
 /// step below is nil/error-checked; ANY failure calls `onFatalError`
 /// exactly once and returns WITHOUT ever calling `continuation.yield` —
 /// there is no code path from a failed conversion to a yield.

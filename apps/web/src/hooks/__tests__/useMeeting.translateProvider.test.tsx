@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// v0.5 Wave-1 Feature 6 / A6 (docs/design-explorations/
-// v05-wave1-blueprint.md §1 Feature 6 + §5 A6) — end-to-end proof that
+// v0.5 Wave-1 Feature 6 / A6 — end-to-end proof that
 // useMeeting.ts's start() calls the resolved TranslationProvider's
 // prepare() SYNCHRONOUSLY, inside the SAME call stack a real Start
 // click produces (Header.tsx:596 `onClick={onStart}` -> onStart =

@@ -1,4 +1,4 @@
-// v0.4.3 S11 (docs/design-explorations/s11-osspeech-blueprint.md) — the
+// v0.4.3 S11 — the
 // zero-install macOS 26+ "SpeechAnalyzer" transcribe lane's Rust
 // supervisor. Worker B's own scope ONLY: this module supervises a SECOND
 // jargonslayer-audiocap invocation mode (`--transcribe`/`--probe-osspeech`/

@@ -7,8 +7,7 @@
 // app/system audio) via attachPcmFeed()/pushPcm(), which skip the
 // MediaStream/AudioContext/worklet entirely: the native helper already
 // delivers 16kHz mono i16 PCM, fed in over a Tauri Channel instead of a
-// browser audio graph (see D5, docs/design-explorations/s9-app-audio-
-// tap-blueprint.md). Both feed paths share the ONE pushPcm() guard.
+// browser audio graph (see D5). Both feed paths share the ONE pushPcm() guard.
 
 import type { MeetingLexicon, STTEvents, Settings } from "@jargonslayer/core/types";
 import { withBase } from "../basePath";
@@ -378,7 +377,7 @@ export class WsTransport {
     this.connect();
   }
 
-  /** D5 (S9.3, docs/design-explorations/s9-app-audio-tap-blueprint.md):
+  /** D5 (S9.3):
    * starts the sidecar connection for a PCM feed with NO browser audio
    * graph — appAudio.ts's AppAudioEngine already receives fully-formed
    * 16kHz mono i16 PCM from the native helper (over a Tauri Channel),

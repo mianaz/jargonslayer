@@ -1,4 +1,4 @@
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §D1/§2, Lane B) —
+// S13 (§D1/§2, Lane B) —
 // the app crate's iOS bridge: 6 thin `#[tauri::command]` fns, one per
 // pinned app-command name (§2's table), each a straight
 // `app.os_speech().<method>().map_err(...)` call into the

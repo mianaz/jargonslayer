@@ -71,7 +71,7 @@ const TRANSCRIPT_LEADING_VALUE: Record<string, number> = {
   relaxed: 1.9,
 };
 
-// Terminal speaker set (docs/DESIGN.md v3.3: "说话人 glyph($ / > / # 三色)").
+// Terminal speaker set ("说话人 glyph($ / > / # 三色)").
 // Six deterministic glyph+hue pairs (spec calls out 6: $ > # % @ &) picked
 // by a stable hash of the speaker name — glyph and speaker-name text share
 // the same lab-* hue, no filled chip background.
@@ -426,7 +426,7 @@ function ActiveSpeakerLatch() {
   );
 }
 
-// ---- render split (stt-vad-supervisor.md): a live interim tick used
+// ---- render split: a live interim tick used
 // to re-render the WHOLE segment list (every row's highlight regex
 // re-scanning its text on every partial). SegmentRow is memoized with
 // stable (useCallback'd) handlers from the panel so an interim update

@@ -1,5 +1,4 @@
-// v0.4.5 AI-transparency telemetry (docs/design-explorations/v045-ai-
-// transparency-qc.md, Part A) — one session-scoped store the four
+// v0.4.5 AI-transparency telemetry (Part A) — one session-scoped store the four
 // client.ts LLM entry points (detectApi/defineApi/translateApi/
 // summarizeApi) write to on every call resolution, read by the
 // StatusLine AI-status popover and the Settings → AI 检测 mirror. Own

@@ -428,8 +428,7 @@ export function buildTranslateUserMessage(
 }
 
 // ---------------- AI transcript correction (v0.5 Wave-1 Feature 2) ----------------
-// Batch, whole-meeting, review-gated (docs/design-explorations/
-// v05-wave1-blueprint.md §1 Feature 2 + §5 A5) — id-keyed like
+// Batch, whole-meeting, review-gated (A5) — id-keyed like
 // buildTranslateSystemPrompt/buildTranslateUserMessage above, but fixes
 // ASR mistakes in place instead of translating. `changed` is NEVER part
 // of this contract (see CorrectResponse's own doc in types.ts) — every

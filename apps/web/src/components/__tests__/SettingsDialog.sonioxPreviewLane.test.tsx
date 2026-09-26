@@ -15,8 +15,7 @@
 // bug. Both cards' hints + the (now-shared) notice component are
 // covered here.
 //
-// BYOK preview sprint (2026-07-21, docs/design-explorations/
-// byok-preview-blueprint.md, Lane B): this file's mocked PREVIEW_TIER
+// BYOK preview sprint (2026-07-21, Lane B): this file's mocked PREVIEW_TIER
 // harness is also the only place in this component's test suite that
 // can mount SettingsDialog under PREVIEW_TIER:true — reused below (a
 // second top-level describe) for the broader settings-UI unlock this

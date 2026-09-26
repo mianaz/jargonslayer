@@ -1,6 +1,6 @@
 import Foundation
 
-// S13 (docs/design-explorations/s13-ios-blueprint.md, Lane B) — ported
+// S13 (Lane B) — ported
 // verbatim (pattern source: apps/desktop/src-tauri/audiocap-helper/
 // Sources/AudioCapCore/LocaleResolver.swift, S11 §Q4) from the macOS
 // helper: resolves the plugin's `locale` arg (a BCP-47 tag, e.g.

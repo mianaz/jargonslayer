@@ -12,9 +12,8 @@
 // "@/lib/history/glossary" keep working unchanged. getCachedEntries is
 // NO LONGER a bare re-export — see the v0.5 Wave-1 note below.
 //
-// v0.5 Wave-1 Feature 8 (named custom dictionary packs, docs/design-
-// explorations/v05-wave1-blueprint.md §1 F8 + §5 A7 "path-complete
-// registry"): this file also owns the pack registry (its own IDB
+// v0.5 Wave-1 Feature 8 (named custom dictionary packs, A7
+// "path-complete registry"): this file also owns the pack registry (its own IDB
 // slice, mirroring the entry storage above) and makes every scan path
 // pack-aware — see the registry section below.
 

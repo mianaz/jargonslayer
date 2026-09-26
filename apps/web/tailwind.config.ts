@@ -12,7 +12,7 @@ export default {
         coarse: { raw: "(pointer: coarse)" },
       },
       colors: {
-        // v3 主题基座:暗黑科技 · 会议 REPL (docs/DESIGN.md v3.1) — pure
+        // v3 主题基座:暗黑科技 · 会议 REPL — pure
         // neutral-black surface ladder, R=G=B outside of the lab-*
         // label tokens.
         //
@@ -59,7 +59,7 @@ export default {
         "lab-purple": "rgb(var(--lab-purple-rgb) / <alpha-value>)", // #C084FC — 隐喻
         "lab-cyan": "rgb(var(--lab-cyan-rgb) / <alpha-value>)", // #22D3EE — 术语；术语高亮下划线
         act: "rgb(var(--act-rgb) / <alpha-value>)", // #FFFFFF — sole accent: primary button, white-bg/black-text
-        // warn *text* tier (docs/DESIGN.md v3.1 rule 3): fills use
+        // warn *text* tier: fills use
         // lab-red on small elements only; warn-colored text uses this
         // AA-safe softer red. (Migration-era acc/acc2/gold/warn aliases
         // are retired — no component references remain.)
@@ -78,7 +78,7 @@ export default {
         // Tailwind font-sans/font-mono utility across the app in one
         // step — this file itself never changes again for a font swap.
         sans: ["var(--font-ui)"],
-        // Monospace is the brand identity in v3 (docs/DESIGN.md v3.2):
+        // Monospace is the brand identity in v3:
         // JetBrains Mono, self-hosted via next/font in layout.tsx as
         // --font-mono-brand, falling back to native monospace stacks —
         // --font-mono-user wraps that chain (see globals.css) so a
@@ -89,7 +89,7 @@ export default {
         // serif survivor (CornellNote's frozen parchment artifact) pins
         // its Songti stack inline.
       },
-      // v3.9 type scale (DESIGN.md v3.9a) — named size/line-height
+      // v3.9 type scale — named size/line-height
       // tiers for the UI polish pass. micro/caption/body/title are
       // general-purpose text tiers; stat is the large-numeral size,
       // paired with globals.css's .stat-numeral utility (mono/light/

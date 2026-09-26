@@ -2,7 +2,7 @@
 //
 // SYNTHETIC scripts only. The 2026-07-29 field-test transcripts name
 // real people and carry company-internal detail; they must never be
-// staged here (ROADMAP.md). Every script below is written from scratch
+// staged here. Every script below is written from scratch
 // to exercise one documented behaviour of the local (dictionary-mode)
 // sense picker: dictionary.ts's selectSense fed by domainSignal.ts's
 // DomainTracker and apps/web's deriveSenseContext + keyword fallback.

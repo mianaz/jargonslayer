@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// S12b worker B2 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
-// §C L1/§E, task item 3) — the end-to-end proof that the flip holds
+// S12b worker B2 (v0.4.4, L1, task item 3) — the end-to-end proof that the flip holds
 // together: a user, on Apple-Silicon-supported caps, opens Settings'
 // 转录引擎 更换模型 picker, selects the REAL parakeet-tdt-0.6b-v3 row
 // (modelCatalog.ts's own B2 flip, unmocked here), clicks 下载并切换, and

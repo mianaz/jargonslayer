@@ -5,7 +5,7 @@
 // assume a Node runtime — every export here is a pure function, a pure
 // value (zod schema / constant), or a tiny stateless class.
 //
-// Why this file exists (v0.4 S2, PLAN-v0.4 §1A/§4): the request-
+// Why this file exists (v0.4 S2): the request-
 // shaping/parsing logic that used to live only in anthropic.ts is now
 // shared by TWO callers — the existing Next.js routes (server-only,
 // still going through anthropic.ts's Anthropic-SDK-based callJson for

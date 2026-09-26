@@ -1,5 +1,5 @@
-// v0.4 S2 design constraint #4 (prompt-cache preservation, PLAN-v0.4
-// risk #4) — REWRITTEN (F3, codex v04-integration review): the
+// v0.4 S2 design constraint #4 (prompt-cache preservation, risk #4)
+// — REWRITTEN (F3, codex v04-integration review): the
 // original version of this file called the same run*Task function
 // twice with two hand-built CallJsonOptions-shaped inputs. That can
 // only prove runDetectTask/runDefineTask/runTranslateTask/

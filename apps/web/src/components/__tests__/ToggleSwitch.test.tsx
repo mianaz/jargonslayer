@@ -165,7 +165,7 @@ describe("ToggleSwitch", () => {
     expect(thumbOff.className).not.toContain("translate-x-4");
   });
 
-  it("thumb transition is reduced-motion-safe (motion-reduce:transition-none, per DESIGN.md's 'no exceptions')", () => {
+  it("thumb transition is reduced-motion-safe (motion-reduce:transition-none, no exceptions)", () => {
     const btn = mount(<ToggleSwitch checked={false} onChange={() => {}} />);
     const thumb = btn.querySelector("span")!;
     expect(thumb.className).toContain("motion-reduce:transition-none");

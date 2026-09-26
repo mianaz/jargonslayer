@@ -1,7 +1,6 @@
 "use client";
 
-// v0.4 S4 chunk 3 (docs/design-explorations/s4-model-wizard-blueprint.md,
-// decision A + chunk 3) — the shared model-picker table: one row per
+// v0.4 S4 chunk 3 (decision A) — the shared model-picker table: one row per
 // MODEL_CATALOG entry, radio semantics (exactly one selectable at a
 // time), reused by both the first-run wizard's consent overlay
 // (DesktopWizard.tsx) and Settings' 更换模型 flow (chunk 4, not built
@@ -24,8 +23,8 @@
 // (CardsPanel/HistoryDrawer/TaskTray/ToggleSwitch), not a new
 // implementation.
 //
-// S12 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Gating F13 + worker A3, flipped live by worker B2 §C L1/§E) — three
+// S12 (v0.4.4, gating F13 + worker A3, flipped live by worker B2
+// L1) — three
 // additive gating layers:
 //   1. `available === false` entries are HIDDEN from the picker
 //      entirely (never rendered as a row at all) — no catalog entry

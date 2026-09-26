@@ -1,5 +1,4 @@
-// v0.4 S4 chunk 3 (docs/design-explorations/s4-model-wizard-blueprint.md,
-// decision A + chunk 3) — the shared Whisper model catalog: one entry
+// v0.4 S4 chunk 3 (decision A) — the shared Whisper model catalog: one entry
 // per SELECTABLE model, consumed by both the first-run wizard's consent
 // overlay (DesktopWizard.tsx's <ModelPicker>) and, later, Settings' 更换
 // 模型 flow (chunk 4, not built yet — same <ModelPicker> component,
@@ -13,7 +12,7 @@
 // is deliberately false; tiny/base being absent here is a curation
 // choice, not a bug.
 //
-// Source: docs/PLAN-v0.4.md §2 "Model wizard" 4-model table (small/
+// Source: the v0.4 "Model wizard" 4-model table (small/
 // medium/large-v3/large-v3-turbo — "Handy ships 16 model families... we
 // curate hard instead of cloning the menu"). Pure data, no JSX — lives
 // in lib/desktop/ rather than components/desktop/, mirroring
@@ -27,23 +26,22 @@ export interface ModelCatalogEntry {
    *  the exact string threaded through ctx.model into the
    *  prewarmModel/startServer effects and the written marker. */
   id: string;
-  /** Wizard label — blueprint decision A's exact 4 labels. */
+  /** Wizard label — decision A's exact 4 labels. */
   label: string;
-  /** Disk size on first download, one decimal GB — PLAN-v0.4.md §2's
-   *  own 4-model table. */
+  /** Disk size on first download, one decimal GB — from the v0.4
+   *  4-model table. */
   size: string;
   /** How it performs live on Apple Silicon (this app's primary desktop
-   *  target) — condensed from PLAN-v0.4.md's "Live on Mac (CPU)"
+   *  target) — condensed from the table's "Live on Mac (CPU)"
    *  column into user-facing Chinese copy. */
   macSpeedHint: string;
-  /** zh-en transcription quality — condensed from PLAN-v0.4.md's
+  /** zh-en transcription quality — condensed from the table's
    *  "zh-en quality" column. */
   qualityHint: string;
   /** true for exactly ONE entry (medium) — the honest zh-en default
-   *  (blueprint decision A) — drives the picker's own 推荐 chip. */
+   *  (decision A) — drives the picker's own 推荐 chip. */
   recommended: boolean;
-  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-   *  R1) — true only for the parakeet entry: requires the separate,
+  /** S12a (v0.4.4) — true only for the parakeet entry: requires the separate,
    *  hash-locked MLX venv (uvCommands.ts's DesktopPaths mlx fields) and
    *  gates on mlxCaps.ts's mlx_capabilities() probe, unlike every other
    *  (whisper-family) entry here, which shares the one base venv and

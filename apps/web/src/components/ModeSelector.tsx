@@ -1,7 +1,6 @@
 "use client";
 
-// v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
-// v05-wave1-blueprint.md §1 Feature 5 + §5 A3/A4) — the empty-state
+// v0.5 Wave-1 Feature 5 (mode-first UI, A3/A4) — the empty-state
 // entry point: instead of picking an ENGINE first, the user picks what
 // she's trying to LISTEN TO (intent); the engine is derived
 // automatically (deriveEngineForMode, lib/stt/engineOptions.ts).
@@ -37,7 +36,7 @@ import PixelDragon from "@/components/PixelDragon";
 import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 import type { HubTab } from "./ImportHub";
 
-// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+// Dual capture v1:
 // "dual" (麦克风+系统) joins the three real capture tiles — desktop-only,
 // osspeech-exclusive (see pickCapture's own dual tile push below).
 type CaptureMode = "system-audio" | "tab" | "mic" | "dual";
@@ -71,7 +70,7 @@ export interface ModeTileVisibility {
  *  already imported it (repo precedent — see engineOptions.test.ts's own
  *  header comment; nothing in this repo mocks "@/lib/deployTier").
  *
- *  BYOK preview (docs/design-explorations/byok-preview-blueprint.md D3):
+ *  BYOK preview (D3):
  *  the tab tile is now visible on preview UNCONDITIONALLY, same as full
  *  tier — tabaudio-cloud is a first-class, always-derivable engine there
  *  (deriveEngineForMode's own "tab" branch, engineOptions.ts; a keyless

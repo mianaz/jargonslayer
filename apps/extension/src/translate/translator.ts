@@ -7,8 +7,7 @@
 // against Chrome's currently-documented API shape (verified against
 // developer.chrome.com/docs/ai/translator-api + the DefinitelyTyped
 // `dom-chromium-ai` package while writing this); re-verify against a
-// real Chrome 138+ instance during load-unpacked testing — see the
-// PLAN-v0.4 S6 report's "Translator availability handling" section.
+// real Chrome 138+ instance during load-unpacked testing.
 
 import {
   canUseCapabilityNow,

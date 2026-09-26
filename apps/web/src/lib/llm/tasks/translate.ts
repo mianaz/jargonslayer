@@ -1,4 +1,4 @@
-// Isomorphic "translate" task (v0.4 S2, PLAN-v0.4 §1A/§4) — live
+// Isomorphic "translate" task (v0.4 S2) — live
 // bilingual transcript translation (#42), shared by
 // app/api/translate/route.ts and lib/llm/client.ts's client-side path.
 // See tasks/detect.ts's header comment for the general contract.

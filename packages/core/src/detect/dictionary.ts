@@ -1355,9 +1355,8 @@ export function setGlossaryShadowLookup(
  *
  *  Expressions are NOT included — recognizer bias earns its keep on
  *  exact jargon/acronym recall; idiom phrasing is already well-modeled
- *  by the decoder's own LM (v0.4.7 Lane B, docs/design-explorations/
- *  stt-provider-wiring-2026-07.md §3/D3 — apps/web's lexicon.ts is the
- *  one consumer). */
+ *  by the decoder's own LM (v0.4.7 Lane B, D3 — apps/web's lexicon.ts
+ *  is the one consumer). */
 export function packTermsForBias(
   enabledPacks: string[] | null = registeredEnabledPacks,
   activeDomains: ReadonlySet<DomainTag> = EMPTY_ACTIVE_DOMAINS,
@@ -1383,7 +1382,7 @@ function escapeRe(s: string): string {
 }
 
 /** S11 fix (v0.6 round-2 review) + queued lookaround polish (decision
- *  record, v0.7.2 review round, docs/ROADMAP.md): `\b` only makes sense
+ *  record, v0.7.2 review round): `\b` only makes sense
  *  adjacent to a word character — it asserts "exactly one of the two
  *  neighboring characters is a word character", so placed right next to
  *  a NON-word edge character (e.g. the trailing "%" in "100%") it can
@@ -1824,7 +1823,7 @@ function selectSense(
 // mount effect) — this was already the dominant trigger path (it fires
 // on mount, before any user action could call scanDictionary), so
 // dropping the redundant internal trigger here does not change
-// observable behavior. See PLAN-v0.4 S1 report for the full reasoning.
+// observable behavior.
 // ---------------------------------------------------------------
 
 // ---------------------------------------------------------------

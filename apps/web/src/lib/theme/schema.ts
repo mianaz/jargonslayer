@@ -38,7 +38,7 @@ export const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 const HexColor = z.string().regex(HEX_COLOR_RE, "必须是严格的 hex 颜色值");
 
-// The 17 color tokens a theme must define (docs/DESIGN.md v3.1 table).
+// The 17 color tokens a theme must define.
 // Order here is the canonical token order used by apply.ts when
 // iterating — kept as a const array (not just object keys) so tests
 // and applyTheme can both rely on a single source of truth.

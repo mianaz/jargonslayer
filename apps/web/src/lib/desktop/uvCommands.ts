@@ -1,5 +1,4 @@
-// v0.4 S3 chunk 4 (docs/design-explorations/s3-tauri-uv-blueprint.md,
-// §Chunk 4 + §App-data layout) — pure uv command builders. TS owns
+// v0.4 S3 chunk 4 — pure uv command builders. TS owns
 // {args,env} construction (unit-tested here, zero Tauri imports); Rust
 // owns spawning (S3 chunk 3's run_uv, apps/desktop/src-tauri/src/uv.rs) —
 // architecture decision 2. Every function here is a plain, deterministic
@@ -37,11 +36,10 @@ export interface DesktopPaths {
   diarRequirementsPath: string;
   logPath: string;
   markerPath: string;
-  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-   *  R1) — the separate, hash-locked MLX venv beside the base `venvDir`
-   *  above (parakeet's own isolated venv: airtight isolation from the
-   *  base whisper venv per §C R1's numba-conflict note). Worker A2
-   *  tightened this from optional to required (§C L1 prelude's own
+  /** S12a (v0.4.4) — the separate, hash-locked MLX venv beside the base
+   *  `venvDir` above (parakeet's own isolated venv: airtight isolation from the
+   *  base whisper venv, which avoids a numba conflict). Worker A2
+   *  tightened this from optional to required (the L1 prelude's own
    *  fields were optional only because paths.rs's `AppPaths` hadn't
    *  grown the matching `mlx_venv_dir` field yet) — every DesktopPaths
    *  fixture across this repo (uvCommands/provisionMachine/
@@ -139,9 +137,7 @@ export function pipInstall(paths: DesktopPaths): UvCommand {
  *  <requirements>` match arm), and that shape already allows the
  *  requirements operand to resolve under `resource_dir` (not just
  *  `app_data`) — so this needs zero Rust change, only a second bundled
- *  requirements file + this second builder. See docs/design-
- *  explorations/s5-diarization-addon-blueprint.md's Anchors section +
- *  decision B. */
+ *  requirements file + this second builder (decision B). */
 export function pipInstallDiar(paths: DesktopPaths): UvCommand {
   return {
     args: ["pip", "install", "--python", paths.venvPython, "-r", paths.diarRequirementsPath],
@@ -150,8 +146,7 @@ export function pipInstallDiar(paths: DesktopPaths): UvCommand {
 }
 
 // ---------------------------------------------------------------------
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C R1 +
-// Provision) — the separate, hash-locked MLX venv's own builders.
+// S12a (v0.4.4) — the separate, hash-locked MLX venv's own builders.
 // Unlike pipInstallDiar above (which installs INTO the already-
 // provisioned BASE venv), these three target `paths.mlxVenvDir`/
 // `mlxVenvPython` — a wholly separate venv (§C F8's redesign: airtight
@@ -180,7 +175,7 @@ export function pipInstallDiar(paths: DesktopPaths): UvCommand {
  *  erroring on an already-populated one), used only when a PRIOR
  *  attempt already failed — see bootstrap.ts's own ensureMlxExtras,
  *  which discharges the uv-venv retry-poisoning debt
- *  (V040-VERIFICATION-RUNPLAN.md:35) by trying once WITHOUT --clear,
+ *  by trying once WITHOUT --clear,
  *  then once WITH it. `clear` defaults to false (a fresh install never
  *  needs it — the target directory doesn't exist yet). */
 export function venvCreateMlx(paths: DesktopPaths, opts: { clear?: boolean } = {}): UvCommand {

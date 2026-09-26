@@ -1,4 +1,4 @@
-// v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md) —
+// v0.4 S9.1 —
 // builds the jargonslayer-audiocap Swift package (apps/desktop/
 // src-tauri/audiocap-helper/) and stages the product as apps/desktop/
 // src-tauri/binaries/jargonslayer-audiocap-<triple> — the exact naming
@@ -18,8 +18,7 @@
 // macOS + Apple Silicon only for now, matching this slice's explicit
 // scope (`swift build -c release --arch arm64` — no x86_64/Rosetta
 // target yet) and the helper's own technical floor (CoreAudio process
-// taps, macOS 14.2+, docs/design-explorations/s9-app-audio-tap-
-// blueprint.md's D1). Every other platform/architecture is a clear,
+// taps, macOS 14.2+, D1). Every other platform/architecture is a clear,
 // early, actionable skip rather than a confusing downstream failure.
 import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";

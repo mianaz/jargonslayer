@@ -1,6 +1,5 @@
-// Centralized S9.4/D6 macOS-floor gating probe (docs/design-explorations/
-// s9-app-audio-tap-blueprint.md, D6) — adversarial review finding F9:
-// each surface that gates the "appaudio" engine option on
+// Centralized S9.4/D6 macOS-floor gating probe — adversarial review
+// finding F9: each surface that gates the "appaudio" engine option on
 // audiocap_capabilities() used to hand-roll its own copy — Header.tsx's
 // ENGINE_OPTIONS had NO floor gating at all (appaudio stayed enabled on
 // every macOS version, including below the 14.4 floor), while

@@ -1,5 +1,4 @@
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Gating F13) — mlx_capabilities() probe/cache coverage, mirroring
+// S12a (v0.4.4, gating F13) — mlx_capabilities() probe/cache coverage, mirroring
 // audiocapCaps.test.ts's own split: probeMlxCapabilitiesWith() is
 // directly unit-testable with a fake invoke (no module-mocking
 // gymnastics), the thin probeMlxCaps()/refreshMlxCaps() IS_DESKTOP-guard

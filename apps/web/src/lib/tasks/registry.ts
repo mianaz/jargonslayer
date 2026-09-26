@@ -30,16 +30,15 @@ import { diagLog } from "../diag/log";
 // Record<TaskKind,…>/switch over this type repo-wide (grepped at S10
 // time: only TaskTray.tsx's KIND_LABEL) must cover both.
 //
-// S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md):
+// S11 (v0.4.3):
 // "os-speech-asset" joins the same list — jobsBridge.ts's
 // trackOsSpeechAsset is its only writer (also desktop-only; the
 // osspeech engine/its preinstall button never exist on a web build).
 //
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C L1
-// prelude) — "mlx-install" joins the same list for the parakeet/MLX
-// venv provisioning lane (§Provision state machine's INSTALL_MLX
-// ProvisionStep). This prelude only reserves the kind (no writer yet);
-// worker A2's provisionMachine.ts/bootstrap.ts wiring is what actually
+// S12a (v0.4.4, L1 prelude) — "mlx-install" joins the same list for the
+// parakeet/MLX venv provisioning lane (the provision state machine's
+// INSTALL_MLX ProvisionStep). This prelude only reserves the kind (no writer
+// yet); worker A2's provisionMachine.ts/bootstrap.ts wiring is what actually
 // starts a task of this kind — also desktop-only.
 //
 // v0.5 closeout (background 划词 card generation) — "selection-lookup"

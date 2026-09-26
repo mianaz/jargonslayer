@@ -5,8 +5,7 @@
 // local Whisper sidecar. Modeled on wsTransport.ts's WsTransport (same
 // audio-graph shape, same stop-drain idea) but NOT a refactor of it —
 // wsTransport.ts is load-bearing for whisper/tabaudio and stays
-// untouched (docs/design-explorations/s4-model-wizard-blueprint.md's
-// decision E is explicit about this). Only the protocol adapter
+// untouched (S4 decision E is explicit about this). Only the protocol adapter
 // differs: Soniox's token-stream wire shape (SonioxTokenMapper below)
 // instead of whisper_server.py's partial/final messages, BYOK auth
 // instead of a local sidecar, and no diarization/pause support in

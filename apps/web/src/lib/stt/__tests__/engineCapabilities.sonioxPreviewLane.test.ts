@@ -1,6 +1,5 @@
-// resolveEngineCapability — Soniox preview lane (D3 BYOK preview, docs/
-// design-explorations/byok-preview-blueprint.md): the M2-era (Sol
-// review 2026-07-20, v0.5 closeout) lane force is GONE — this function
+// resolveEngineCapability — Soniox preview lane (D3 BYOK preview): the
+// M2-era (Sol review 2026-07-20, v0.5 closeout) lane force is GONE — this function
 // is a pure function of `settings` alone now, so the lane changes
 // nothing about its output. PREVIEW_TIER/SONIOX_PREVIEW_LANE are still
 // import-time consts (deployTier.ts) needing their own vi.mock — kept

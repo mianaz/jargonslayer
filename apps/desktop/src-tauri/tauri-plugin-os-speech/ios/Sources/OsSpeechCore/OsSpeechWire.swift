@@ -1,7 +1,7 @@
 import Foundation
 
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §2 pinned wire
-// contract, Lane B) — the "transcript"/"status" event payload shapes
+// S13 (§2 pinned wire contract, Lane B) —
+// the "transcript"/"status" event payload shapes
 // delivered via `Plugin.trigger(_:data:)` (Plugin.swift's own generic
 // `trigger<T: Encodable>`). Ported in SPIRIT from macOS's own
 // TranscriptEvents.swift/StatusEvents.swift (§2.2/§2.5), reshaped for

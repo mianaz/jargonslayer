@@ -1,6 +1,5 @@
 // Tab audio without the local sidecar (v0.5 Wave-1 Feature 4, cloud
-// path — docs/design-explorations/v05-wave1-blueprint.md §1 Feature 4 +
-// §5 A4): getDisplayMedia capture — byte-identical to tabAudio.ts's own
+// path, A4): getDisplayMedia capture — byte-identical to tabAudio.ts's own
 // acquisition (required-but-unused video track, same audio constraints,
 // same zh screen-share error copy) — routed into a BYOK cloud transport
 // (Soniox or Deepgram, Settings.tabAudioCloudProvider) instead of
@@ -60,8 +59,7 @@ export class TabAudioCloudEngine implements STTEngine {
     this.events = events;
     this.stopping = false;
 
-    // BYOK preview (docs/design-explorations/byok-preview-blueprint.md
-    // D3): honest selection ALWAYS — no lane force. tabaudio-cloud is a
+    // BYOK preview (D3): honest selection ALWAYS — no lane force. tabaudio-cloud is a
     // first-class preview engine now, selectable exactly like full tier
     // (engineOptions.ts's engineOptionGate no longer locks it, store.
     // ts's applyTierDefaults no longer coerces it away), so a

@@ -4,8 +4,7 @@
 // closeout item 3): fires ONCE per meeting start, only for a session
 // actually riding the server-minted credential (soniox/tabaudio-cloud,
 // SONIOX_PREVIEW_LANE, no BYOK sonioxKey). Tightened for BYOK preview
-// (docs/design-explorations/byok-preview-blueprint.md D3): tabaudio-
-// cloud's own effectiveProvider no longer force-routes through Soniox
+// (D3): tabaudio-cloud's own effectiveProvider no longer force-routes through Soniox
 // on this lane, so the notice ALSO requires the resolved tab-cloud
 // provider to actually be soniox — a BYOK Deepgram tab-cloud session
 // (engine tabaudio-cloud, no sonioxKey, but a real deepgramKey) must

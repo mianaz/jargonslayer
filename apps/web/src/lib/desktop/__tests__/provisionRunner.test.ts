@@ -133,8 +133,7 @@ describe("runEffects — CHECKING (probeHealth + readMarker -> CHECK_RESULT)", (
   });
 });
 
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Provision, F14) — CHECKING's own conditional mlx-usability probe:
+// S12a (v0.4.4, provision F14) — CHECKING's own conditional mlx-usability probe:
 // ONLY reached when the just-read marker parses to an
 // MLX_ONLY_MARKER_MODELS member. mlxCaps.ts's own module-level cache is
 // reset around every test here (probeMlxCapabilitiesWith, reused
@@ -577,8 +576,7 @@ describe("runEffects — prewarmModel (DOWNLOAD_MODEL)", () => {
     expect(lines).toEqual([["stdout", "Downloading small model..."]]);
   });
 
-  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-  // Q6/§3.5 HF-token) — RunnerDeps.readHfToken's own passthrough.
+  // S12a (v0.4.4, Q6 HF-token) — RunnerDeps.readHfToken's own passthrough.
   describe("hfToken passthrough (§C Q6)", () => {
     it("readHfToken returning a non-empty token adds hfToken to the invoke payload, trimmed", async () => {
       const { invoke, calls } = makeFakeInvoke({ prewarm_model: () => ({ code: 0 }) });
@@ -723,8 +721,7 @@ describe("runEffects — startServer (STARTING), with and without a bundled writ
     expect(calls).toEqual([{ cmd: "start_server", args: { model: "medium" } }]);
   });
 
-  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-  // Q6/§3.5 HF-token) — RunnerDeps.readHfToken's own passthrough,
+  // S12a (v0.4.4, Q6 HF-token) — RunnerDeps.readHfToken's own passthrough,
   // mirrors the prewarmModel describe block's own coverage above.
   describe("hfToken passthrough (§C Q6)", () => {
     it("readHfToken returning a non-empty token adds hfToken to the invoke payload, trimmed", async () => {

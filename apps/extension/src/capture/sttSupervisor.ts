@@ -11,9 +11,7 @@
 // with a fresh snapshot of its own state + the VAD's state, and simply
 // executes whatever action comes back.
 //
-// Design: docs/design-explorations/stt-vad-supervisor.md (accepted
-// 2026-07-09). The policy below is transcribed from that doc's pseudo-
-// code verbatim — do not "simplify" the branch order, the ordering
+// Do not "simplify" the branch order of the policy below — the ordering
 // encodes real priority (e.g. the hard rotation ceiling always wins,
 // even mid-stall-backoff).
 

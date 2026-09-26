@@ -223,8 +223,8 @@ describe("scanDictionary — Bug A fix: a term ending in a non-word character ca
   });
 });
 
-// Queued lookaround polish (decision record, v0.7.2 review round,
-// docs/ROADMAP.md): the Bug A fix above dropped the boundary assertion
+// Queued lookaround polish (decision record, v0.7.2 review round):
+// the Bug A fix above dropped the boundary assertion
 // entirely at a non-word edge, which fixed the false NEGATIVE (a
 // legitimate match rejected) but reopened a false POSITIVE — a glued
 // word-char suffix right after/before the non-word edge went

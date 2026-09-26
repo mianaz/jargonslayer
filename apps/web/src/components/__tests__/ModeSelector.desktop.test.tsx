@@ -111,7 +111,7 @@ describe("ModeSelector — desktop build", () => {
     render();
     expect(container!.querySelector('[data-testid="mode-tile-tab"]')).toBeNull();
     expect(container!.querySelector('[data-testid="mode-tile-system-audio"]')).not.toBeNull();
-    // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
+    // Dual capture v1:
     // 麦克风+系统 joins the desktop tile set.
     expect(container!.querySelector('[data-testid="mode-tile-dual"]')).not.toBeNull();
     expect(container!.querySelector('[data-testid="mode-tile-mic"]')).not.toBeNull();

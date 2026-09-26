@@ -5,7 +5,7 @@ import Tauri
 import UIKit
 import WebKit
 
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §D1/§2, Lane B) —
+// S13 (§D1/§2, Lane B) —
 // the Tauri iOS plugin entry point. Six thin `@objc` methods, one per
 // `osspeech_ios.rs` bridge command (§2's pinned table); each does the
 // SAME two things and nothing else: (1) an `#available(iOS 26.0, *)`

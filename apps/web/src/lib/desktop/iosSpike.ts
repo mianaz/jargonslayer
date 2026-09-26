@@ -1,7 +1,6 @@
-// S13.1 (docs/design-explorations/s13-ios-blueprint.md) — the iOS
-// simulator spike harness's JS half. `simctl` has no tap-automation
-// surface, so this module drives the REAL osspeech engine the exact
-// same way the UI does and tees every step to a file
+// S13.1 — the iOS simulator spike harness's JS half. `simctl` has no
+// tap-automation surface, so this module drives the REAL osspeech engine the
+// exact same way the UI does and tees every step to a file
 // (devspike_ios.rs's spike_report) that `simctl get_app_container …
 // data` can read back afterward.
 //

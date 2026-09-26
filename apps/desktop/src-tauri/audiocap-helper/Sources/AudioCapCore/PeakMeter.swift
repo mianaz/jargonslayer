@@ -1,7 +1,6 @@
 import Foundation
 
-// S9 live-failure investigation (docs/design-explorations/
-// s9-app-audio-tap-blueprint.md) — the S9.1/S9.2 spike and pipeline
+// S9 live-failure investigation — the S9.1/S9.2 spike and pipeline
 // only ever verified BYTE COUNTS out of the tap (ring high-water,
 // frames out, overflow/dropped-frame counters — see StatusEvents
 // .StatsRecord), never AMPLITUDE. A tap silently capturing pure digital

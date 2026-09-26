@@ -1,4 +1,4 @@
-// S9.2 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D5) —
+// S9.2 (D5) —
 // "rubato resample OUTSIDE any RT context (device-native -> 16 kHz mono
 // i16)". Pure DSP — no tauri, no I/O; audiocap_pipeline.rs is the only
 // caller, and audiocap.rs's session task only ever touches it through

@@ -1,5 +1,4 @@
-// v0.7.1 translation train-2, Chamber B (docs/design-explorations/
-// v071-translation-train2-blueprint.md §Shared contract + §Chamber B).
+// v0.7.1 translation train-2, Chamber B.
 // TranslateQueue (queue.ts) only exists for a LIVE meeting — a stopped
 // session (including one re-opened from history via loadSession, which
 // lands status:"stopped") has translation gaps with nothing left to

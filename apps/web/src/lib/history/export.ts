@@ -28,8 +28,8 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   // because this file stays engine-metadata-free by design.
   osspeech: "系统识别",
   soniox: "Soniox 云端识别",
-  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
-  // Lane D): second cloud engine, terse noun form matching soniox above.
+  // v0.4.7 (Lane D): second cloud engine, terse noun form matching soniox
+  // above.
   deepgram: "Deepgram 云端识别",
   // v0.6 round 2: third BYOK cloud engine, terse noun form matching
   // soniox/deepgram above.

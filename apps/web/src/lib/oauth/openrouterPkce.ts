@@ -9,10 +9,10 @@
 // actual POST). PREVIEW_TIER differs: a live probe from the production
 // origin found openrouter.ai/api/v1/auth/keys DOES answer browser CORS
 // preflight (a deliberately-invalid code came back a readable 400
-// "Invalid code", not a CORS block — see byok-preview-blueprint.md
-// §4), so exchangeCodeForKey below posts straight there instead — the
-// sprint's "a user's key never touches our server" principle applies
-// to the key this very call mints, same as every other BYOK path.
+// "Invalid code", not a CORS block), so exchangeCodeForKey below posts
+// straight there instead — the sprint's "a user's key never touches our
+// server" principle applies to the key this very call mints, same as every
+// other BYOK path.
 
 import { PREVIEW_TIER } from "../deployTier";
 import { withBase } from "../basePath";
@@ -159,9 +159,8 @@ export interface ExchangeCodeForKeyDirectOptions {
   fetchImpl: typeof fetch;
 }
 
-/** S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
- *  Chunk A) — ADDITIVE sibling of exchangeCodeForKey above. Originally
- *  desktop-only; the byok-preview sprint (see that function's own doc)
+/** S10 field-fix (Chunk A) — ADDITIVE sibling of exchangeCodeForKey
+ *  above. Originally desktop-only; the byok-preview sprint (see that function's own doc)
  *  made it exchangeCodeForKey's OWN PREVIEW_TIER implementation too, so
  *  "this function never touches it" no longer holds — exchangeCodeForKey
  *  now calls this one deliberately, injecting browser `fetch` where

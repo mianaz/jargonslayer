@@ -1,6 +1,5 @@
 // Isomorphic "correct" task (v0.5 Wave-1 Feature 2, batch/review-gated
-// AI transcript correction — docs/design-explorations/v05-wave1-
-// blueprint.md §1 Feature 2 + §5 A5). Shared by app/api/correct/route.ts
+// AI transcript correction, A5). Shared by app/api/correct/route.ts
 // (web) and lib/llm/client.ts's client-side path (desktop/iOS, which
 // strip app/api) — see tasks/translate.ts's header comment for the
 // general isomorphic-task contract this mirrors.

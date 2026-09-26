@@ -7,8 +7,8 @@
 // SAME execution tool (architecture decision 3): the venv's own python,
 // never a bare `python` off $PATH.
 //
-// S4 chunk 2 (docs/design-explorations/s4-model-wizard-blueprint.md,
-// decision B's first-run one-shot path) — prewarm_model no longer runs a
+// S4 chunk 2 (decision B's first-run one-shot path) —
+// prewarm_model no longer runs a
 // bare `-c "WhisperModel(...)"` script: it spawns whisper_server.py's own
 // `--download-only` mode (chunk 1's run_download_only), which prints
 // newline-delimited JSON progress lines to stdout
@@ -310,7 +310,7 @@ pub async fn prewarm_model(
     std::fs::create_dir_all(&paths.models_dir)
         .map_err(|e| format!("failed to create {}: {e}", paths.models_dir.display()))?;
 
-    // Decision B (s4-model-wizard-blueprint.md) — first-run is a Rust
+    // Decision B — first-run is a Rust
     // one-shot spawn of whisper_server.py's own --download-only mode
     // (chunk 1's run_download_only), not a bare `-c "WhisperModel(...)"`
     // script: the sidecar module already owns the real download logic

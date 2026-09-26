@@ -7,10 +7,8 @@ explanations for idioms/jargon and business/tech terms (from
 Translator API is available — a full translation of pasted text. No login,
 no API key, no cost.
 
-Part of [PLAN-v0.4](../../docs/PLAN-v0.4.md) sessions S6 (scaffold + side
-panel + dictionary + Translator) and S7 (Web Speech capture port + history/
-export + greyed features) — design in
-`docs/design-explorations/s7-extension-capture-blueprint.md`.
+Built in v0.4 sessions S6 (scaffold + side panel + dictionary + Translator)
+and S7 (Web Speech capture port + history/export + greyed features).
 
 ## Load unpacked (development)
 
@@ -119,7 +117,7 @@ picking up saved changes.
 ## What's deferred (S8+)
 
 - **S8**: Chrome Web Store packaging + submission, zh copy polish pass.
-- Later: offscreen-document capture pivot (pre-scoped in the blueprint,
+- Later: offscreen-document capture pivot (already pre-scoped,
   only if side-panel Web Speech proves unreliable in real Chrome),
   content-script select→explain, tab audio, LLM/BYOK detection, SRS
   review-proper.
@@ -150,12 +148,12 @@ install-time warning); history uses IndexedDB (no `unlimitedStorage`);
 exports are Blob downloads (no `downloads`); the grant tab opens via
 `chrome.tabs.create` (no `tabs`).
 
-No content scripts, no remote code execution — matches PLAN-v0.4 §1C's
-"side panel is the app, the service worker is a stateless coordinator"
-decision, and PRODUCT.md's "not a word-by-word lookup extension" stance
-(content-script select→explain on arbitrary pages is v2, out of scope
-here). The manifest carries no `content_security_policy` override, so
-MV3's default (no remote code, no eval) applies as-is.
+No content scripts, no remote code execution — by design, the side panel is
+the app and the service worker is a stateless coordinator, and this is not a
+word-by-word lookup extension (content-script select→explain on arbitrary
+pages is v2, out of scope here). The manifest carries no
+`content_security_policy` override, so MV3's default (no remote code, no eval)
+applies as-is.
 
 ## Architecture notes
 

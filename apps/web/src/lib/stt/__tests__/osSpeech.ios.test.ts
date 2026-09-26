@@ -1,5 +1,4 @@
-// OsSpeechEngine — iOS-only coverage (S13, docs/design-explorations/
-// s13-ios-blueprint.md, §6 Sol F7): permission-denied/unsupported status
+// OsSpeechEngine — iOS-only coverage (S13, Sol F7): permission-denied/unsupported status
 // copy platform-branches on IS_IOS. IS_IOS is a module-scope import-time
 // const, so this needs its own file/vi.mock — mirrors osSpeech.test.ts's
 // own tauriApi mocking shape (getInvoke faked, "../../store" mocked for
@@ -28,8 +27,7 @@ vi.mock("../../desktop/tauriApi", () => ({
 
 vi.mock("../../store", () => ({
   useApp: { getState: () => ({ customEntries: [] }) },
-  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
-  // osSpeech.ts now imports these two stable-speaker-id constants
+  // Dual capture v1: osSpeech.ts now imports these two stable-speaker-id constants
   // unconditionally (see its own header comment) — dual capture itself
   // is desktop-only and never reaches iOS's channel-less transcript
   // payloads, so no test here exercises them, but a real value (not

@@ -1,5 +1,4 @@
-// OsSpeechEngine (S11, docs/design-explorations/s11-osspeech-blueprint.md)
-// — mirrors appAudio.test.ts's own testing posture: invoke/listen are
+// OsSpeechEngine (S11) — mirrors appAudio.test.ts's own testing posture: invoke/listen are
 // faked via fakeTauri.ts with the whole tauriApi.ts module mocked out
 // (osSpeech.ts imports zero `@tauri-apps/*` itself, same "ONLY module"
 // contract). v0.4.7 Lane B (glossary -> recognizer bias, D8): start()'s
@@ -30,8 +29,7 @@ vi.mock("../../desktop/tauriApi", () => ({
   getListen: () => Promise.resolve(currentListen),
 }));
 
-// Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
-// this ambient file is osSpeech.ts's DESKTOP-flavored default coverage —
+// Dual capture v1: this ambient file is osSpeech.ts's DESKTOP-flavored default coverage —
 // osSpeech.ios.test.ts is the dedicated IS_IOS:true sibling (see that
 // file's own header comment) — so IS_DESKTOP is pinned true here too,
 // same "ambient = desktop, dedicated .ios file = iOS" split. Needed for
@@ -68,8 +66,8 @@ import { CH_MIC_SPEAKER, CH_SYS_SPEAKER } from "../../store";
 // Mirrors osSpeech.ts's own (unexported) STOP_ENDED_TIMEOUT_MS.
 const STOP_ENDED_TIMEOUT_MS = 4000;
 
-// mode:"system-audio" (dual capture v1's own default, docs/design-
-// explorations/dual-capture-2026-08.md) — NOT DEFAULT_SETTINGS.mode's
+// mode:"system-audio" (dual capture v1's own default) — NOT
+// DEFAULT_SETTINGS.mode's
 // own "mic" default, which would now spuriously add a `source: "mic"`
 // arg to every start_os_speech call in this file (see the "source
 // pass-through on start" describe block below for the dedicated
@@ -321,7 +319,7 @@ describe("OsSpeechEngine", () => {
   });
 
   // ---------------------------------------------------------------
-  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md)
+  // Dual capture v1
   // ---------------------------------------------------------------
 
   describe("dual capture v1: source pass-through on start", () => {

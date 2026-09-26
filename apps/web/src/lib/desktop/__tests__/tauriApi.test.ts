@@ -39,7 +39,7 @@ describe("tauriApi — outside a Tauri build", () => {
     expect(() => getAppVersion()).toThrow(/Tauri build/);
   });
 
-  // S13 (docs/design-explorations/s13-ios-blueprint.md, §6)
+  // S13
   it("getAddPluginListener throws synchronously", () => {
     expect(() => getAddPluginListener()).toThrow(/Tauri build/);
   });

@@ -44,8 +44,7 @@ describe("ENGINE_OPTIONS (web build, ambient test env)", () => {
     }
   });
 
-  // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-blueprint.
-  // md §1 Feature 4 + §5 A4): exact shape, mirrors this file's own
+  // v0.5 Wave-1 Feature 4 (A4): exact shape, mirrors this file's own
   // osspeech pin in engineOptions.desktop.test.ts — byokOnly (same
   // preview lock as soniox/deepgram), cloud-transient/cloud posture (the
   // DEFAULT provider's static row — engineCapabilities.test.ts covers
@@ -64,8 +63,7 @@ describe("ENGINE_OPTIONS (web build, ambient test env)", () => {
   });
 });
 
-// v0.4.7 Lane C — tri-state privacy label (docs/design-explorations/
-// stt-provider-wiring-2026-07.md §4, §9 D5-D7 + Lane C addendum).
+// v0.4.7 Lane C — tri-state privacy label (D5-D7 + Lane C addendum).
 // RETENTION_COPY pins the three states' label+hint+color byte-for-byte;
 // resolveEngineRetentionClass pins the D7 runtime narrowing (webspeech
 // on-device) — the ONE function StatusLine's privacy segment and
@@ -104,11 +102,11 @@ describe("RETENTION_COPY — tri-state label+hint table", () => {
     }
   });
 
-  // ITEM 6 (fix round, Sol, LOW): DESIGN.md rule 3 — warn TEXT uses
+  // ITEM 6 (fix round, Sol, LOW): design rule — warn TEXT uses
   // warn-soft; lab-red is reserved for small fills/borders, never body
   // text — cloud-stored is the one INTENTIONAL exception to the "same
   // token" rule above, escalating only the border.
-  it("cloud-stored intentionally pairs warn-soft text with a lab-red border (DESIGN.md rule 3)", () => {
+  it("cloud-stored intentionally pairs warn-soft text with a lab-red border (design rule 3)", () => {
     expect(RETENTION_COPY["cloud-stored"].textClass).toBe("text-warn-soft");
     expect(RETENTION_COPY["cloud-stored"].borderClass).toBe("border-lab-red/30");
   });

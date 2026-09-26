@@ -21,7 +21,7 @@
 // (there's no stable cdhash for an ad-hoc dev build to remember). That
 // prompt storm makes the real Keychain unusable purely as a dev
 // inner-loop problem, not a production one (release builds are Developer
-// ID signed with a stable identity — see docs/PACKAGING.md). So in debug
+// ID signed with a stable identity). So in debug
 // builds only (`cfg!(debug_assertions)`, checked at RUNTIME inside
 // backend_set/get/delete below — see those functions' own doc for why
 // this is a runtime branch rather than a `#[cfg(debug_assertions)]`

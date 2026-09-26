@@ -442,8 +442,7 @@ describe("bootstrapDesktop — CREATE_VENV's own --clear self-heal (v0.5.1 field
   });
 });
 
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Provision, F14) — a persisted parakeet marker this app already knows
+// S12a (v0.4.4, provision F14) — a persisted parakeet marker this app already knows
 // can't be trusted (wrong hardware, OR a missing/broken mlx venv) must
 // NEVER drive straight into STARTING (which would only ever
 // health-timeout-loop) — it quarantines into the SAME
@@ -1141,7 +1140,7 @@ describe("initDesktop — idempotency + IS_DESKTOP guard", () => {
   });
 });
 
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4/D6) — initIos's
+// S13 (D4/D6) — initIos's
 // own idempotency/NEXT_PUBLIC_IOS-guard wrapper, tested in the test env's
 // default (NEXT_PUBLIC_IOS unset) state — mirrors initDesktop's own
 // coverage immediately above exactly (same shape, same rationale: it
@@ -2672,8 +2671,7 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     expect(handle.currentSwitchModelProgress()).toBeNull();
   });
 
-  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-  // Q6/§3.5 HF-token) — performSwitchModel's own restart start_server
+  // S12a (v0.4.4, Q6 HF-token) — performSwitchModel's own restart start_server
   // call threads BootstrapDeps.readHfToken exactly like provisionRunner.
   // ts's startServer effect does (provisionRunner.test.ts's own
   // "hfToken passthrough" coverage) — this suite proves the SAME
@@ -3551,8 +3549,7 @@ describe("bootstrapDesktop — switchModel() SAME-TARGET no-op (§F FB8)", () =>
   });
 });
 
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Provision) — performSwitchModel's new leading Phase 1 (ensureMlxExtras)
+// S12a (v0.4.4, provision) — performSwitchModel's new leading Phase 1 (ensureMlxExtras)
 // for an MLX_ONLY_MARKER_MODELS target, gated so a plain whisper-family
 // switch (every test in the describe block above) stays byte-identical.
 describe("bootstrapDesktop — switchModel() to an mlx-family model (§C Provision, ensureMlxExtras)", () => {
@@ -4123,8 +4120,7 @@ describe("bootstrapDesktop — installedModel() (S4 chunk 4)", () => {
 });
 
 // ---------------------------------------------------------------
-// S5 chunk 2 (docs/design-explorations/s5-diarization-addon-
-// blueprint.md, decision B) — installDiarization(). Every test below
+// S5 chunk 2 (decision B) — installDiarization(). Every test below
 // starts from a HEALTHY (adopted) handle, same posture as the
 // switchModel()/reprovision() suites above, since installDiarization()
 // is only ever meaningful from there.

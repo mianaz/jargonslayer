@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 //
 // ModeSelector — ambient (web, full tier) coverage. v0.5 Wave-1 Feature 5
-// (mode-first UI, docs/design-explorations/v05-wave1-blueprint.md §1
-// Feature 5 + §5 A3/A4). IS_DESKTOP/IS_IOS are module-scope import-time
+// (mode-first UI, A3/A4). IS_DESKTOP/IS_IOS are module-scope import-time
 // consts — this file exercises the REAL (both false, i.e. "web") ambient
 // values, mirroring StatusLine.test.tsx/engineOptions.test.ts's own
 // "ambient env" split; ModeSelector.desktop.test.tsx/ModeSelector.ios.
@@ -170,7 +169,7 @@ describe("ModeSelector — web build, ambient test env", () => {
   });
 });
 
-// BYOK preview (docs/design-explorations/byok-preview-blueprint.md D3):
+// BYOK preview (D3):
 // visibleModeTileKeys as a pure function — PREVIEW_TIER is an
 // import-time const nothing in this repo mocks (see engineOptions.
 // test.ts's own header comment on the identical constraint), so the

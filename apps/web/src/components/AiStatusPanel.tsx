@@ -1,7 +1,6 @@
 "use client";
 
-// v0.4.5 ambient AI-status surface (docs/design-explorations/
-// v045-ai-transparency-qc.md, Part A) — the concrete answer to the
+// v0.4.5 ambient AI-status surface (Part A) — the concrete answer to the
 // owner's "how many agents?" ask: FOUR task-domain rows (解释 is its
 // OWN row per her ruling, not folded into 检测 — that split is exactly
 // what makes "how many agents" a literal, honest answer). Presentational,

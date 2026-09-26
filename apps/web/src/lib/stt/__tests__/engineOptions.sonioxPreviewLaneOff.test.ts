@@ -1,6 +1,5 @@
 // Soniox preview lane OFF contrast (PREVIEW_TIER:true, SONIOX_PREVIEW_
-// LANE:false) — BYOK preview (docs/design-explorations/byok-preview-
-// blueprint.md D3) made byokOnly's preview unlock unconditional on the
+// LANE:false) — BYOK preview (D3) made byokOnly's preview unlock unconditional on the
 // TIER alone, no trial flag required: this file now proves the INVERSE
 // of what it used to (the trial flag, not the tier, used to gate the
 // byokOnly unlock — that's gone). What the trial flag still exclusively

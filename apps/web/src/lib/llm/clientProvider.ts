@@ -1,4 +1,4 @@
-// v0.4 S2 (PLAN-v0.4 §1A/§4) — the client-side ProviderCaller: calls
+// v0.4 S2 — the client-side ProviderCaller: calls
 // the LLM provider directly over HTTP (no Node server involved), for
 // the client-side callProvider path lib/llm/client.ts uses when
 // llmTransport.ts's useClientTransport() is on. This is what S3's

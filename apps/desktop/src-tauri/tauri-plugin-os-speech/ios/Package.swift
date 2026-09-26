@@ -3,7 +3,7 @@
 
 import PackageDescription
 
-// S13 (docs/design-explorations/s13-ios-blueprint.md, Lane B) — two
+// S13 (Lane B) — two
 // targets, not the generator's single one: `OsSpeechCore` has NO
 // dependency on `Tauri`/`SwiftRs` at all (plain Foundation/AVFoundation/
 // Speech/UIKit — system frameworks only), so it (and OsSpeechCoreTests)

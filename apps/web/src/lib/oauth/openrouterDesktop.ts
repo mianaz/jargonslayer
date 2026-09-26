@@ -1,6 +1,5 @@
-// S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
-// Chunk A, item 2 + Q1 verdict) — "Connect with OpenRouter" via the
-// RFC 8252 loopback flow: opens the SYSTEM BROWSER (never the webview
+// S10 field-fix (Chunk A, item 2 + Q1 verdict) — "Connect with OpenRouter"
+// via the RFC 8252 loopback flow: opens the SYSTEM BROWSER (never the webview
 // itself — WKWebView/wry can't usefully navigate to an arbitrary
 // https:// URL, see lib/platform/openExternal.ts's own header comment)
 // to OpenRouter's /auth page, and waits for its redirect back to a

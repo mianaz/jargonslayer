@@ -8,8 +8,7 @@ import Foundation
 // (`LocaleEquivalenceProviding`) wraps the one line that actually needs
 // live Speech.framework/macOS 26 (`SpeechTranscriber.supportedLocale(
 // equivalentTo:)`, spike-verified to map BCP-47 cleanly — zh-Hans->zh_CN,
-// en-US->en_US — s11-spike-findings-speechanalyzer.md's own "Locale
-// coverage" section), while the FALLBACK-CANDIDATE logic below is pure
+// en-US->en_US), while the FALLBACK-CANDIDATE logic below is pure
 // Foundation (no Speech import, no availability gate) and directly unit
 // tested with a fake provider.
 public protocol LocaleEquivalenceProviding {

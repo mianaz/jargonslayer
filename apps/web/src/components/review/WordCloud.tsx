@@ -52,7 +52,7 @@ function WordButton({
   onSelect: (label: string) => void;
 }) {
   const muted = word.count === 1;
-  // Color-by-kind rule (docs/DESIGN.md v3.1 lab-* label tokens): the
+  // Color-by-kind rule (lab-* label tokens): the
   // count=1 tier stays neutral mut (a one-off mention isn't worth
   // color-coding); everything above that is colored directly by kind —
   // expressions in lab-orange (the same hue as the transcript's
@@ -118,7 +118,7 @@ export default function WordCloud({
 
       <div className="mt-3">
         {loading ? (
-          // Static by law (DESIGN.md v3.9c) — no spinner text.
+          // Static by law — no spinner text.
           <div
             className="rounded-none border border-edge bg-panel p-4"
             aria-hidden="true"

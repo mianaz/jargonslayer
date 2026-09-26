@@ -1,7 +1,6 @@
 "use client";
 
-// S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
-// "engine picker stops being header tabs — becomes a DROPDOWN in the
+// S10 field-fix ("engine picker stops being header tabs — becomes a DROPDOWN in the
 // bottom StatusLine", her words: 与其作为tab，engine不如改成dropdown，且
 // 显示在下方状态栏) — engine option metadata + gating, extracted verbatim
 // out of Header.tsx's pre-S10 ENGINE_OPTIONS/EnginePillGroup/
@@ -14,8 +13,7 @@
 // appAudioLockReason from lib/desktop/audiocapCaps.ts underneath, same
 // as this module does.
 //
-// D7 desktop tabaudio replacement (docs/design-explorations/
-// s9-app-audio-tap-blueprint.md): tabaudio (getDisplayMedia) can only
+// D7 desktop tabaudio replacement: tabaudio (getDisplayMedia) can only
 // ever fail inside Tauri's WKWebView — there is no tab-share picker to
 // launch there — so desktop shows appaudio (a CoreAudio process tap,
 // S9) in its slot instead; the web build keeps tabaudio exactly as
@@ -84,9 +82,9 @@ import { applyPlatformEngineDefaults, applyTierDefaults } from "@/lib/store";
 // soniox is an unproven BYOK cloud engine (no local sidecar involved,
 // but not benchmark-cleared either) — same preview lock as sidecarOnly.
 //
-// v0.4.7 (stt-provider-wiring-2026-07.md, Lane A, D5/D6): this shape
-// stays exactly as it was — ENGINE_OPTIONS/engineOptionGate's own
-// consumers (Header/StatusLine) are untouched by that doc's lanes —
+// v0.4.7 (STT provider wiring, Lane A, D5/D6): this shape stays
+// exactly as it was — ENGINE_OPTIONS/engineOptionGate's own consumers
+// (Header/StatusLine) are untouched by that round's lanes —
 // but the arrays below are now PROJECTIONS of the new capability
 // contract (engineCapabilities.ts) instead of separately hand-authored
 // literals, so `label` has exactly one source across both.
@@ -126,8 +124,7 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   toEngineOption("webspeech"),
   toEngineOption("whisper"),
   IS_DESKTOP ? toEngineOption("appaudio") : toEngineOption("tabaudio"),
-  // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-
-  // blueprint.md §1 Feature 4 + §5 A4) — tab audio without the local
+  // v0.5 Wave-1 Feature 4 (A4) — tab audio without the local
   // sidecar, BYOK cloud backend instead (Soniox/Deepgram, see
   // Settings.tabAudioCloudProvider). Web-only for v0.5: desktop already
   // has sidecar+appaudio in this same slot, and store.ts's
@@ -136,7 +133,7 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   // (the IS_IOS branch below never reads ALL_ENGINE_OPTIONS at all, so
   // no separate iOS guard is needed here either).
   ...(!IS_DESKTOP ? [toEngineOption("tabaudio-cloud")] : []),
-  // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
+  // S11 (v0.4.3) —
   // Zero-Install 系统识别: desktop-only (macOS 26+ gated via
   // engineOptionGate below, not here — mirrors appaudio's own
   // macOS-14.4 floor gate). NOT sidecarOnly (it needs no local Whisper
@@ -144,8 +141,7 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   // structurally unaffected by the #61 preview-tier lock.
   ...(IS_DESKTOP ? [toEngineOption("osspeech")] : []),
   toEngineOption("soniox"),
-  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
-  // Lane D) — second BYOK cloud engine; on iOS it ships via
+  // v0.4.7 (Lane D) — second BYOK cloud engine; on iOS it ships via
   // IOS_ENGINE_OPTIONS below (iOS-cloud round — this array is never
   // read there); same byokOnly preview-tier lock as soniox above.
   toEngineOption("deepgram"),
@@ -155,7 +151,7 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   toEngineOption("elevenlabs"),
 ];
 
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §6, Lane D) drew
+// S13 (Lane D) drew
 // iOS v1 as mic-only, single native engine (osspeech). iOS-cloud round
 // (post-v0.6.0, Miana's direct call: 手机版显然应该允许云端) widens it:
 // the three BYOK cloud MIC engines join — their transports are
@@ -203,9 +199,8 @@ export const POSTURE_LABEL: Record<"local" | "cloud", string> = {
   cloud: "云端",
 };
 
-// v0.4.7 Lane C — tri-state privacy label (docs/design-explorations/
-// stt-provider-wiring-2026-07.md §4, D6: zh copy lives in apps/web,
-// packages/core carries zero zh strings). Upgrades the binary
+// v0.4.7 Lane C — tri-state privacy label (D6: zh copy lives in
+// apps/web, packages/core carries zero zh strings). Upgrades the binary
 // 本地/云端 chip: Soniox (cloud-transient, no-retention default) and a
 // future cloud-stored engine used to collapse into the same amber
 // "云端" — a privacy-positioned tool should never say that. `label` is
@@ -220,7 +215,7 @@ export const POSTURE_LABEL: Record<"local" | "cloud", string> = {
 // mip_opt_out=true, so no live engine occupies this row yet; the UI
 // must still be able to tell the truth the day one does). ITEM 6 fix
 // (fix round, Sol, LOW): cloud-stored's TEXT stays warn-soft, same as
-// cloud-transient — DESIGN.md rule 3 ("warn TEXT uses warn-soft; fills
+// cloud-transient — the design rule ("warn TEXT uses warn-soft; fills
 // use lab-red, small elements only") reserves lab-red for the escalated
 // BORDER, not the label color, so the stronger warning reads as a
 // bolder/redder outline around the same amber text rather than a
@@ -301,7 +296,7 @@ export interface EngineOptionGate {
  *  for the whole picker vs a per-<option> gate), same split the pre-S10
  *  components already had.
  *
- *  BYOK preview (docs/design-explorations/byok-preview-blueprint.md D3):
+ *  BYOK preview (D3):
  *  `byokOnly` no longer locks anything here — soniox/deepgram/
  *  tabaudio-cloud are all selectable exactly like full tier, a keyless
  *  pick just fails honestly at start (same unconditional-survival
@@ -358,8 +353,7 @@ export function useAudiocapCaps(): AudiocapCapabilities | null {
 }
 
 // ---------------------------------------------------------------
-// v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
-// v05-wave1-blueprint.md §1 Feature 5 + §5 A3/A4) — L8's own seam:
+// v0.5 Wave-1 Feature 5 (mode-first UI, A3/A4) — L8's own seam:
 // ModeSelector.tsx (components/) calls deriveEngineForMode on a tile
 // click to resolve WHICH engine a chosen mode should actually run, then
 // writes both `mode` and the derived `engine` together via
@@ -401,8 +395,7 @@ export interface DeriveEnginePlatform {
  *    disabled) degrades to a working mic default rather than a
  *    platform-nonsensical one; the sanitize pass below still runs.
  *  - "tab" (web only in the real tile set): tabaudio-cloud on preview
- *    UNCONDITIONALLY (docs/design-explorations/byok-preview-blueprint.md
- *    D3 — a first-class, always-derivable preview engine now, keyless
+ *    UNCONDITIONALLY (BYOK preview D3 — a first-class, always-derivable preview engine now, keyless
  *    picks just fail honestly at start; the local-sidecar tabaudio is
  *    never reachable on preview anyway, still sidecarOnly-locked). On
  *    full tier: A4's key-gated rule — tabaudio-cloud when Settings.
@@ -481,8 +474,7 @@ export function deriveEngineForMode(
         ? "osspeech" // unreachable via the real tile set (iOS has no system-audio mode)
         : "webspeech"; // unreachable via the real tile set (web has no system-audio capture)
   } else if (mode === "tab") {
-    // BYOK preview (docs/design-explorations/byok-preview-blueprint.md
-    // D3): tabaudio-cloud is reachable with NO key at all on preview —
+    // BYOK preview (D3): tabaudio-cloud is reachable with NO key at all on preview —
     // it is now a first-class, always-selectable preview engine (a
     // keyless pick just fails honestly at start, tabAudioCloud.ts's own
     // start(); the local-sidecar tabaudio is never reachable on preview
@@ -502,8 +494,7 @@ export function deriveEngineForMode(
         ? "tabaudio-cloud"
         : "tabaudio";
   } else if (mode === "dual") {
-    // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md):
-    // 麦克风+系统 is osspeech-exclusive — no other desktop engine can
+    // Dual capture v1: 麦克风+系统 is osspeech-exclusive — no other desktop engine can
     // capture both channels at once (unlike "system-audio" above, there
     // is no appaudio-style fallback to degrade to below the macOS-26
     // floor). isModeLegalForPlatform pins this mode desktop-only, so the
@@ -535,8 +526,7 @@ export function deriveEngineForMode(
       // mic-tile click); soniox/deepgram are respected only when their
       // OWN matching key exists (L8 review fix — the first draft's flat
       // hasCloudKey && compatible gate reset keyless whisper users to
-      // webspeech). BYOK preview (docs/design-explorations/byok-
-      // preview-blueprint.md D3): an already-selected soniox is ALSO
+      // webspeech). BYOK preview (D3): an already-selected soniox is ALSO
       // respected with no key at all on preview — it's a first-class,
       // selectable-even-keyless engine there now (a keyless pick just
       // fails honestly at start, same as full tier), so "no sonioxKey"
@@ -568,8 +558,7 @@ export function deriveEngineForMode(
       // here ran the output tap while the UI claimed mic capture,
       // producing all-zero audio (peak=0, finals=0).
       //
-      // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md)
-      // amends that rule SURGICALLY: osspeech now has a real
+      // Dual capture v1 amends that rule SURGICALLY: osspeech now has a real
       // AEC-processed mic producer, so a mic-tile click while osspeech
       // is ALREADY the current engine keeps it (retention, same
       // "deliberate choice must survive a mic-tile click" posture

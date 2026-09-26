@@ -1,7 +1,6 @@
 "use client";
 
-// S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
-// item #3 / Chunk C) — first-run onboarding step 1/2, mounted by
+// S10 field-fix (item #3 / Chunk C) — first-run onboarding step 1/2, mounted by
 // DesktopWizard.tsx's DesktopOnboardingSteps (see that export's own
 // header comment for the full mount/timing contract). Optional: 翻译/
 // 解释 needs an OpenRouter key, but skipping leaves Settings untouched

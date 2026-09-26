@@ -1,5 +1,4 @@
-// AnkiConnect connector (v0.5 Wave-1 Feature 9, docs/design-explorations/
-// v05-wave1-blueprint.md §1 Feature 9 + §5 A8). Localhost, no auth — POSTs
+// AnkiConnect connector (v0.5 Wave-1 Feature 9, A8). Localhost, no auth — POSTs
 // to a locally-running Anki + AnkiConnect add-on (default port 8765,
 // independently configurable because it collides with the local Whisper
 // sidecar's own ws://localhost:8765 default, see types.ts's ankiConnect

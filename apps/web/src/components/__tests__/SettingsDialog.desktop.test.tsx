@@ -989,8 +989,7 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
   });
 
   // ---------------------------------------------------------------
-  // Dual capture v1 (docs/design-explorations/dual-capture-2026-08.md)
-  // — the 转录引擎 系统识别 card's own persistence-exception pairing.
+  // Dual capture v1 — the 转录引擎 系统识别 card's own persistence-exception pairing.
   // ---------------------------------------------------------------
 
   it("系统识别 card: re-picking it while it's ALREADY the current engine keeps the existing mode (mic) on 保存 — dual capture v1 persistence exception", async () => {
@@ -1095,8 +1094,7 @@ describe("SettingsDialog (desktop) — 转录引擎 本地模型 card hint copy 
 });
 
 // ---------------------------------------------------------------
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Provision state machine, worker A3) — mlx-install task progress is
+// S12a (v0.4.4, provision state machine, worker A3) — mlx-install task progress is
 // DISPLAY-ONLY wiring here (see installingMlx's own doc comment in
 // SettingsDialog.tsx): worker A2's provisionMachine.ts/bootstrap.ts own
 // the actual "mlx-install" task emission (as part of a parakeet-family

@@ -5,7 +5,7 @@ import { withBase } from "@/lib/basePath";
 import { buildFoucScript } from "@/lib/theme/displayStorage";
 import { BUILTIN_THEMES } from "@/lib/theme/themes";
 
-// v3 主题基座:暗黑科技 · 会议 REPL (docs/DESIGN.md v3.2) — monospace is
+// v3 主题基座:暗黑科技 · 会议 REPL — monospace is
 // the brand identity: JetBrains Mono, self-hosted at build time (no
 // runtime external request) as --font-mono-brand. Retires v2's
 // brand-position-only Cinzel serif; the Cornell parchment artifact

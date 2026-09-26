@@ -1,5 +1,5 @@
-// S12a fix round (docs/design-explorations/s12-mlx-blueprint.md, §D,
-// F6) — the combined pre-Phase-1 disk check both adversarial reviewers
+// S12a fix round (§D, F6) —
+// the combined pre-Phase-1 disk check both adversarial reviewers
 // flagged as unbuilt (Sol6=Opus2, MED): before ensureMlxExtras (worker
 // A2) ever mutates the mlx venv (venv create -> pip install -> pip
 // check), it needs ONE honest "will this actually fit" precheck against

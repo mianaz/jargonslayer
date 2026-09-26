@@ -2,10 +2,9 @@
 
 // Personal dictionary panel: the cross-meeting home for user-curated
 // glossary entries (collected from cards, AI-defined via lookup, or
-// hand-added here). Matches CardsPanel chrome — see docs/DESIGN.md.
+// hand-added here). Matches CardsPanel chrome.
 //
-// v0.5 Wave-1 Feature 8 (named custom dictionary packs, docs/design-
-// explorations/v05-wave1-blueprint.md §1 F8 + §5 A7/A9): pack
+// v0.5 Wave-1 Feature 8 (named custom dictionary packs, A7/A9): pack
 // management (tabs, enable toggle, create/rename/delete) lives here,
 // NOT in SettingsDialog (A9's last sentence). Packs themselves are
 // glossary.ts's own registry (not zustand state) — this component

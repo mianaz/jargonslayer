@@ -1,5 +1,5 @@
-// S3 chunk 3 (docs/design-explorations/s3-tauri-uv-blueprint.md, §Chunk 3 +
-// §App-data layout) — the single source of truth for every path the
+// S3 chunk 3 (§Chunk 3 + §App-data layout) —
+// the single source of truth for every path the
 // provisioning/server-lifecycle commands touch. Every other command in this
 // crate re-derives its paths through `resolve_app_paths` rather than
 // accepting a path argument from its JS caller, so there is exactly one
@@ -17,7 +17,7 @@
 // `app_paths` are the thin Tauri-coupled wrapper that feeds it real paths
 // resolved through `app.path()`.
 //
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C R1) —
+// S12a (v0.4.4, §C R1) —
 // `mlx_venv_dir`/`mlx_venv_python`/`mlx_requirements_lock_path` are the
 // separate, hash-locked MLX venv's own paths (parakeet-mlx's isolated
 // venv, airtight from the base `venv_dir` above — §C R1's numba-conflict

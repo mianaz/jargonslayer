@@ -76,8 +76,7 @@ interface SpeechRecognition extends EventTarget {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
-  // On-device recognition (Chrome 139+ — docs/research/
-  // stt-live-engines-2026-07.md item #1; verified against MDN
+  // On-device recognition (Chrome 139+; verified against MDN
   // 2026-07). Settable before start(); true forces on-device-only
   // processing. Only ever set once this engine's own availability
   // check has confirmed a local model is ready for `lang` (see

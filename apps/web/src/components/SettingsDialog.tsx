@@ -245,8 +245,7 @@ const ALL_ENGINE_CARDS: {
     sidecarOnly: true,
     sidecarFamily: true,
   },
-  // v0.5 Wave-1 Feature 4 (tab audio without the sidecar, cloud path —
-  // docs/design-explorations/v05-wave1-blueprint.md §1 Feature 4 + §5
+  // v0.5 Wave-1 Feature 4 (tab audio without the sidecar, cloud path,
   // A4): web-only, same `!IS_DESKTOP` guard lib/stt/engineOptions.ts's
   // own ENGINE_OPTIONS entry uses (desktop already has sidecar+appaudio
   // in the slot above; store.ts's applyPlatformEngineDefaults coerces a
@@ -278,7 +277,7 @@ const ALL_ENGINE_CARDS: {
         },
       ]
     : []),
-  // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
+  // S11 (v0.4.3) —
   // Zero-Install 系统识别 (SpeechAnalyzer): NOT sidecarOnly (needs no
   // local Whisper sidecar at all — that's the whole point), so it's
   // structurally unaffected by the #61 preview-tier lock. Label matches
@@ -287,7 +286,7 @@ const ALL_ENGINE_CARDS: {
   // differently. Floor-gated below like appaudio's own macOS-14.4 floor
   // (isOsSpeechFloorLocked/osSpeechLockReason, macOS 26 via
   // os_speech_capabilities) — shown-but-disabled below the floor, never
-  // hidden. S13 (docs/design-explorations/s13-ios-blueprint.md, §6):
+  // hidden. S13:
   // IS_TAURI, not IS_DESKTOP — this engine also exists on iOS (same
   // invoke names, D2), where it's the ONLY card ENGINE_CARDS keeps (see
   // that const below).
@@ -303,8 +302,7 @@ const ALL_ENGINE_CARDS: {
           // both Tauri shells — the OS-version tail must name the right
           // platform (IS_IOS is a build-time const, so this folds).
           //
-          // Dual capture v1 (docs/design-explorations/dual-capture-2026-
-          // 08.md): desktop-only source clause, same "由「音源」决定"
+          // Dual capture v1: desktop-only source clause, same "由「音源」决定"
           // phrasing the 本地模型 card above already uses for its own
           // three-source axis — iOS osspeech stays mic-only v1
           // (unaffected), so its copy is untouched.
@@ -333,8 +331,7 @@ const ALL_ENGINE_CARDS: {
       : "BYOK 按量计费、音频经 Soniox 云端、中英混说场景的候选引擎（尚未通过本地对照测试）",
     byokOnly: true,
   },
-  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
-  // Lane D) — second cloud engine, same BYOK/byokOnly posture as soniox
+  // v0.4.7 (Lane D) — second cloud engine, same BYOK/byokOnly posture as soniox
   // above. Honest about scope: Nova-3's own `language=multi` mode has no
   // Chinese (doc §9 Lane D wire spec), so this is single-language
   // English-only in v0.4.7 — soniox stays the zh-en code-switching
@@ -1479,8 +1476,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const switchModelDone = useTasks(
     (s) => switchModelTaskId !== null && s.tasks[switchModelTaskId]?.status === "done",
   );
-  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-  // Provision state machine, worker A3) — display-only wiring for the
+  // S12a (v0.4.4, provision state machine, worker A3) — display-only wiring for the
   // "mlx-install" task kind (A2's provisionMachine.ts/bootstrap.ts own
   // its actual emission, as part of picking a parakeet-family model's
   // two-phase provision; see modelCatalog.ts's own mlxOnly doc). Unlike
@@ -3696,8 +3692,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
-            {/* Deepgram API Key (v0.4.7 Lane D, docs/design-explorations/
-               stt-provider-wiring-2026-07.md §5/§9): engine-conditional,
+            {/* Deepgram API Key (v0.4.7 Lane D): engine-conditional,
                mirrors the Soniox API Key block immediately above field-
                for-field (same hand-rolled masked-input pattern, same S14
                no-probe KeyStatusChip honesty, same BYOK-preview-sprint
@@ -4127,8 +4122,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </label>
             )}
 
-            {/* 设备端识别 (docs/research/stt-live-engines-2026-07.md
-               item #1): Chrome 139+ processLocally — recognition runs
+            {/* 设备端识别: Chrome 139+ processLocally — recognition runs
                on this machine instead of the browser vendor's cloud
                STT whenever the browser reports a local model available
                for 识别语言; automatic cloud fallback otherwise. Same row

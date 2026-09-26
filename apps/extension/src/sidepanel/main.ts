@@ -1,4 +1,4 @@
-// Side panel entry point — the Lite core loop (PLAN-v0.4 S6): paste
+// Side panel entry point — the Lite core loop (v0.4 S6): paste
 // English text -> @jargonslayer/core dictionary detection renders
 // cards -> optional on-device translation of the pasted text.
 //
@@ -513,7 +513,7 @@ listenBtn.addEventListener("click", () => {
 grantBtn.addEventListener("click", () => {
   // The ONLY place this controller's grant affordance actually opens
   // the permission tab — an explicit extra click, never automatic
-  // (blueprint §7's own copy: "点下面的按钮会打开一个页面…").
+  // (the UI copy says so: "点下面的按钮会打开一个页面…").
   void openPermissionPage();
 });
 

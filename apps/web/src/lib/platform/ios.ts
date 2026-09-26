@@ -1,8 +1,7 @@
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4, normative)
-// — iOS build-context flag, mirrors this directory's own desktop.ts
-// (IS_DESKTOP) shape exactly: a build-time NEXT_PUBLIC_IOS var (set only
-// for a BUILD_TARGET=ios build, see next.config.mjs's `env` block), not a
-// runtime `window.__TAURI_INTERNALS__` check — same tree-shake rationale
+// S13 (D4, normative) — iOS build-context flag, mirrors this directory's own
+// desktop.ts (IS_DESKTOP) shape exactly: a build-time NEXT_PUBLIC_IOS var
+// (set only for a BUILD_TARGET=ios build, see next.config.mjs's `env` block),
+// not a runtime `window.__TAURI_INTERNALS__` check — same tree-shake rationale
 // as IS_DESKTOP's own header comment (a build-time-inlinable literal lets
 // webpack/Terser tree-shake `@tauri-apps/*` imports out of an ordinary
 // web build entirely wherever this is statically false, instead of

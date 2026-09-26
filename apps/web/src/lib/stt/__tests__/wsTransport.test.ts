@@ -691,8 +691,7 @@ describe("WsTransport — protocol v2", () => {
   });
 
   // ---------------------------------------------------------------
-  // attachPcmFeed() / pushPcm() — D5 seam (S9.3, docs/design-
-  // explorations/s9-app-audio-tap-blueprint.md): appAudio.ts's
+  // attachPcmFeed() / pushPcm() — D5 seam (S9.3): appAudio.ts's
   // AppAudioEngine feeds already-downsampled PCM in from a Tauri
   // Channel instead of a browser AudioContext/worklet graph. pushPcm()
   // is the ONE guard path both feed sources go through — see

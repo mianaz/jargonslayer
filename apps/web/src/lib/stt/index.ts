@@ -21,12 +21,12 @@ export function createEngine(kind: STTEngineKind): STTEngine {
     case "tabaudio":
       return new TabAudioEngine();
     case "appaudio":
-      // S9 (docs/design-explorations/s9-app-audio-tap-blueprint.md) —
+      // S9 —
       // desktop-only native app/system audio capture. Still unreachable
       // from the UI until S9.4 adds the engine card/gating (D6/D7).
       return new AppAudioEngine();
     case "osspeech":
-      // S11 (docs/design-explorations/s11-osspeech-blueprint.md) —
+      // S11 —
       // desktop-only, macOS 26+ Zero-Install 系统识别. Still unreachable
       // from the UI until engineOptions.ts's gate + the caps probe
       // resolve it supported (see osspeechCaps.ts).
@@ -41,8 +41,7 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       // other engine.
       return new SonioxEngine();
     case "deepgram":
-      // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
-      // Lane D) — second BYOK cloud engine, same triple gate as soniox
+      // v0.4.7 (Lane D) — second BYOK cloud engine, same triple gate as soniox
       // above (ENGINE_CARDS/ENGINE_OPTIONS byokOnly + store.ts
       // applyTierDefaults coercion + key field disabled).
       return new DeepgramEngine();
@@ -53,8 +52,7 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       // disabled). No server-minted preview lane (BYOK only).
       return new ElevenLabsEngine();
     case "tabaudio-cloud":
-      // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-
-      // blueprint.md §1 Feature 4 + §5 A4) — getDisplayMedia capture
+      // v0.5 Wave-1 Feature 4 (A4) — getDisplayMedia capture
       // routed into a BYOK cloud transport (Soniox/Deepgram, see
       // Settings.tabAudioCloudProvider) instead of the local sidecar.
       // Live opt-in engine as of this lane: reachable via ENGINE_CARDS

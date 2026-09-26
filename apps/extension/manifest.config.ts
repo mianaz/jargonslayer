@@ -2,7 +2,7 @@ import { defineManifest } from "@crxjs/vite-plugin";
 
 import pkg from "./package.json";
 
-// MV3 manifest (PLAN-v0.4 S6, §1C decision): side panel is the whole
+// MV3 manifest (v0.4 S6): side panel is the whole
 // app; the service worker (src/background/service-worker.ts) is a
 // stateless coordinator that only sets the toolbar-click-opens-panel
 // behavior. No content scripts, no remote code execution — permissions

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// Render-perf regression test for the stt-vad-supervisor.md render
+// Render-perf regression test for the InterimLine/SegmentRow render
 // split: with a realistic transcript (~200 segments) and a non-empty
 // highlight matcher, one interim tick must re-commit InterimLine only
 // — SegmentRow's memo must hold, i.e. its render function must not be

@@ -1,8 +1,8 @@
 import CoreAudio
 import Foundation
 
-// S9.2 (docs/design-explorations/s9-app-audio-tap-blueprint.md, slice
-// S9.2) — the `--sweep-orphans` CLI mode's own implementation: startup
+// S9.2 (slice S9.2) —
+// the `--sweep-orphans` CLI mode's own implementation: startup
 // best-effort cleanup for aggregate devices this helper created in a
 // PREVIOUS run that never got torn down (risk register item 4 —
 // SIGKILL is uncatchable, so ShutdownSignal's stdin-EOF/SIGTERM path is

@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- S13 (docs/design-explorations/s13-ios-blueprint.md, §D5) — Tauri
+	<!-- S13 (§D5) — Tauri
 	     auto-searches Info.plist and Info.ios.plist in the config dir and
 	     merges them for the iOS build; this file supplies the two usage
 	     strings the mic-only 系统识别 native plugin (Lane B) needs.

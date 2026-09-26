@@ -64,24 +64,22 @@ const STEP_COUNT = 3;
 // of a hand-rolled binary 本地/云端 pair, so this first-run picker can
 // never disagree with what the app shows once a meeting starts.
 //
-// D7 desktop tabaudio replacement (docs/design-explorations/
-// s9-app-audio-tap-blueprint.md): tabaudio can only ever fail inside
+// D7 desktop tabaudio replacement: tabaudio can only ever fail inside
 // Tauri's WKWebView (no tab-share picker) — desktop shows appaudio (a
 // CoreAudio process tap, S9) in its slot instead; the web build keeps
 // tabaudio exactly as before (D7 pinned decision: browser behavior
 // stays byte-identical). IS_DESKTOP is a build-time const, resolved
 // once at module load.
 //
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §6 Sol F5): this
+// S13 (Sol F5): this
 // overlay mounts unconditionally from app/page.tsx (no IS_DESKTOP-style
 // wizard supersedes it on a Tauri shell — verified: it's iOS's own
 // first-run onboarding too), so IS_IOS branches FIRST to the one iOS v1
 // engine — osspeech, label byte-identical to engineOptions.ts's own
 // ENGINE_OPTIONS entry (Miana-veto #2).
 //
-// v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
-// v05-wave1-blueprint.md §1 Feature 5, L8 task spec: "speak intent/mode,
-// not engine names"): `label` copy only — reworded to lead with the
+// v0.5 Wave-1 Feature 5 (mode-first UI, L8 task spec: "speak
+// intent/mode, not engine names"): `label` copy only — reworded to lead with the
 // SAME mode nouns ModeSelector.tsx's own tiles use (麦克风/本机会议声音/
 // 浏览器标签页), dropping the one literal engine BRAND name this array
 // had ("本地 Whisper" -> "本地识别", mirroring its 系统识别/浏览器识别
@@ -90,7 +88,7 @@ const STEP_COUNT = 3;
 // own call sites — this step still writes settings.engine directly.
 // ---------------------------------------------------------------
 
-// BYOK preview (docs/design-explorations/byok-preview-blueprint.md D3):
+// BYOK preview (D3):
 // mirrors ModeSelector's own visibleModeTileKeys — the 浏览器标签页 card
 // is now UNCONDITIONALLY present on web (preview or full tier alike),
 // pointed at tabaudio-cloud on preview (a first-class, always-
@@ -176,8 +174,7 @@ const ENGINE_OPTIONS: {
         {
           value: "osspeech" as const,
           label: ENGINE_CAPABILITIES.osspeech.label,
-          // Dual capture v1 (docs/design-explorations/dual-capture-2026-
-          // 08.md): this card no longer only names 本机会议声音 (system-
+          // Dual capture v1: this card no longer only names 本机会议声音 (system-
           // audio) — osspeech now also does mic and mic+system, source
           // picked afterward via 音源/设置, same posture the desktop
           // ENGINE_CARDS osspeech card copy (SettingsDialog.tsx) uses.

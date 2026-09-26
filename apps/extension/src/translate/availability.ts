@@ -9,7 +9,7 @@
 // thin adapters next to this file (translator.ts / languageDetector.ts),
 // which are NOT unit tested (nothing to assert against outside a real
 // browser) and stay deliberately thin so this reducer carries the
-// actual logic (PLAN-v0.4 S6 requirement 4).
+// actual logic.
 
 export type CapabilityAvailability =
   | "unsupported" // the API global doesn't exist in this browser at all (pre-Chrome 138, or non-Chrome)

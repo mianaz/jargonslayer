@@ -1,8 +1,7 @@
 import XCTest
 @testable import AudioCapCore
 
-// S9 live-failure investigation (docs/design-explorations/
-// s9-app-audio-tap-blueprint.md) — direct tests of the pure byte-scan
+// S9 live-failure investigation — direct tests of the pure byte-scan
 // PeakMeter.swift's own header comment calls out as the testable core
 // (Writer's own peak/windowPeak bookkeeping around it has no injectable
 // stderr sink to assert against — same "verify the pure core directly,

@@ -1,5 +1,4 @@
-// S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md, slice
-// S9.1 deliverable list) — the CLOSED set of typed error codes this
+// S9.1 (slice S9.1 deliverable list) — the CLOSED set of typed error codes this
 // helper ever emits on stderr as `{"type":"error","code":"...",
 // "message":"..."}` (StatusEvents.emitError). Deliberately closed
 // (exactly the codes enumerated below — six from S9.1, F6's own

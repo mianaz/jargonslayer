@@ -1,5 +1,4 @@
-// v0.5 Wave-1 Feature 6 (configurable live-translation engines, docs/
-// design-explorations/v05-wave1-blueprint.md §1 Feature 6 + §5 A6,
+// v0.5 Wave-1 Feature 6 (configurable live-translation engines, A6,
 // normative). Two real TranslationProvider implementations, resolved
 // per Settings.translateEngine + platform, and injected into
 // TranslateQueue (queue.ts) — the queue itself never talks to
@@ -151,10 +150,9 @@ export class DeepLTranslationProvider implements TranslationProvider {
 // ALWAYS 200 here — errors ride the JSON body's errorCode instead (see
 // YOUDAO_NOKEY_CODES/YOUDAO_RATE_LIMIT_CODES below), unlike DeepL's
 // ordinary HTTP status codes. Not exposed on plain web (openapi.youdao.
-// com has no Access-Control-Allow-Origin on any probed Origin — see
-// docs/design-explorations/v071-translation-train2-blueprint.md's own
-// 有道 API contract section) — that carve-out is UI-side (
-// TranslationEngineRow.tsx's YOUDAO_WEB_DISABLED_REASON), not this
+// com has no Access-Control-Allow-Origin on any probed Origin) — that
+// carve-out is UI-side (TranslationEngineRow.tsx's
+// YOUDAO_WEB_DISABLED_REASON), not this
 // provider's job, same split DeepL's own CORS limit already uses.
 // ---------------------------------------------------------------
 
@@ -289,8 +287,7 @@ export class YoudaoTranslationProvider implements TranslationProvider {
 }
 
 // ---------------------------------------------------------------
-// Chrome Translator provider (web, on-device) — verified surface
-// (docs/design-explorations/v05-wave1-blueprint.md §1 Feature 6):
+// Chrome Translator provider (web, on-device) — verified surface:
 // `Translator.availability({sourceLanguage,targetLanguage})` ->
 // "unavailable"|"downloadable"|"downloading"|"available";
 // `Translator.create({sourceLanguage,targetLanguage})` resolves once

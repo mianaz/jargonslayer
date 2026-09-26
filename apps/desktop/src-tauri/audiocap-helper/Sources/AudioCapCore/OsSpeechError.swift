@@ -1,6 +1,6 @@
 import Speech
 
-// S11 (docs/design-explorations/s11-osspeech-blueprint.md, §2.2/§Q9) —
+// S11 (§2.2/§Q9) —
 // the transcribe-mode analog of AudioCapError: a CLOSED set of typed
 // error codes emitted as `{"type":"error","code":"...","message":"..."}`
 // on the SAME stderr NDJSON lane (TranscriptEvents.emitError, this

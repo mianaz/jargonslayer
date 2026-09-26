@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 //
-// v0.4.5 ambient AI-status surface (docs/design-explorations/
-// v045-ai-transparency-qc.md, Part A). createRoot/act pattern, no
+// v0.4.5 ambient AI-status surface. createRoot/act pattern, no
 // @testing-library/react in this repo's test stack (mirrors
 // StatusLine.test.tsx / SettingsDialog.test.tsx).
 

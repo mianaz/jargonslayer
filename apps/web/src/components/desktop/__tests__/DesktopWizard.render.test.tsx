@@ -35,8 +35,7 @@ vi.mock("@/lib/desktop/bootstrap", async (importOriginal) => {
   };
 });
 
-// S12b worker B2 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
-// §C L1) — the embedded <ModelPicker>'s own mlxOnly gating (worker A3,
+// S12b worker B2 (v0.4.4, L1) — the embedded <ModelPicker>'s own mlxOnly gating (worker A3,
 // ModelPicker.tsx) reads mlxCaps.ts's probeMlxCaps()/refreshMlxCaps()
 // directly, not through this file's own `paths`/callback props — this
 // suite doesn't otherwise touch mlxCaps.ts at all, so left UNMOCKED
@@ -257,8 +256,7 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(onBeginProvision).toHaveBeenCalledWith("large-v3");
   });
 
-  // S12b worker B2 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
-  // §C L1) — modelCatalog.ts's own parakeet stub is now `available:
+  // S12b worker B2 (v0.4.4, L1) — modelCatalog.ts's own parakeet stub is now `available:
   // true` (B2's flip), so the wizard step's own <ModelPicker> DOES
   // render its row unconditionally — the previous "never renders the
   // still-unavailable stub" contract this suite pinned pre-flip is

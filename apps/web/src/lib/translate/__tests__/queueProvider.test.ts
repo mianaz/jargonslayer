@@ -1,5 +1,4 @@
-// v0.5 Wave-1 Feature 6 (docs/design-explorations/v05-wave1-blueprint.md
-// §1 Feature 6 + §5 A6) — TranslateQueue's provider-injection seam and
+// v0.5 Wave-1 Feature 6 (A6) — TranslateQueue's provider-injection seam and
 // the new SystemTranslatorUnavailableError classification. queue.test.ts
 // already covers every batching/pause/retry behavior against a real
 // LlmTranslationProvider wrapping a mocked translateApi; this file is

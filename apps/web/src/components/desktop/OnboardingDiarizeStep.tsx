@@ -1,7 +1,6 @@
 "use client";
 
-// S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
-// item #3 / Chunk C) — first-run onboarding step 2/2, mounted by
+// S10 field-fix (item #3 / Chunk C) — first-run onboarding step 2/2, mounted by
 // DesktopWizard.tsx's DesktopOnboardingSteps. Optional: 说话人分离
 // (pyannote) needs a Hugging Face token with two models' terms
 // accepted; skipping leaves Settings untouched (see this file's own

@@ -1,4 +1,4 @@
-// Isomorphic "summarize" task (v0.4 S2, PLAN-v0.4 §1A/§4) — the
+// Isomorphic "summarize" task (v0.4 S2) — the
 // three-stage post-meeting report (summary + chunked/parallel
 // translation + missed-item sweep) + flashcard assembly, shared by
 // app/api/summarize/route.ts and lib/llm/client.ts's client-side path.

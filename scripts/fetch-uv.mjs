@@ -1,9 +1,9 @@
-// v0.4 S3 chunk 2 (docs/design-explorations/s3-tauri-uv-blueprint.md) —
+// v0.4 S3 chunk 2 —
 // downloads the pinned uv release binary Tauri bundles as a sidecar
 // (architecture decision 3: "uv = the ONLY provisioning tool"), and
 // writes it to apps/desktop/src-tauri/binaries/uv-<target-triple> —
 // the exact naming Tauri's `bundle.externalBin` requires (see that
-// config's own comment / docs/develop/sidecar.mdx: a configured
+// config's own comment / Tauri's sidecar guide: a configured
 // `"binaries/uv"` entry needs an actual file named `binaries/uv-
 // $TARGET_TRIPLE` on disk). binaries/ is gitignored — every machine
 // (dev or CI) runs this script for itself.
@@ -63,7 +63,7 @@ function log(msg) {
 }
 
 function targetTriple() {
-  // Matches the blueprint's own instruction ("triple via rustc -Vv") —
+  // Target triple via `rustc -Vv` —
   // portable across Rust versions (rustc 1.84+'s `--print host-tuple`
   // is more direct, but parsing `-Vv`'s `host:` line works everywhere).
   const out = execFileSync("rustc", ["-Vv"], { encoding: "utf8" });

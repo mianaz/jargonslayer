@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Plain-assert self-test for whisper_server.py's S4 model-download
-machinery (docs/design-explorations/s4-model-wizard-blueprint.md,
-decision B) — no pytest, no network, NO real model/snapshot download
+machinery (decision B) — no pytest, no network, NO real model/snapshot download
 anywhere in this file. Mirrors test_ingest_url.py's style/harness.
 
 Run:
@@ -59,8 +58,7 @@ Covers:
     via download_conflict_response's own shape (a thin handler
     assertion — see that section below for why a live handler isn't
     constructed here either)
-  - S12a (v0.4.4, MLX local-STT lane, docs/design-explorations/
-    s12-mlx-blueprint.md §C R1/Q6): MODEL_CHOICES/validate_download_
+  - S12a (v0.4.4, MLX local-STT lane, R1/Q6): MODEL_CHOICES/validate_download_
     model accept the new parakeet-tdt-0.6b-v3 entry; JobManager._run_
     download_job and run_download_only both thread their hf_token
     (--hf-token/$HF_TOKEN) into download_model_snapshot, which
@@ -688,7 +686,7 @@ finally:
 
 
 # =================================================================
-# hf_token threading (S12a Q6/F11, s12-mlx-blueprint.md §C R1) —
+# hf_token threading (S12a Q6/F11, R1) —
 # previously NEITHER JobManager._run_download_job NOR run_download_
 # only passed a token to download_model_snapshot at all (verified live
 # against this exact pre-S12a source before this chunk landed); both

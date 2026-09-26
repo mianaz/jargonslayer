@@ -1,7 +1,5 @@
 // Pure registry for the "更多能力" (more capabilities) section — the
-// greyed/locked rows S7 Decision D introduces (see the blueprint
-// docs/design-explorations/s7-extension-capture-blueprint.md, §2D and
-// §7's verbatim copy block). Adapts apps/web's `本地版功能` idiom
+// greyed/locked rows S7 Decision D introduces. Adapts apps/web's `本地版功能` idiom
 // (PreviewLockedBadge.tsx, deployTier.ts's "show everything, no dead
 // ends" posture) to Lite's own unlock ladder: a row unlocks in the web
 // app (`完整版`) or the desktop app (`桌面版`) — never "local", since

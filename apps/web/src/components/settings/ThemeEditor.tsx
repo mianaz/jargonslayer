@@ -49,8 +49,8 @@ import { downloadFile } from "@/lib/history/export";
 const PREVIEW_THEME_ID = `${CUSTOM_THEME_ID_PREFIX}preview`;
 const PREVIEW_DEBOUNCE_MS = 150;
 
-// One-line zh role hints per token, transcribed from docs/DESIGN.md
-// v3.1's color table (the canonical per-token role description) —
+// One-line zh role hints per token (the canonical per-token role
+// description) —
 // shown next to each row so a first-time editor doesn't have to guess
 // what e.g. "edge2" governs.
 const TOKEN_ROLE_HINTS: Record<ThemeTokenKey, string> = {
@@ -81,7 +81,7 @@ const PANEL_KEYS: readonly ThemeTokenKey[] = ["ink", "panel", "panel2", "panel3"
 
 // Which tokens get a hint row, and each one's own bar: 4.5:1 for every
 // token that's rendered AS TEXT somewhere (fg/mut/mut2/all lab-*/
-// warn-soft — DESIGN.md v3.1's own table), "act" included even though
+// warn-soft), "act" included even though
 // its REAL usage is a fill-with-ink-text-on-top (bg-act + text-ink,
 // see apply.ts's own comment on that pairing) — treated uniformly
 // "as text" here for a simpler mental model, not because that's its
