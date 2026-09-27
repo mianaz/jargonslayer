@@ -97,7 +97,7 @@ fn open_log_file_in_app_log_dir(app: &tauri::AppHandle, file_name: &str) -> Opti
     std::fs::OpenOptions::new().create(true).append(true).open(dir.join(file_name)).ok()
 }
 
-/// S9.1's own go/no-go spike rig (blueprint D2's spike gate): spawns
+/// S9.1's own go/no-go spike rig (D2's spike gate): spawns
 /// jargonslayer-audiocap for a few seconds so a PACKAGED build's TCC
 /// prompt attribution can be verified interactively with Miana against
 /// a real Developer-ID build (D2: "against a packaged Developer-ID
@@ -310,7 +310,7 @@ pub const PRIVACY_SETTINGS_FALLBACK_URL: &str =
 /// invocation itself errors (a failed spawn or a nonzero exit status —
 /// `open` can't tell us whether the URL scheme actually resolved to a
 /// real pane, only whether it handed the request to LaunchServices at
-/// all). Both legs are best-effort/uncontracted (blueprint D6: "deep
+/// all). Both legs are best-effort/uncontracted (D6: "deep
 /// links are uncontracted") and this never reports failure back to the
 /// JS caller — SettingsDialog's own manual-path text (系统设置 → 隐私与
 /// 安全性 → 屏幕与系统音频录制) stays visible beside the button regardless
@@ -961,7 +961,7 @@ pub fn stop_app_audio(app: tauri::AppHandle, state: tauri::State<'_, AudiocapSta
     // send SIGKILL.
     drop(child);
 
-    // Grace-then-SIGKILL fallback (blueprint: "SIGTERM-then-SIGKILL
+    // Grace-then-SIGKILL fallback ("SIGTERM-then-SIGKILL
     // grace"). Dropping `child` above already consumed the only
     // CommandChild::kill() this session will ever have, so the fallback
     // reaches the process directly via its pid instead (force_kill_pid)

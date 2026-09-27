@@ -396,7 +396,7 @@ function EngineDropdown() {
   );
 }
 
-// v0.4.5 AI-status chip (owner ruling on the design doc's Q3: a fuller
+// v0.4.5 AI-status chip (owner ruling on Q3: a fuller
 // "检测 · luna ✓" label over a single worst-state dot — status bar is
 // tight, but she picked legibility). shortModelName strips a
 // "vendor/model" OpenRouter-style slug down to its model half (the
@@ -1060,7 +1060,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
     }
   }, [isListening, livenessArmed, livenessVerdicts, livenessNoticeTick, showToast]);
 
-  // v0.4.7 Lane C (tri-state privacy label, doc §4/§9 D5-D7): posture's
+  // v0.4.7 Lane C (tri-state privacy label, D5-D7): posture's
   // richer replacement. resolveEngineRetentionClass (lib/stt/
   // engineOptions.ts) is the ONE shared place StatusLine and Header's
   // EnginePostureChip both resolve this, so the two surfaces can never

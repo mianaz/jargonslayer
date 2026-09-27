@@ -8,7 +8,7 @@
 // listeners only (a different mechanism from the macOS global
 // app.emit/listen path) — so iOS subscribes via
 // getAddPluginListener()("os-speech", "transcript"|"status", cb)
-// instead. Sol-verified (§6 D2): addPluginListener delivers the RAW
+// instead. Sol-verified (D2): addPluginListener delivers the RAW
 // payload, not a {payload}-wrapped Event like listen() does — the wrap
 // happens HERE so every consumer (osSpeech.ts x2, osspeechCaps.ts's own
 // preinstallOsSpeech x1 — F2) keeps reading `event.payload` regardless
@@ -22,7 +22,7 @@ import { IS_IOS } from "../platform/ios";
 import { getAddPluginListener, getListen, type UnlistenFn } from "../desktop/tauriApi";
 import type { OsSpeechAudioStatsPayload, OsSpeechStatusPayload, OsSpeechTranscriptPayload } from "./osSpeech";
 
-// §2: iOS plugin name, pinned.
+// iOS plugin name, pinned.
 const OS_SPEECH_PLUGIN = "os-speech";
 
 async function listenOsSpeech<T>(

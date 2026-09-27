@@ -25,8 +25,8 @@
 // diarize_model/mip_opt_out; KeepAlive {"type":"KeepAlive"}/CloseStream
 // {"type":"CloseStream"}; Results response shape); docs/
 // using-the-sec-websocket-protocol (auth: `new WebSocket(url,
-// ["token", apiKey])` — the literal "token" first-protocol-element the
-// blueprint's own D-record pins); docs/audio-keep-alive (10s idle
+// ["token", apiKey])` — the literal "token" first-protocol-element is
+// pinned); docs/audio-keep-alive (10s idle
 // timeout, NET-0001, send KeepAlive every 3-5s as a TEXT frame);
 // docs/keyterm (keyterm= repeated singular param, 500-token aggregate
 // cap, Nova-3-only, plain terms no weight syntax); docs/diarization
@@ -260,7 +260,7 @@ const KEYTERM_TOKEN_CAP = 500;
 
 /** Deepgram's own documented limit: 500 tokens max, AGGREGATE, across
  *  every keyterm in one request (exceeding it is a hard rejection of the
- *  whole request, not a per-term drop) — doc §9 D1/Sol F11. No live
+ *  whole request, not a per-term drop) — D1/Sol F11. No live
  *  caller passes keyterms yet (see BuildDeepgramUrlOpts.keyterms's own
  *  doc comment) — this cap exists so a future caller can't accidentally
  *  blow the request up.
@@ -286,7 +286,7 @@ export function capKeyterms(terms: string[]): string[] {
 }
 
 export interface BuildDeepgramUrlOpts {
-  /** Extension point for Lane B's shared 术语偏置 toggle (doc §9 D1) —
+  /** Extension point for Lane B's shared 术语偏置 toggle (D1) —
    *  Deepgram's keyterm prompting is a billed add-on (+$0.0013/min,
    *  ≈+27% on streaming — Sol F1), so THIS adapter must never turn it on
    *  by itself: the actual setting field is foundation-owned and not yet
@@ -295,7 +295,7 @@ export interface BuildDeepgramUrlOpts {
    *  resolved+capped lexicon here once that setting lands — this
    *  function's own capKeyterms still re-caps defensively either way. */
   keyterms?: string[];
-  /** Deepgram-scoped diarization knob (doc §9 D2) — deliberately NOT the
+  /** Deepgram-scoped diarization knob (D2) — deliberately NOT the
    *  shared realtimeDiarize setting (that implies free/local
    *  pyannote+hfToken today and mutates canPause's post-stop linger;
    *  overloading it here would be a billing surprise AND a pause
@@ -316,7 +316,7 @@ export interface BuildDeepgramUrlOpts {
  *  `language=multi` excludes Chinese, so there is no code-switching mode
  *  to opt into here — v0.4.7 Deepgram is honestly single-language
  *  English-only (Soniox keeps the zh-en story). mip_opt_out is sent
- *  UNCONDITIONALLY (doc §9 D7) — this is what makes this integration
+ *  UNCONDITIONALLY (D7) — this is what makes this integration
  *  honestly cloud-transient rather than cloud-stored. */
 export function buildDeepgramUrl(settings: Settings, opts: BuildDeepgramUrlOpts = {}): string {
   const params = new URLSearchParams({
@@ -345,7 +345,7 @@ export interface DeepgramTransportCallbacks {
   events: STTEvents;
   settings: Settings;
   /** BYOK -> temp-token boundary (mirrors SonioxTransportCallbacks'
-   *  identical seam, doc §6): v0.4.7 sends the real key directly —
+   *  identical seam): v0.4.7 sends the real key directly —
    *  default identity. A future hosted-preview/extension caller drops in
    *  a real scoped-token mint here without this shape changing. */
   mintToken?: (key: string) => Promise<string>;
@@ -460,8 +460,8 @@ export class DeepgramTransport {
       // The literal "token" first-protocol-element is Deepgram's own
       // documented browser-auth mechanism (developers.deepgram.com/docs/
       // using-the-sec-websocket-protocol) — a first-message JSON config
-      // the way Soniox does it does NOT authenticate here (doc §9,
-      // Sol F12).
+      // the way Soniox does it does NOT authenticate here (Sol
+      // F12).
       ws = new WebSocket(url, ["token", apiKey]);
     } catch {
       this.emitError(DEEPGRAM_CONNECT_ERROR);

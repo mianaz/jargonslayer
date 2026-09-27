@@ -1,4 +1,4 @@
-// S13 (§2 pinned wire contract, Lane B) — the shapes crossing the Rust<->Swift
+// S13 (pinned wire contract, Lane B) — the shapes crossing the Rust<->Swift
 // `run_mobile_plugin` boundary. Defined ONCE here (not duplicated in the
 // app crate's osspeech_ios.rs) and re-exported via lib.rs's `pub use
 // models::*`, mirroring the tauri-apps geolocation plugin's own
@@ -6,8 +6,8 @@
 //
 // Field-exact against macOS's own osspeech.rs (that file's own
 // `OsSpeechCapabilities`/`start_os_speech` signature) and the TS types
-// (apps/web/src/lib/desktop/osspeechCaps.ts / stt/osSpeech.ts) — see the
-// blueprint's §6 F1 amendment: `reason` is required-nullable (no
+// (apps/web/src/lib/desktop/osspeechCaps.ts / stt/osSpeech.ts) — per the
+// F1 amendment: `reason` is required-nullable (no
 // `skip_serializing_if`, so `None` still serializes as an explicit
 // `null`) and `contextual_json` is always-present-nullable
 // (`Option<String>`, never `#[serde(default)]`-omittable on the JS side
@@ -37,7 +37,7 @@ pub struct PreinstallArgs {
 /// deserializes Swift's JSON response into it (needs `Deserialize`).
 /// `reason`/`Option<String>` with NO `skip_serializing_if` is exactly
 /// what makes a `None` serialize as `"reason":null` rather than omit the
-/// key — required by the pinned contract (§6 F1).
+/// key — required by the pinned contract (F1).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OsSpeechCapabilities {
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn start_args_none_contextual_json_stays_an_explicit_null() {
-        // §6 F1 posture (same as capabilities.reason below): no
+        // F1 posture (same as capabilities.reason below): no
         // skip_serializing_if anywhere in this file — Swift's Decodable
         // side always sees the key.
         let v = serde_json::to_value(StartArgs {
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn capabilities_reason_none_serializes_as_explicit_null() {
-        // The pinned §6 F1 amendment: `reason` is required-nullable. JS
+        // The pinned F1 amendment: `reason` is required-nullable. JS
         // reads `caps.reason === null` — an omitted key would change
         // `undefined`-vs-`null` semantics silently.
         let v = serde_json::to_value(OsSpeechCapabilities {

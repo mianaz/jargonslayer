@@ -249,7 +249,7 @@ jobs:
       # DISK IMAGE itself is left un-notarized. That is fine on a machine
       # that can reach Apple, but a user who is offline or rate-limited
       # gets a Gatekeeper prompt on the download. The owner's manual
-      # release does this step by hand (ROADMAP "Now" §2); encoding it is
+      # release does this step by hand; encoding it is
       # the whole point of automating the train. sha256 must be taken AFTER
       # stapling, because stapling rewrites the file.
       - name: notarize + staple the dmg

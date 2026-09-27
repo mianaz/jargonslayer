@@ -1,5 +1,5 @@
 // Pure session accumulator over @jargonslayer/core's dictionary
-// detection + merge pipeline (S7 blueprint §2 decision B). Mirrors
+// detection + merge pipeline (S7 decision B). Mirrors
 // apps/web/src/lib/stt/upload.ts's runDetectionPipeline
 // dictionary-fallback branch exactly (scanDictionary -> mergeDetections,
 // source "dictionary") but dictionary-only — Lite v1 has no LLM/BYOK

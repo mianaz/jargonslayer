@@ -34,7 +34,7 @@ export function createEngine(kind: STTEngineKind): STTEngine {
     case "demo":
       return new DemoEngine();
     case "soniox":
-      // v0.4 S4 chunk 5 (blueprint decision E) — BYOK cloud engine, no
+      // v0.4 S4 chunk 5 (decision E) — BYOK cloud engine, no
       // local sidecar. Live opt-in engine: reachable via ENGINE_CARDS
       // (SettingsDialog.tsx) and ENGINE_OPTIONS (engineOptions.ts,
       // byokOnly-gated), same preview-tier coercion path as every

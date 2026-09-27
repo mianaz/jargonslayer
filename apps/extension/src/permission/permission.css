@@ -1,5 +1,5 @@
 /* Minimal terminal-flavored styling for the mic first-grant page (S7
-   blueprint §2 Decision A / chunk 3) — deliberately its OWN small
+   Decision A / chunk 3) — deliberately its OWN small
    stylesheet rather than a <link> to ../sidepanel/panel.css: that
    file belongs to a different S7 chunk (Chunk 6) and this page must
    stay fully self-contained, with no cross-chunk file coupling.

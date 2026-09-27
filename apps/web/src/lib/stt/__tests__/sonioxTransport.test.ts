@@ -1,4 +1,4 @@
-// Soniox transport (v0.4 S4 chunk 5, blueprint decision E): config
+// Soniox transport (v0.4 S4 chunk 5, decision E): config
 // builder purity, the token->interim/final mapper, and the transport's
 // stop-drain/error-frame wire sequencing against a mocked WebSocket +
 // minimal AudioContext/AudioWorkletNode graph (reusing wsTransport.
@@ -59,8 +59,8 @@ describe("buildSonioxConfig", () => {
     expect(config.model).toBe("stt-rt-v5");
     // MUST be "pcm_s16le", not "s16le" — soniox.com/docs/stt/rt/
     // real-time-transcription's raw-audio audio_format values are
-    // pcm_s8/s16/s24/s32 with le/be suffixes; "s16le" (the blueprint's
-    // own wrong anchor) gets every real session rejected at config (S4
+    // pcm_s8/s16/s24/s32 with le/be suffixes; "s16le" (the originally
+    // planned, wrong value) gets every real session rejected at config (S4
     // review finding 1, re-verified 2026-07-12). Pinned as an exact
     // literal — not `.toContain`/a regex — so this can't silently
     // regress back to the wrong anchor.
@@ -84,7 +84,7 @@ describe("buildSonioxConfig", () => {
   });
 
   // ---------------------------------------------------------------
-  // v0.4.7 Lane B (glossary -> recognizer bias, D8/doc §3): context.
+  // v0.4.7 Lane B (glossary -> recognizer bias, D8): context.
   // terms ONLY (no translation_terms/general/text yet).
   // ---------------------------------------------------------------
 
@@ -600,7 +600,7 @@ describe("SonioxTransport", () => {
       "Hello world",
       expect.objectContaining({ speaker: "1" }),
     );
-    // Soniox diarization is field-only in v0.4 (blueprint decision E)
+    // Soniox diarization is field-only in v0.4 (decision E)
     // — onSpeakerUpdate must never be wired up.
     expect(onSpeakerUpdate).not.toHaveBeenCalled();
   });

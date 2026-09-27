@@ -97,7 +97,7 @@ function wireFakes(): { emit: (event: "transcript" | "status", payload: unknown)
   return { emit: (event, payload) => emit("os-speech", event, payload) };
 }
 
-describe("OsSpeechEngine — iOS status copy (S13 §6 Sol F7)", () => {
+describe("OsSpeechEngine — iOS status copy (S13 Sol F7)", () => {
   it('permission-denied on iOS directs to 设置 → 隐私与安全性 → 麦克风 (NOT the macOS 屏幕与系统音频录制 pane)', async () => {
     const { emit } = wireFakes();
     const engine = new OsSpeechEngine();

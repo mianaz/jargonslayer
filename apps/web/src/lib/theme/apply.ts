@@ -115,7 +115,7 @@ export function applyTheme(themeId: string, tokens: ThemeTokens, scheme: ThemeSc
   // (darkenHex, ×0.55). Since this setProperty call is inline style, it
   // wins over globals.css's rule for terminal-light too — its derived
   // pair (from lab-green #137038) is only an "acceptable drift" cousin
-  // of that CSS-authored #15803d/#86b598 (blueprint D7), not identical;
+  // of that CSS-authored #15803d/#86b598 (D7), not identical;
   // the CSS rule itself is left in place as the pre-hydration/no-JS
   // fallback, same relationship every other token has with globals.css.
   root.style.setProperty("--bit-phos", tokens["lab-green"]);

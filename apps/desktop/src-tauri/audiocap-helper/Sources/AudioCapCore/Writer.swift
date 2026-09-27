@@ -34,7 +34,7 @@ public final class Writer {
     // Interleaved-f32 bytes accumulated since the last stdout flush, and
     // how many frames that represents — flushed as one Framing.encodeChunk
     // record once the accumulator reaches ~20ms of audio (the middle of
-    // the spec's "target ~10-50ms of audio per chunk") or maxFlushLatency
+    // the ~10-50ms-per-chunk target) or maxFlushLatency
     // has elapsed since the last flush, whichever comes first (the
     // latter bounds latency if the source is trickling in slowly).
     private var accumulated: [UInt8] = []

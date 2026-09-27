@@ -234,7 +234,7 @@ describe("SpeakerAssignPopover", () => {
     expect(useApp.getState().segments.find((s) => s.id === "s1")?.speaker).toBe("Alice");
   });
 
-  it("roster list is the union of the manual roster + unique displayed segment speakers (§5 A2)", async () => {
+  it("roster list is the union of the manual roster + unique displayed segment speakers (A2)", async () => {
     useApp.setState({
       segments: [seg({ id: "s1", speaker: "Diarized Name" }), seg({ id: "s2" })],
       speakerRoster: ["Alice"],

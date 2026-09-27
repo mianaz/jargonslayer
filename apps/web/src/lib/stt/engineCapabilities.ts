@@ -6,7 +6,7 @@
 // (glossary -> recognizer bias) reads `biasSupport`, Lane C (tri-state
 // privacy label) reads `retentionClass`, Lane D (Deepgram adapter)
 // adds a new row. `label` is the single source that kills the S13
-// blueprint's veto-#2 drift risk (three surfaces used to hand-author
+// veto-#2 drift risk (three surfaces used to hand-author
 // the SAME zh engine name separately — see engineOptions.ts's own
 // ALL_ENGINE_OPTIONS/IOS_ENGINE_OPTIONS, now projected off this table).
 //
@@ -33,9 +33,8 @@
 // truth for a given session — three axes need a runtime overlay the
 // table alone can't capture (Sol F7): webspeech's retentionClass
 // (resolveWebspeechRetentionClass below — STTEvents.onEngineMode,
-// types.ts:118, reports which mode a session actually ran in; doc §1
-// footnote 1's "assume cloud unless enforced" is this table's static
-// default), whisper's biasSupport (spans faster-whisper AND Parakeet —
+// types.ts:118, reports which mode a session actually ran in; "assume
+// cloud unless enforced" is this table's static default), whisper's biasSupport (spans faster-whisper AND Parakeet —
 // resolves per ACTIVE MODEL, i.e. Settings.whisperModel, not per kind;
 // Lane B's job), and a future opt-out-gated cloud engine's
 // retentionClass (Deepgram: D7 resolves this in advance — we send
@@ -123,7 +122,7 @@ export function derivePosture(retentionClass: RetentionClass): "local" | "cloud"
  *  once per engine session with the mode it actually ran in (Chrome
  *  139+ `processLocally` on-device recognition vs the cloud fallback).
  *  Resolves the table's cloud-transient DEFAULT ("assume cloud unless
- *  enforced", doc §1 footnote 1) down to `local` for that one session;
+ *  enforced") down to `local` for that one session;
  *  a structural no-op otherwise (StatusLine already renders this same
  *  override today via its own posture computation — this is the same
  *  resolution rule, named and testable, for anything Lane C wires to
@@ -147,7 +146,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     label: "浏览器识别",
     family: "system-service",
     retentionClass: "cloud-transient",
-    biasSupport: "none", // honest no-op (doc §3: "webspeech lands in the none bucket honestly")
+    biasSupport: "none", // honest no-op: webspeech lands in the none bucket honestly
   },
   whisper: {
     kind: "whisper",
@@ -190,7 +189,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     family: "system-service",
     retentionClass: "local",
     // SpeechAnalyzer's AnalysisContext.contextualStrings — S11's Q11
-    // (doc §3, Sol F16). The migration off osSpeech.ts's direct store
+    // (Sol F16). The migration off osSpeech.ts's direct store
     // read landed in v0.4.7 Lane B: osSpeech.ts:249 now projects the
     // injected lexicon through the shared builder, and there is no
     // store read left in that file. Either way it never changed this
@@ -202,7 +201,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     kind: "soniox",
     label: "Soniox 云端识别",
     family: "third-party-provider",
-    retentionClass: "cloud-transient", // no-retention default, per Soniox's own docs (doc §4)
+    retentionClass: "cloud-transient", // no-retention default, per Soniox's own docs
     biasSupport: "context",
     byokOnly: true,
     keyField: "sonioxKey",
@@ -216,9 +215,8 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     label: "Deepgram 云端识别",
     family: "third-party-provider",
     // mip_opt_out sent UNCONDITIONALLY (D7) — this is what makes the
-    // integration honestly cloud-transient rather than cloud-stored (the
-    // doc's own §5 flagged this as a self-contradiction until D7
-    // resolved it).
+    // integration honestly cloud-transient rather than cloud-stored (this
+    // was a self-contradiction until D7 resolved it).
     retentionClass: "cloud-transient",
     biasSupport: "keyterms", // D1: paid add-on, opt-in only — see deepgramTransport.ts
     byokOnly: true,
@@ -268,7 +266,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
 };
 
 // ---------------------------------------------------------------
-// A4 provider-aware capability overlay (v05-wave1-blueprint.md §5 A4):
+// A4 provider-aware capability overlay:
 // the tabaudio-cloud analogue of resolveWebspeechRetentionClass above.
 // Lives here (not lib/stt/tabAudioCloud.ts) so engineOptions.ts/a future
 // StatusLine consumer can resolve it without importing the engine

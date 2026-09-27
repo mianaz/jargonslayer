@@ -73,7 +73,7 @@ describe("ENGINE_OPTIONS (web build, ambient test env)", () => {
 // directly here since no ENGINE_OPTIONS entry can reach it through
 // StatusLine/Header's own rendering path.
 describe("RETENTION_COPY — tri-state label+hint table", () => {
-  it("all three states carry a non-empty label/hint and the green/amber/red color idiom, doc §4 wording verbatim", () => {
+  it("all three states carry a non-empty label/hint and the green/amber/red color idiom, pinned wording verbatim", () => {
     expect(RETENTION_COPY.local).toEqual({
       label: "本地",
       hint: "本地处理 · 音频不出设备",

@@ -1,4 +1,4 @@
-// Soniox cloud STT transport (v0.4 S4, blueprint decision E): the SAME
+// Soniox cloud STT transport (v0.4 S4, decision E): the SAME
 // AudioWorklet downsampling (16kHz mono int16 PCM) wsTransport.ts uses
 // — reusing /worklets/pcm-processor.js verbatim — piped over a
 // WebSocket straight to Soniox's real-time endpoint instead of the
@@ -9,14 +9,13 @@
 // differs: Soniox's token-stream wire shape (SonioxTokenMapper below)
 // instead of whisper_server.py's partial/final messages, BYOK auth
 // instead of a local sidecar, and no diarization/pause support in
-// v0.4 (blueprint decision E / risk register).
+// v0.4 (decision E).
 //
 // Wire protocol verified against soniox.com/docs/stt/api-reference/
 // websocket-api, soniox.com/docs/stt/rt/endpoint-detection, and
-// soniox.com/docs/stt/rt/real-time-transcription (2026-07-12,
-// alongside the blueprint's own anchors — the real-time-transcription
-// page is what caught the blueprint's own audio_format anchor being
-// wrong; see buildSonioxConfig below): the first message is JSON
+// soniox.com/docs/stt/rt/real-time-transcription (2026-07-12;
+// the real-time-transcription page is what caught the originally
+// planned audio_format value being wrong; see buildSonioxConfig below): the first message is JSON
 // config (api_key/model/audio_format/sample_rate/num_channels/
 // language_hints/enable_endpoint_detection); audio frames are binary
 // s16 little-endian PCM; responses carry `tokens:[{text,start_ms,
@@ -40,8 +39,7 @@ const SONIOX_MODEL = "stt-rt-v5";
 
 // Mirrors wsTransport.ts's STOP_DRAIN_TIMEOUT_MS (name + value) —
 // deliberately NOT imported from it (sonioxTransport.ts is its own
-// module per the blueprint's "do not refactor wsTransport"
-// constraint). Same rationale: a server that never acks the drain
+// module by design: wsTransport is deliberately left unrefactored). Same rationale: a server that never acks the drain
 // (crashed, or an old/hung endpoint) must not hang the UI's End button
 // forever (risk register item 3).
 const STOP_DRAIN_TIMEOUT_MS = 8000;
@@ -60,7 +58,7 @@ const SONIOX_CONNECT_ERROR =
 
 // ---------------------------------------------------------------
 // Token mapping (pure, unit-testable, no DOM/WebSocket references —
-// blueprint decision E). Soniox's own accumulation model (verified
+// decision E). Soniox's own accumulation model (verified
 // against the real-time-transcription doc): each message's `tokens`
 // array holds ONLY newly-seen tokens, not the full transcript so far.
 // Final tokens are sent exactly once and never repeated — accumulate
@@ -118,7 +116,7 @@ export interface SonioxMappedFinal {
 export interface SonioxIngestResult {
   /** Whatever's been finalized but hasn't crossed its own "<end>" yet
    *  (oldest first) PLUS the current non-final tail, "" -joined
-   *  (blueprint decision E's leading-whitespace-is-in-the-token-text
+   *  (decision E's leading-whitespace-is-in-the-token-text
    *  rule applies across this join too) — fully replacing whatever the
    *  last ingest() call returned (never a partial update), mirroring
    *  wsTransport's own "always forward the latest partial" contract.
@@ -208,7 +206,7 @@ export class SonioxTokenMapper {
 }
 
 // ---------------------------------------------------------------
-// Config builder (pure, exported — blueprint decision E)
+// Config builder (pure, exported — decision E)
 // ---------------------------------------------------------------
 
 export interface SonioxConfigMessage {
@@ -221,7 +219,7 @@ export interface SonioxConfigMessage {
   num_channels: number;
   language_hints: string[];
   enable_endpoint_detection: boolean;
-  // v0.4.7 Lane B (glossary -> recognizer bias, doc §3): `terms` ONLY —
+  // v0.4.7 Lane B (glossary -> recognizer bias): `terms` ONLY —
   // no translation_terms/general/text yet (out of scope). Omitted
   // entirely (not sent as an empty object) when the lexicon has
   // nothing to contribute — see buildSonioxConfig below.
@@ -229,7 +227,7 @@ export interface SonioxConfigMessage {
 }
 
 export interface BuildSonioxConfigOpts {
-  /** BYOK -> temp-key boundary (blueprint decision E): v0.4 desktop
+  /** BYOK -> temp-key boundary (decision E): v0.4 desktop
    *  sends the real key directly — default identity. The hosted preview
    *  lane (SONIOX_PREVIEW_LANE, stt/soniox.ts's SonioxEngine.start) is
    *  the first real caller that drops in an actual mint here — this
@@ -255,7 +253,7 @@ export async function buildSonioxConfig(
     model: SONIOX_MODEL,
     // MUST be "pcm_s16le" — soniox.com/docs/stt/rt/real-time-
     // transcription's raw-audio audio_format values are pcm_s8/s16/
-    // s24/s32 with le/be suffixes; the blueprint's own anchor of
+    // s24/s32 with le/be suffixes; the originally planned value
     // "s16le" (no "pcm_" prefix) gets every real session rejected at
     // config (S4 review finding 1, re-verified 2026-07-12).
     audio_format: "pcm_s16le",
@@ -264,7 +262,7 @@ export async function buildSonioxConfig(
     language_hints: buildLanguageHints(settings.language),
     enable_endpoint_detection: true,
     // No enable_speaker_diarization — v0.4 defers diarization entirely
-    // (blueprint decision E); adding the flag later is a one-line
+    // (decision E); adding the flag later is a one-line
     // change here, not a shape change.
   };
   // v0.4.7 Lane B: D1 default-on is unconditional for this mechanism
@@ -383,7 +381,7 @@ export interface SonioxTransportCallbacks {
  *  session; call `stop()` exactly once to tear everything down. No
  *  reconnect-on-drop (unlike WsTransport): an unexpected mid-session
  *  close surfaces onStatus("error") once rather than silently retrying
- *  against a paid BYOK endpoint — the S4 blueprint scopes Soniox as
+ *  against a paid BYOK endpoint — S4 scopes Soniox as
  *  opt-in experimental, not a drop-in whisper/tabaudio replacement. */
 export class SonioxTransport {
   private events: STTEvents;

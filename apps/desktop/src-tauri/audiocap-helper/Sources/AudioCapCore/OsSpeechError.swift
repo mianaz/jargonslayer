@@ -1,6 +1,6 @@
 import Speech
 
-// S11 (§2.2/§Q9) —
+// S11 (Q9) —
 // the transcribe-mode analog of AudioCapError: a CLOSED set of typed
 // error codes emitted as `{"type":"error","code":"...","message":"..."}`
 // on the SAME stderr NDJSON lane (TranscriptEvents.emitError, this
@@ -12,8 +12,8 @@ import Speech
 // unrelated-to-capture code showing up there would be exactly the kind
 // of silent breakage AudioCapError's own header comment warns against.
 // Tap-level failures (permission-denied/device-changed/unsupported-os)
-// still ride AudioCapError UNCHANGED on the transcribe path (blueprint
-// §2.2's "Reused unchanged" list) — this enum is only for the
+// still ride AudioCapError UNCHANGED on the transcribe path (reused
+// unchanged by design) — this enum is only for the
 // Speech-framework-specific failure modes that have no AudioCapError
 // analog.
 @available(macOS 26.0, *)
@@ -78,7 +78,7 @@ public enum OsSpeechError: Error {
         }
     }
 
-    /// Maps a caught `SFSpeechError` to this taxonomy per §Q9's own
+    /// Maps a caught `SFSpeechError` to this taxonomy per Q9's own
     /// grouping (see each case's own doc comment above for the exact
     /// code lists) — the fallback `.engineFailure` covers every OTHER
     /// SFSpeechError code (e.g. `.internalServiceError`,

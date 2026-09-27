@@ -250,7 +250,7 @@ describe("decideAction — table-driven policy coverage", () => {
 });
 
 describe("decideAction — constant sanity (documents the accepted design's values)", () => {
-  it("matches the accepted design doc's constants", () => {
+  it("matches the accepted constants", () => {
     expect(SESSION_ROTATE_SOFT_MS).toBe(35_000);
     expect(SESSION_ROTATE_HARD_MS).toBe(55_000);
     expect(ROTATE_PAUSE_MS).toBe(700);

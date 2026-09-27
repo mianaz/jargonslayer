@@ -1,13 +1,12 @@
 // Zero-Install 系统识别 engine (S11): desktop-only, macOS 26+ on-device
 // transcription via Apple's SpeechAnalyzer, riding the SAME CoreAudio
 // process tap appaudio.ts already taps (jargonslayer-audiocap's new
-// "transcribe" mode — byte-identical capture path up to the ring, see
-// the blueprint's §0). Unlike appaudio, NO PCM ever reaches this
+// "transcribe" mode — byte-identical capture path up to the ring). Unlike appaudio, NO PCM ever reaches this
 // process: the helper converts+feeds SpeechAnalyzer itself and emits
 // already-transcribed text over the stderr NDJSON lane, which the Rust
 // side (osspeech.rs) re-emits as two PARALLEL Tauri events —
 // "osspeech://transcript" and "osspeech://status" — a CLOSED set
-// distinct from appaudio's own "audiocap://status" (§2.5: zero
+// distinct from appaudio's own "audiocap://status" (zero
 // contamination of that closed set). No WsTransport, no websocket, no
 // local Whisper sidecar of any kind.
 //
@@ -15,7 +14,7 @@
 // module in this app that imports it), same contract appAudio.ts
 // already established — this file imports zero Tauri itself.
 //
-// Wire contract (PINNED — §2.4/§2.5/§2.6 of the blueprint):
+// Wire contract (PINNED):
 //   invoke("start_os_speech", { locale, contextualJson, source? })
 //   invoke("stop_os_speech")                 — idempotent
 //   invoke("pause_os_speech")/("resume_os_speech") — idempotent, no-arg
@@ -133,7 +132,7 @@ export interface OsSpeechTranscriptPayload {
   channel?: "mic" | "system";
 }
 
-// §2.5 TERMINAL kinds — the helper is gone (or never going to start)
+// TERMINAL kinds — the helper is gone (or never going to start)
 // once any of these arrives. Exported so osspeechCaps.ts's
 // preinstallOsSpeech() can settle its own Promise on the SAME closed
 // set without hand-duplicating it (single source of truth, mirrors
@@ -150,7 +149,7 @@ export const OSSPEECH_TERMINAL_STATUS_KINDS = new Set<OsSpeechStatusKind>([
 ]);
 
 // Bounds stop()'s wait for the helper's own "ended" status — identical
-// idiom/value to appAudio.ts's own STOP_ENDED_TIMEOUT_MS (§2.7: Rust's
+// idiom/value to appAudio.ts's own STOP_ENDED_TIMEOUT_MS (Rust's
 // STOP_GRACE_PERIOD, 3s, must stay shorter than this 4s JS-side wait —
 // see that file's own doc comment for the full invariant).
 const STOP_ENDED_TIMEOUT_MS = 4000;
@@ -208,7 +207,7 @@ export class OsSpeechEngine implements STTEngine {
   private stopEndedResolve: (() => void) | null = null;
   private stopEndedTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Per-session asset task-row driver (§2.6 asset-downloading/
+  // Per-session asset task-row driver (asset-downloading/
   // asset-installed/asset-failed) — a FRESH tracker every start(), never
   // reused across sessions (a reused tracker would attach a later
   // session's downloading/installed/failed events onto an EARLIER
@@ -217,7 +216,7 @@ export class OsSpeechEngine implements STTEngine {
   private assetCheckingNoticeShown = false;
   private assetDownloadingNoticeShown = false;
 
-  // Recorded at "capturing" (§2.6). Two consumers: (1) the silent-
+  // Recorded at "capturing". Two consumers: (1) the silent-
   // session hint in handleStatus reads its non-null-ness as "capture
   // actually started" (a session abandoned during asset download must
   // not get mic-steering copy); (2) NOT onFinal timing — A3
@@ -397,7 +396,7 @@ export class OsSpeechEngine implements STTEngine {
     if (!events) return;
 
     // Deliberately NOT gated on `this.stopping` — mirrors appAudio.ts's
-    // own handleChannelMessage: the helper's drain/flush tail (§2.7)
+    // own handleChannelMessage: the helper's drain/flush tail
     // still emits its remaining finals right up until "ended", and
     // those must still reach the transcript exactly like appaudio's own
     // PCM drain tail still reaches the ws during its own stop wait.
@@ -470,7 +469,7 @@ export class OsSpeechEngine implements STTEngine {
       // "ended" reached mid-download, incl. the user's own stop() —
       // latched unconditionally above, same as helperTerminated) must
       // not leave an asset row stuck "running" forever — e.g. a row this
-      // session ADOPTED from a preempted preinstall (§J2b) never gets
+      // session ADOPTED from a preempted preinstall (J2b) never gets
       // its own asset-installed/asset-failed if the session itself ends
       // first. "asset-failed" is excluded: its own switch case below
       // already settles the row with the REAL failure message; calling
@@ -555,7 +554,7 @@ export class OsSpeechEngine implements STTEngine {
         }
         break;
       case "asset-installed":
-        // No status transition of our own (§2.6) — completeTask only.
+        // No status transition of our own — completeTask only.
         this.assetTracker?.handle("asset-installed");
         break;
       case "asset-failed":
@@ -570,7 +569,7 @@ export class OsSpeechEngine implements STTEngine {
         events.onStatus("listening");
         break;
       case "permission-denied":
-        // F7 (S13 blueprint §6): iOS has no 屏幕与系统音频录制 pane at
+        // F7 (S13): iOS has no 屏幕与系统音频录制 pane at
         // all — mic permission lives at 设置 → 隐私与安全性 → 麦克风
         // instead. macOS copy stays byte-identical.
         events.onStatus(
@@ -622,7 +621,7 @@ export class OsSpeechEngine implements STTEngine {
     });
   }
 
-  /** Soft pause: gates entirely in the HELPER (blueprint Q3 — a
+  /** Soft pause: gates entirely in the HELPER (Q3 — a
    *  stdin-command channel the Rust side writes "pause\n"/"resume\n"
    *  into), since no PCM of any kind ever reaches this process to gate
    *  locally the way appAudio.ts's transport.pauseFeed() does. No-op if
@@ -653,7 +652,7 @@ export class OsSpeechEngine implements STTEngine {
   /** Stop ordering (mirrors appAudio.ts's stop() exactly, minus the
    *  transport drain — there is none here): mark stopping -> invoke
    *  stop_os_speech (helper's own drain/flush tail still emits its
-   *  remaining finals over the transcript lane, per §2.7) -> wait for
+   *  remaining finals over the transcript lane) -> wait for
    *  its "ended" status or STOP_ENDED_TIMEOUT_MS, whichever first ->
    *  unlisten both lanes. Safe to call twice — only the first call has
    *  effect. */

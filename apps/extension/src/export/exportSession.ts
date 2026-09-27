@@ -1,4 +1,4 @@
-// Pure LiteSession export helpers (S7 blueprint §2 decision C) —
+// Pure LiteSession export helpers (S7 decision C) —
 // Markdown + JSON serialization only. Mirrors apps/web's
 // lib/history/export.ts house style (buildMarkdownReport /
 // buildObsidianFrontmatter / buildSessionJson) as a sensible SUBSET:

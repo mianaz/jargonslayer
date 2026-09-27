@@ -186,7 +186,7 @@ describe("writeSecret", () => {
   });
 });
 
-// The blueprint's own load-bearing migration matrix (a)-(d).
+// The load-bearing migration matrix (a)-(d).
 describe("hydrateSecrets — migration + custody", () => {
   it("(a) plaintext IDB + empty keychain: copies up, custody set, migratedAndClean true", async () => {
     const fake = makeFakeKeychain();

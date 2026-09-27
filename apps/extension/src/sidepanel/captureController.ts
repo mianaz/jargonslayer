@@ -1,5 +1,5 @@
 // Binds a live STT engine's event stream to the panel's UI (S7
-// blueprint §4 data flow) — the seam blueprint Decision A calls out as
+// data flow) — the seam Decision A calls out as
 // the ONE thing an eventual offscreen-document pivot would need to
 // swap (everything downstream — accumulator, transcript, history —
 // stays byte-identical either way). Deliberately DOM-free: every side
@@ -10,7 +10,7 @@
 // no jsdom, no real Chrome/Web Speech globals required.
 //
 // Ownership note: this file never calls micPermission.openPermissionPage()
-// itself — the panel-side "需要麦克风权限" affordance (blueprint §7) is
+// itself — the panel-side "需要麦克风权限" affordance is
 // gated behind an EXPLICIT extra click ("点下面的按钮会打开一个页面"),
 // which main.ts wires directly to openPermissionPage(). This controller
 // only ever decides WHEN that affordance should be shown (onGrantNeeded)
@@ -65,8 +65,8 @@ export interface CaptureControllerCallbacks {
    *  line. Fires once per engine session. */
   onPrivacyMode: (mode: "on-device" | "cloud") => void;
   /** The mic isn't usable yet — proactively (permission state
-   *  resolved to "open-grant-page" or "denied-guidance"; blueprint §7
-   *  gives no separate panel copy for an explicit prior denial, so
+   *  resolved to "open-grant-page" or "denied-guidance"; there is
+   *  no separate panel copy for an explicit prior denial, so
    *  both funnel into the same 需要麦克风权限 affordance here) or
    *  reactively (the engine's own not-allowed/service-not-allowed
    *  error mid-session). Show that affordance; its own button is what
@@ -81,7 +81,7 @@ export interface CaptureControllerCallbacks {
 export interface CaptureControllerOptions {
   callbacks: CaptureControllerCallbacks;
   /** Defaults to a real WebSpeechEngine. The offscreen-pivot seam
-   *  (blueprint Decision A) and the test harness's scripted fake
+   *  (Decision A) and the test harness's scripted fake
    *  engine both go through here — captureController never
    *  constructs WebSpeechEngine directly outside this default. */
   createEngine?: () => STTEngine;
@@ -89,7 +89,7 @@ export interface CaptureControllerOptions {
   queryMicPermission?: typeof queryMicPermission;
   decideMicPermissionAction?: typeof decideMicPermissionAction;
   /** Real default below typeof-checks window.SpeechRecognition /
-   *  webkitSpeechRecognition (blueprint §2-A: verify at runtime, never
+   *  webkitSpeechRecognition (Decision A: verify at runtime, never
    *  assert). Injectable because vitest's node environment has no
    *  `window` at all — tests targeting the SUPPORTED-browser paths
    *  override this rather than faking a DOM global just to get past
@@ -122,7 +122,7 @@ function defaultDetectSpeechRecognitionSupport(): boolean {
   return typeof w.SpeechRecognition === "function" || typeof w.webkitSpeechRecognition === "function";
 }
 
-/** ~40 chars per the blueprint's title rule; already-trimmed input. */
+/** ~40-char title cap; already-trimmed input. */
 function truncateTitle(text: string): string {
   return text.length > 40 ? `${text.slice(0, 40)}…` : text;
 }
@@ -323,7 +323,7 @@ export class CaptureController {
     // Prefer the engine's utterance-start stamp over receipt time —
     // exports render elapsed times from these, and receipt time would
     // shift every line late by its own utterance length (lead
-    // amendment over blueprint §4's literal `Date.now()`).
+    // amendment over a literal `Date.now()`).
     this.segments.push({ text, startedAt: startedAt ?? Date.now() });
     // A final always retires whatever interim line preceded it — the
     // finalized segment just took its place on screen.

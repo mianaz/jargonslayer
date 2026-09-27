@@ -1,12 +1,11 @@
 import Foundation
 
-// S11 (§Q2/§1) — pure throttle deciding whether a given transcript
+// S11 (Q2) — pure throttle deciding whether a given transcript
 // result is actually worth an NDJSON emission. Spike measured ~4.6
-// volatile results/s with per-token bursts (s11-spike-findings-
-// speechanalyzer.md's own "Streaming pipeline" section) — emitting every
+// volatile results/s with per-token bursts — emitting every
 // single one would flood the stderr NDJSON lane for no UI benefit (each
 // volatile is the FULL current-range progressive text, so only the
-// latest one before a repaint matters). Rule (§Q2): a volatile is
+// latest one before a repaint matters). Rule (Q2): a volatile is
 // emitted at most every 150ms OR whenever the result's time range
 // advances (start or end moved) — whichever comes first; a FINAL always
 // bypasses the throttle entirely (finals are rare — spike: one every few

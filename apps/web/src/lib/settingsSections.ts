@@ -3,8 +3,8 @@
 // truth for which sections/rows are simple-visible vs advanced-only,
 // so the completeness test and SettingsDialog's JSX can never drift
 // apart (SettingsDialog imports SETTINGS_UI_LEVELS directly, never a
-// hand-copied literal). Mechanical, zero-logic-move refactor per the
-// v0.3.0 plan §4 — this file only decides VISIBILITY, it never moves
+// hand-copied literal). Mechanical, zero-logic-move refactor (v0.3.0)
+// — this file only decides VISIBILITY, it never moves
 // state handling.
 
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
@@ -76,7 +76,7 @@ function hasEnabledTaskLlm(settings: Settings): boolean {
  *  every mount and force-promotes uiMode:"simple" → "advanced" when
  *  true, so nothing a user configured is ever silently hidden from
  *  them. No stored flag, no migration — the same settings blob always
- *  produces the same answer (see v0.3.0 plan §4 point 5). */
+ *  produces the same answer. */
 /** True when any per-task LLM override carries its own apiKey — even
  *  with enabled:false the secret is real stored material the Keys
  *  section surfaces; promoting still reveals the advanced 分任务模型

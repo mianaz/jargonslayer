@@ -140,7 +140,7 @@ describe("runEffects — CHECKING (probeHealth + readMarker -> CHECK_RESULT)", (
 // verbatim by provisionRunner.ts's probeMlxUsable, writes into that
 // SAME shared cache) so these tests stay isolated from each other and
 // from mlxCaps.test.ts's own suite.
-// S12a fix round (§D F2, HIGH) — probeMlxUsable's own 4-state result
+// S12a fix round (F2, HIGH) — probeMlxUsable's own 4-state result
 // (usable | unsupported | invalid-venv | probe-error), including the
 // "retry the failed probe once" contract. RED-VERIFICATION EVIDENCE for
 // F2 (see this task's own PR report): the old code collapsed a genuine
@@ -156,7 +156,7 @@ describe("runEffects — CHECKING (probeHealth + readMarker -> CHECK_RESULT)", (
 // !caps.mlxSupported ? false : ...` (bare boolean, no retry, no status
 // distinction) makes it fail, because BOTH conditions would then
 // collapse to `mlxUsable:false`.
-describe("runEffects — CHECKING's conditional mlx-usability probe (F14, redesigned §D F2)", () => {
+describe("runEffects — CHECKING's conditional mlx-usability probe (F14, redesigned F2)", () => {
   beforeEach(() => resetMlxCapsCache());
   afterEach(() => resetMlxCapsCache());
 
@@ -208,7 +208,7 @@ describe("runEffects — CHECKING's conditional mlx-usability probe (F14, redesi
     expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker", "mlx_capabilities", "mlx_import_preflight"]);
   });
 
-  it("§D F2 case (a): mlx_capabilities RESOLVED {mlxSupported:false} -> {status:'unsupported', reason}, and mlx_import_preflight is never even called (hardware fails fast, no retry — a resolved answer, even a negative one, is trusted immediately)", async () => {
+  it("F2 case (a): mlx_capabilities RESOLVED {mlxSupported:false} -> {status:'unsupported', reason}, and mlx_import_preflight is never even called (hardware fails fast, no retry — a resolved answer, even a negative one, is trusted immediately)", async () => {
     const { invoke, calls } = makeFakeInvoke({
       read_provision_marker: () => parakeetMarkerJson,
       mlx_capabilities: () => ({ mlxSupported: false, reason: "需要 Apple 芯片（M 系列）" }),
@@ -220,7 +220,7 @@ describe("runEffects — CHECKING's conditional mlx-usability probe (F14, redesi
     expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker", "mlx_capabilities"]); // exactly once, no retry
   });
 
-  it("§D F2 case (a) with no reason from the probe falls back to the standard zh copy", async () => {
+  it("F2 case (a) with no reason from the probe falls back to the standard zh copy", async () => {
     const { invoke } = makeFakeInvoke({
       read_provision_marker: () => parakeetMarkerJson,
       mlx_capabilities: () => ({ mlxSupported: false, reason: null }),
@@ -233,7 +233,7 @@ describe("runEffects — CHECKING's conditional mlx-usability probe (F14, redesi
     });
   });
 
-  it("§D F2 case (b): mlx_capabilities OK but mlx_import_preflight RESOLVED {ok:false} -> {status:'invalid-venv'}, no retry (a resolved ok:false is trusted immediately)", async () => {
+  it("F2 case (b): mlx_capabilities OK but mlx_import_preflight RESOLVED {ok:false} -> {status:'invalid-venv'}, no retry (a resolved ok:false is trusted immediately)", async () => {
     const { invoke, calls } = makeFakeInvoke({
       read_provision_marker: () => parakeetMarkerJson,
       mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
@@ -246,7 +246,7 @@ describe("runEffects — CHECKING's conditional mlx-usability probe (F14, redesi
     expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker", "mlx_capabilities", "mlx_import_preflight"]); // exactly once
   });
 
-  it("§D F2 case (c): mlx_import_preflight invoke() REJECTS TWICE (surviving the internal retry) -> {status:'probe-error', message} using '无法检测' wording — RED-VERIFIED against the OLD boolean behavior below", async () => {
+  it("F2 case (c): mlx_import_preflight invoke() REJECTS TWICE (surviving the internal retry) -> {status:'probe-error', message} using '无法检测' wording — RED-VERIFIED against the OLD boolean behavior below", async () => {
     let preflightCalls = 0;
     const { invoke, calls } = makeFakeInvoke({
       read_provision_marker: () => parakeetMarkerJson,
@@ -262,7 +262,7 @@ describe("runEffects — CHECKING's conditional mlx-usability probe (F14, redesi
     expect(event).toMatchObject({
       mlxUsability: { status: "probe-error", message: "无法检测 MLX 运行环境状态，请重试" },
     });
-    expect(preflightCalls).toBe(2); // one retry, per §D F2's own "retry the failed probe once"
+    expect(preflightCalls).toBe(2); // one retry, per F2's own "retry the failed probe once"
     expect(calls.map((c) => c.cmd)).toEqual([
       "read_provision_marker",
       "mlx_capabilities",
@@ -289,7 +289,7 @@ describe("runEffects — CHECKING's conditional mlx-usability probe (F14, redesi
     expect(preflightCalls).toBe(2);
   });
 
-  it("§D F2 case (c): mlx_capabilities invoke() REJECTS TWICE -> {status:'probe-error'} using '无法检测' wording, mlx_import_preflight is NEVER called at all (we don't even know if hardware is usable)", async () => {
+  it("F2 case (c): mlx_capabilities invoke() REJECTS TWICE -> {status:'probe-error'} using '无法检测' wording, mlx_import_preflight is NEVER called at all (we don't even know if hardware is usable)", async () => {
     let capsCalls = 0;
     const { invoke, calls } = makeFakeInvoke({
       read_provision_marker: () => parakeetMarkerJson,
@@ -325,7 +325,7 @@ describe("runEffects — CHECKING's conditional mlx-usability probe (F14, redesi
     expect(capsCalls).toBe(2);
   });
 
-  // §D F2's own RED-VERIFICATION: proves the fix actually changed
+  // F2's own RED-VERIFICATION: proves the fix actually changed
   // behavior relative to the OLD code, not just relative to what the
   // new tests happen to assert. The OLD probeMlxUsable was:
   //   const caps = await probeMlxCapabilitiesWith(deps.invoke);
@@ -577,7 +577,7 @@ describe("runEffects — prewarmModel (DOWNLOAD_MODEL)", () => {
   });
 
   // S12a (v0.4.4, Q6 HF-token) — RunnerDeps.readHfToken's own passthrough.
-  describe("hfToken passthrough (§C Q6)", () => {
+  describe("hfToken passthrough (Q6)", () => {
     it("readHfToken returning a non-empty token adds hfToken to the invoke payload, trimmed", async () => {
       const { invoke, calls } = makeFakeInvoke({ prewarm_model: () => ({ code: 0 }) });
       const { listen } = makeFakeListen();
@@ -723,7 +723,7 @@ describe("runEffects — startServer (STARTING), with and without a bundled writ
 
   // S12a (v0.4.4, Q6 HF-token) — RunnerDeps.readHfToken's own passthrough,
   // mirrors the prewarmModel describe block's own coverage above.
-  describe("hfToken passthrough (§C Q6)", () => {
+  describe("hfToken passthrough (Q6)", () => {
     it("readHfToken returning a non-empty token adds hfToken to the invoke payload, trimmed", async () => {
       const { invoke, calls } = makeFakeInvoke({ start_server: () => ({ alreadyRunning: false }) });
       const { listen } = makeFakeListen();

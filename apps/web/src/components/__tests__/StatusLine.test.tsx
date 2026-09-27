@@ -1084,8 +1084,7 @@ describe("StatusLine — engine dropdown", () => {
 });
 
 // ---------------------------------------------------------------
-// v0.4.5 AI-status chip (design doc v045-ai-transparency-qc.md Part A,
-// owner ruling on Q3: a fuller "检测 · luna ✓" label over a single
+// v0.4.5 AI-status chip (owner ruling on Q3: a fuller "检测 · luna ✓" label over a single
 // worst-state dot). Always shows the detect agent's resolved model
 // short-name + a health glyph; clicking opens the popover hosting the
 // full 4-row AiStatusPanel (that panel's own coverage — dot colors,

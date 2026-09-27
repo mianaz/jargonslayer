@@ -11,14 +11,14 @@
 // 跳过 is styled with the SAME bg-act weight DesktopWizard's own
 // primary actions use (e.g. ConsentScreen's 开始安装) — a deliberate
 // INVERSION of that screen's own primary/secondary weighting: this
-// step's "prominent, zero-friction default" is explicitly skip (per
-// the blueprint), not the token entry, so skip gets the accent
+// step's "prominent, zero-friction default" is explicitly skip, not
+// the token entry, so skip gets the accent
 // treatment and 保存并继续 stays a plain secondary button.
 //
 // Every external link here goes through openExternal (S10 Chunk A),
 // never a plain <a target="_blank"> — this component only ever mounts
 // on desktop (DesktopWizard.tsx), where external nav dies inside the
-// Tauri WKWebView (see the blueprint's item #2 triage).
+// Tauri WKWebView (field item #2).
 
 import { useState } from "react";
 import { useApp } from "@/lib/store";

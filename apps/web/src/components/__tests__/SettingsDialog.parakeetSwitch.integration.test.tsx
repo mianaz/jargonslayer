@@ -4,7 +4,7 @@
 // together: a user, on Apple-Silicon-supported caps, opens Settings'
 // 转录引擎 更换模型 picker, selects the REAL parakeet-tdt-0.6b-v3 row
 // (modelCatalog.ts's own B2 flip, unmocked here), clicks 下载并切换, and
-// the FULL two-phase provision (§C R1/Provision) fires in the exact
+// the FULL two-phase provision (R1) fires in the exact
 // pinned order — all the way down to Rust's invoke() boundary and the
 // sidecar's own HTTP job API, nothing short-circuited.
 //
@@ -218,7 +218,7 @@ function stubSidecarHttp(order: string[]): ReturnType<typeof vi.fn> {
  *  `read_provision_marker`/`write_provision_marker` are STATEFUL (a
  *  mutable `currentMarker` closed over below, seeded to the pre-switch
  *  `existingMarkerJson`) rather than each independently hardcoded —
- *  §F FB8-refresh's own test needs a write to actually change what a
+ *  FB8-refresh's own test needs a write to actually change what a
  *  LATER read returns, the same way a real marker file would, to prove
  *  the dialog's own re-fetch (not just an extra invoke call) picks up
  *  the genuinely NEW installed model. */
@@ -245,7 +245,7 @@ function mlxHandlers(overrides: Record<string, (args?: Record<string, unknown>) 
     stop_server: () => undefined,
     start_server: (args?: Record<string, unknown>) => {
       expect(args?.model).toBe("parakeet-tdt-0.6b-v3");
-      // Q6/§3.5's hfToken threading — hfTokenArg(deps) spreads `hfToken`
+      // Q6's hfToken threading — hfTokenArg(deps) spreads `hfToken`
       // onto THIS call specifically (postDownloadModel's own POST body
       // carries none — see the accepted-asymmetry assertion below).
       expect(args?.hfToken).toBe(harness.hfToken);
@@ -255,7 +255,7 @@ function mlxHandlers(overrides: Record<string, (args?: Record<string, unknown>) 
   };
 }
 
-describe("SettingsDialog (desktop) — parakeet switch, end to end through the REAL model picker (§C L1/§E, worker B2)", () => {
+describe("SettingsDialog (desktop) — parakeet switch, end to end through the REAL model picker (L1, worker B2)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
   let order: string[] = [];
@@ -339,7 +339,7 @@ describe("SettingsDialog (desktop) — parakeet switch, end to end through the R
     await flushUntil(() => modelDownloadTask()?.status === "done" || modelDownloadTask()?.status === "error");
     expect(modelDownloadTask()?.status).toBe("done"); // fails loudly (task.error) if the flow actually errored
 
-    // §F FB8-refresh: switchModelDone (keyed off this SAME task settling
+    // FB8-refresh: switchModelDone (keyed off this SAME task settling
     // "done") re-runs the 当前模型 effect — a TRAILING read_provision_
     // marker, past start_server, is that refresh actually firing. Waited
     // for explicitly (order's own length is otherwise racy against the
@@ -347,7 +347,7 @@ describe("SettingsDialog (desktop) — parakeet switch, end to end through the R
     await flushUntil(() => order[order.length - 1] === "read_provision_marker" && order.length > 14);
 
     // CROSS-LANE NOTE: the LEADING "read_provision_marker" below is
-    // §F FB8's OWN A2-lane half (isAlreadyInstalledAndValid's
+    // FB8's OWN A2-lane half (isAlreadyInstalledAndValid's
     // same-target no-op check, bootstrap.ts — landed concurrently with
     // this B2 lane's own work, in the SAME shared worktree, while this
     // test was being written; this file uses bootstrap.ts's REAL,
@@ -372,10 +372,10 @@ describe("SettingsDialog (desktop) — parakeet switch, end to end through the R
       "write_provision_marker",
       "stop_server",
       "start_server",
-      "read_provision_marker", // §F FB8-refresh's own re-fetch, triggered by switchModelDone (this B2 lane's own half of FB8)
+      "read_provision_marker", // FB8-refresh's own re-fetch, triggered by switchModelDone (this B2 lane's own half of FB8)
     ]);
 
-    // §F FB8-refresh's own product contract: the picker's 当前模型 line
+    // FB8-refresh's own product contract: the picker's 当前模型 line
     // reflects the NEW installed model WITHOUT closing/reopening the
     // dialog — this is what actually proves the refresh (not just an
     // extra invoke call): mlxHandlers' own stateful marker now returns
@@ -383,7 +383,7 @@ describe("SettingsDialog (desktop) — parakeet switch, end to end through the R
     await flushUntil(() => container!.textContent?.includes("当前模型：parakeet-tdt-0.6b-v3") ?? false);
 
     // hfToken threads through the switch's own start_server call —
-    // Q6/§3.5's pinned contract (postDownloadModel's own accepted
+    // Q6's pinned contract (postDownloadModel's own accepted
     // asymmetry means the /download-model POST body carries none, only
     // start_server does — see bootstrap.ts's own doc comment on that
     // accepted limitation).
@@ -430,7 +430,7 @@ describe("SettingsDialog (desktop) — parakeet switch, end to end through the R
     expect(modelDownloadTask()?.error).toBe("磁盘空间不足：可用 1.0GB，需要至少 5.0GB");
 
     // ensureMlxExtras self-heals ANY attempt(false) failure with exactly
-    // one attempt(true) (--clear) retry (§C Provision, transactional
+    // one attempt(true) (--clear) retry (transactional
     // venv build) — attempt(true) skips the leading "already installed"
     // mlx_import_preflight short-circuit (clear:true never short-
     // circuits) but re-runs checkMlxInstallDiskSpace fresh, so the

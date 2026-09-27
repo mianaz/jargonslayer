@@ -142,7 +142,7 @@ export class AppAudioEngine implements STTEngine {
   // it early.
   private helperTerminated = false;
 
-  // F17 (S12 blueprint §2.6′, generation-safe appAudio stop-wait parity —
+  // F17 (S12, generation-safe appAudio stop-wait parity —
   // Sol adversarial finding 17): mirrors osSpeech.ts's `running` flag for
   // stop()'s own gate below, but GENERATION-SCOPED rather than a shared
   // boolean — this file's own generation-isolation invariant (see the
@@ -452,7 +452,7 @@ export class AppAudioEngine implements STTEngine {
         );
         break;
       case "device-changed":
-        // No hot re-tap in v1 (blueprint non-goals) — the helper exits
+        // No hot re-tap in v1 (a non-goal) — the helper exits
         // and the session must be restarted by hand.
         events.onStatus("error", "录音设备发生变化，系统音频捕获已停止，请重新开始");
         break;
@@ -522,8 +522,8 @@ export class AppAudioEngine implements STTEngine {
    *   - any other ArrayBufferView (TypedArray/DataView): an
    *     EXACT-WINDOW copy of its buffer — `.buffer` can be a larger
    *     backing store than the view itself spans.
-   *   - a plain JS array (the serde JSON-number-array fallback D5's
-   *     own blueprint comment warns "would hide silently" at this
+   *   - a plain JS array (the serde JSON-number-array fallback D5
+   *     warns "would hide silently" at this
    *     bitrate): converted via Uint8Array.from(...).buffer, flagged
    *     with a ONE-TIME diag marker so a live JSON-degraded channel is
    *     never silently absorbed.
@@ -683,8 +683,8 @@ export class AppAudioEngine implements STTEngine {
     // live user-stop drain path (helper alive -> stop() -> "ended"
     // arrives DURING the wait, caught by handleStatus's `if
     // (this.stopping)` branch above) is untouched: helperTerminated is
-    // still false at the moment this check runs in that case. F17 (S12
-    // blueprint §2.6′): ALSO only if a session for THIS generation
+    // still false at the moment this check runs in that case. F17 (S12):
+    // ALSO only if a session for THIS generation
     // actually started — `this.helperStartedGeneration === gen` — in the
     // first place. A REJECTED start_app_audio invoke() (see start()'s own
     // catch block) routes through this SAME stop() to unwind without

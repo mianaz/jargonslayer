@@ -1,8 +1,8 @@
 // S10 field-fix #8 — update check v1: an on-demand (drawer button +
 // quiet first-open) check against the GitHub releases API, NOT an
 // auto-installer (tauri-plugin-updater needs its own minisign keypair +
-// latest.json pipeline — queued as later infra, see the blueprint's #8
-// row). Own small zustand store, mirroring registry.ts's plain
+// latest.json pipeline — queued as later infra). Own small zustand
+// store, mirroring registry.ts's plain
 // `create(() => ({...}))` shape — session-scoped, no persist middleware
 // — deliberately NOT store.ts's own persisted-Settings shape (that file
 // stays untouched by this task). Named checkAppUpdate (not checkUpdates)

@@ -1,10 +1,10 @@
 import Foundation
 
-// S13 (§2 pinned wire contract, Lane B) —
+// S13 (pinned wire contract, Lane B) —
 // the "transcript"/"status" event payload shapes
 // delivered via `Plugin.trigger(_:data:)` (Plugin.swift's own generic
 // `trigger<T: Encodable>`). Ported in SPIRIT from macOS's own
-// TranscriptEvents.swift/StatusEvents.swift (§2.2/§2.5), reshaped for
+// TranscriptEvents.swift/StatusEvents.swift, reshaped for
 // iOS's actual wire mechanism: macOS encodes stderr NDJSON that Rust's
 // osspeech.rs later re-maps into these same status kinds; iOS has NO
 // such Rust translation layer in between (Swift's `trigger()` reaches JS
@@ -19,7 +19,7 @@ import Foundation
 // even though this SwiftPM package's platforms floor can't run on a
 // non-Apple host; a plain `swift test` on this Mac still exercises it.
 
-/// The CLOSED 13-kind set (§2.5), field-exact against macOS's own
+/// The CLOSED 13-kind set, field-exact against macOS's own
 /// `OsSpeechStatusKind` (osspeech.rs) and the TS `OsSpeechStatusKind`
 /// union (apps/web/src/lib/stt/osSpeech.ts). `String` rawValue ==
 /// exactly the wire string — `Codable` derives straight to/from that,
@@ -74,7 +74,7 @@ public enum OsSpeechTerminalCoercion {
   }
 }
 
-/// §2.5 R2 parity — every status payload names which lane produced it
+/// R2 parity — every status payload names which lane produced it
 /// (a running transcribe session vs. a background preinstall), since
 /// both can emit on the SAME "status" event lane and JS's session engine
 /// ignores anything that isn't `.session` (osSpeech.ts's own
@@ -137,7 +137,7 @@ public struct OsSpeechStatusPayload: Encodable, Equatable {
 
 /// `capabilities`'s own response shape — a MANUAL `Encodable`
 /// conformance (not synthesized) because `reason` must serialize as an
-/// EXPLICIT `null` when absent (§6 F1: required-nullable, matching
+/// EXPLICIT `null` when absent (F1: required-nullable, matching
 /// Rust's own `OsSpeechCapabilities` with no `skip_serializing_if`), and
 /// Swift's synthesized `Encodable` for an `Optional` stored property
 /// instead calls `encodeIfPresent` (OMITS the key on `nil` — the CORRECT
@@ -171,7 +171,7 @@ public struct OsSpeechCapabilitiesPayload: Encodable, Equatable {
   }
 }
 
-/// The two event names this plugin ever `trigger()`s — pinned (§2),
+/// The two event names this plugin ever `trigger()`s — pinned,
 /// verified against osSpeechTransport.ts's own `OS_SPEECH_PLUGIN`/
 /// `"transcript"`/`"status"` literals.
 public enum OsSpeechEvent {
@@ -181,7 +181,7 @@ public enum OsSpeechEvent {
 
 /// The one error string `startTranscribe`/`preinstall` reject with (and
 /// `capabilities` reports as `reason`) below the iOS 26 floor — pinned
-/// (§2/§6), byte-identical to osSpeech.ts's own `IS_IOS` branch copy
+/// byte-identical to osSpeech.ts's own `IS_IOS` branch copy
 /// ("系统识别需要 iOS 26 或更高版本" is the USER-facing message built from
 /// this raw reason string one layer up; this exact string is the wire
 /// value both `capabilities().reason` and the command `Err` carry).

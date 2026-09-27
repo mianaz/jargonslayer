@@ -11,9 +11,9 @@
 // TranscriptPanel's isEmpty already uses internally — so this disappears
 // the instant a meeting starts, a session loads, or history reopens.
 //
-// §3 Q2 (owner-adjudicated): tiles are platform-filtered — ABSENT, not
-// disabled — so this renders anywhere from 2 (iOS: 麦克风+导入 only,
-// blueprint §3 Q2 verbatim) to 4 (web/desktop — never all 5 tiles at
+// Q2 (owner-adjudicated): tiles are platform-filtered — ABSENT, not
+// disabled — so this renders anywhere from 2 (iOS: 麦克风+导入 only)
+// to 4 (web/desktop — never all 5 tiles at
 // once: 本机会议声音 is desktop-only, 浏览器标签页 is web-only).
 //
 // Import/url tiles ONLY open ImportHub at the right tab (via the
@@ -80,7 +80,7 @@ export interface ModeTileVisibility {
  *  function was built to close) left to guard against by hiding the
  *  tile. The url tile stays preview-only-absent below (`!isPreview`) —
  *  ImportHub's url tab is genuinely sidecar-dependent, untouched by this
- *  blueprint.
+ *  change.
  *
  *  Dual capture v1: "dual" is pushed alongside "system-audio" — both
  *  desktop-only, both osspeech's own tile pair (see pickCapture below;
@@ -194,8 +194,8 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
   });
   // "sidecar tiers only" (L8 task spec): full-tier web+desktop only —
   // preview never has a sidecar to reach, and iOS's ImportHub 链接 tab
-  // has no sidecar-absent story worth a tile of its own (blueprint
-  // table: "sidecar-absent -> locked"). Reachability itself (whisperUrl
+  // has no sidecar-absent story worth a tile of its own
+  // ("sidecar-absent -> locked"). Reachability itself (whisperUrl
   // actually up) isn't knowable synchronously — ImportHub's own url tab
   // already explains that once opened (same posture deriveEngineForMode
   // takes for the "tab" mode's local-sidecar fallback).

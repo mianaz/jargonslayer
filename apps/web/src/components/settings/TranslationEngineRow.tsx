@@ -1,10 +1,10 @@
 "use client";
 
 // Translation-engine settings subcomponent (v0.5 Wave-1 Feature 6, A6). A
-// self-contained, props-driven block per the blueprint's SettingsDialog
-// contention rule (§2: "each lane delivers its section as a
-// self-contained subcomponent... referenced by a SINGLE import + render
-// line; the lead serializes those one-line insertions") — no store
+// self-contained, props-driven block per the SettingsDialog contention
+// rule ("each lane delivers its section as a self-contained
+// subcomponent... referenced by a SINGLE import + render line; the lead
+// serializes those one-line insertions") — no store
 // imports, value+onChange only, mirroring AnkiConnectSection.tsx's own
 // shape. Desktop (macOS 26+) got its OWN on-device path in v0.6
 // (DesktopTranslationEngineRow below) — un-gated there instead of hidden.
@@ -97,7 +97,7 @@ export const LLM_TRANSLATE_WARNING =
 export const DEEPL_WEB_DISABLED_REASON = "浏览器版暂不支持 DeepL（跨域限制），请用 App";
 // v0.7.1 translation train-2: 有道 has no CORS-clean endpoint either
 // (openapi.youdao.com carries no Access-Control-Allow-Origin on any
-// probed Origin — see the blueprint's own 有道 API contract section) —
+// probed Origin) —
 // same web-disabled posture as DeepL above.
 export const YOUDAO_WEB_DISABLED_REASON = "浏览器版暂不支持有道翻译（跨域限制），请用 App";
 

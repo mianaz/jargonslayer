@@ -4,7 +4,7 @@
 // regression there is a hot mic held open with nothing listening, in a
 // privacy-first product — so these tests pin that every track is
 // stopped BEFORE the success copy renders, plus both outcome strings
-// verbatim (blueprint §7 麦克风授权（首次）).
+// verbatim (the 麦克风授权（首次） copy).
 //
 // Same node-env posture as micPermission.test.ts next door: no jsdom,
 // the module's own document/navigator bindings are stubbed globals and

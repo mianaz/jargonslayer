@@ -40,16 +40,14 @@ Covers:
         snapshot_download() (S12a Q6/F11)
       - passes the model's own allow_patterns (parakeet's 2-file set
         vs. whisper's 5-pattern set) to snapshot_download, and NEVER
-        an extra cache_dir kwarg (the cache-root invariant, §B finding
-        10 — see below)
+        an extra cache_dir kwarg (the cache-root invariant — see below)
       - the sidecar-side ×1.2 disk precheck (check_disk_space, faked
         to just capture its argument) receives the HONEST allow_
         patterns-filtered total: parakeet's model.safetensors
         (2,508,288,736B, live 2026-07-16) + config.json (244,093B) =
         2,508,532,829B (~2.51GB) — excluding the repo's tokenizer/
-        vocab files entirely (§B finding 12: the earlier ~1GB estimate
-        was off by 2.5x)
-  - cache-root invariant (§B finding 10), against the REAL installed
+        vocab files entirely (the earlier ~1GB estimate was off by 2.5x)
+  - cache-root invariant, against the REAL installed
     huggingface_hub (guarded — SKIP if not importable, same posture as
     test_download.py's tqdm-optional section): hf_hub_download (what
     parakeet_mlx.from_pretrained calls, S12b) and snapshot_download
@@ -63,7 +61,7 @@ Covers:
     True when passed (LazyWhisperModel's own coverage lives in
     test_lazy_load.py, not here)
   - normalize_hf_token / parse_args's ONE normalization point (S12a fix
-    round F8, LOW, Sol8, §D): a whitespace-only --hf-token/$HF_TOKEN
+    round F8, LOW, Sol8): a whitespace-only --hf-token/$HF_TOKEN
     value becomes None (was truthy pre-fix — falsely advertised
     diarization as armed and sent garbage as an Authorization value);
     covers the pure function directly plus both real sources parse_args()
@@ -368,7 +366,7 @@ def _fake_snapshot_download(repo_id, *, allow_patterns=None, token=None, tqdm_cl
             "token": token,
             "tqdm_class": tqdm_class,
             # Anything landing here (e.g. a cache_dir=) would be the
-            # exact §B finding 10 regression — download_model_snapshot
+            # exact cache-root regression — download_model_snapshot
             # must NEVER pass one; see the cache-root-invariant checks
             # below for why.
             "extra_kwargs": kwargs,
@@ -458,7 +456,7 @@ try:
     )
     check(
         "download_model_snapshot(parakeet): NEVER passes cache_dir to "
-        "snapshot_download (cache-root invariant, §B finding 10) — omitting it "
+        "snapshot_download (cache-root invariant, finding 10) — omitting it "
         "lets both this download and a later from_pretrained(cache_dir=None) "
         "resolve the exact same default root",
         snapshot_download_calls[0]["extra_kwargs"] == {},
@@ -468,7 +466,7 @@ try:
         "receives the HONEST allow_patterns-filtered total — model.safetensors "
         "(2,508,288,736B) + config.json (244,093B) = 2,508,532,829B (~2.51GB), "
         "excluding the repo's unused tokenizer.model/tokenizer.vocab/vocab.txt/"
-        ".gitattributes/README.md siblings entirely (§B finding 12: NOT the "
+        ".gitattributes/README.md siblings entirely (finding 12: NOT the "
         "earlier ~1GB estimate, off by 2.5x)",
         _captured_disk_check[-1][0] == _PARAKEET_HONEST_TOTAL_BYTES,
     )
@@ -525,7 +523,7 @@ finally:
 
 
 # =================================================================
-# Cache-root invariant (§B finding 10), against the REAL installed
+# Cache-root invariant, against the REAL installed
 # huggingface_hub — guarded (SKIP if not importable), same posture as
 # test_download.py's tqdm-optional section. The fake-hub section above
 # proves download_model_snapshot never passes cache_dir; THIS section

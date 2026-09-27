@@ -308,8 +308,8 @@ describe("buildMeetingLexicon", () => {
   });
 });
 
-// v0.5 Wave-1 Feature 8 (named custom dictionary packs, blueprint §1
-// F8 + §5 A7) — the Wave-0 seam: buildMeetingLexicon's glossary tier
+// v0.5 Wave-1 Feature 8 (named custom dictionary packs, F8 + A7) —
+// the Wave-0 seam: buildMeetingLexicon's glossary tier
 // consults glossary.ts's own pack registry directly (see lexicon.ts's
 // header comment), since useMeeting.ts's live-session snapshot still
 // passes the FULL customEntries list. Unique pack names per test —

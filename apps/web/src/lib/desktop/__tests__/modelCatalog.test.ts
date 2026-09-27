@@ -9,11 +9,11 @@ import { ALLOWED_MARKER_MODELS } from "../provisionMachine";
 
 describe("MODEL_CATALOG", () => {
   it("every catalog id (the now fully-offered parakeet entry included) is a member of provisionMachine.ts's ALLOWED_MARKER_MODELS (the Rust/marker allowlist) — catalog ⊆ allowlist", () => {
-    // S12a (§C L1 prelude's carve-out, now removed): worker A2's own
+    // S12a (L1 prelude's carve-out, now removed): worker A2's own
     // provisionMachine.ts edit adds parakeet-tdt-0.6b-v3 to
     // ALLOWED_MARKER_MODELS alongside the rest of the parakeet install/
     // marker/quarantine lane, so the invariant is exact — every entry
-    // this catalog offers (worker B2's flip, §C L1/§E) was already a
+    // this catalog offers (worker B2's flip, L1) was already a
     // valid marker/Rust model id, and a parakeet marker has been a
     // fully real, quarantine-checked possibility (handleCheckResult's
     // own mlx-usability branch) since S12a landed.
@@ -43,7 +43,7 @@ describe("MODEL_CATALOG", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("exactly one entry is recommended, and it is medium — the parakeet stub carries NO 推荐 chip (§C Product/L3)", () => {
+  it("exactly one entry is recommended, and it is medium — the parakeet stub carries NO 推荐 chip (L3)", () => {
     const recommended = MODEL_CATALOG.filter((e) => e.recommended);
     expect(recommended).toHaveLength(1);
     expect(recommended[0].id).toBe("medium");
@@ -58,11 +58,11 @@ describe("MODEL_CATALOG", () => {
     }
   });
 
-  it("size strings are the exact blueprint values (~0.46GB/~1.5GB/~1.6GB/~1.6GB/~2.5GB)", () => {
+  it("size strings are the exact pinned values (~0.46GB/~1.5GB/~1.6GB/~1.6GB/~2.5GB)", () => {
     expect(MODEL_CATALOG.map((e) => e.size)).toEqual(["~0.46GB", "~1.5GB", "~1.6GB", "~1.6GB", "~2.5GB"]);
   });
 
-  it("wizard labels are the exact blueprint decision A values, plus §C Product/L3's parakeet opt-in label", () => {
+  it("wizard labels are the exact decision A values, plus L3's parakeet opt-in label", () => {
     expect(MODEL_CATALOG.map((e) => e.label)).toEqual([
       "轻量·默认",
       "均衡·推荐 (zh-en)",
@@ -77,7 +77,7 @@ describe("MODEL_CATALOG", () => {
     expect(WIZARD_PRESELECTED_MODEL).toBe("medium");
   });
 
-  it("the parakeet-tdt-0.6b-v3 entry is mlxOnly and available (§C L1/§E — worker B2's flip, once the install+backend lane cleared its live merge gates)", () => {
+  it("the parakeet-tdt-0.6b-v3 entry is mlxOnly and available (L1 — worker B2's flip, once the install+backend lane cleared its live merge gates)", () => {
     const parakeet = MODEL_CATALOG.find((e) => e.id === "parakeet-tdt-0.6b-v3");
     expect(parakeet?.mlxOnly).toBe(true);
     expect(parakeet?.available).not.toBe(false);
@@ -91,7 +91,7 @@ describe("MODEL_CATALOG", () => {
     }
   });
 
-  it("every catalog entry is offered today — none reads available:false (§C L1's prelude gate is fully retired post-B2-flip)", () => {
+  it("every catalog entry is offered today — none reads available:false (L1's prelude gate is fully retired post-B2-flip)", () => {
     for (const entry of MODEL_CATALOG) {
       expect(entry.available).not.toBe(false);
     }

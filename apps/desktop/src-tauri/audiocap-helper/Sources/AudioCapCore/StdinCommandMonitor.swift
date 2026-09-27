@@ -4,9 +4,9 @@ import Foundation
 import Darwin
 #endif
 
-// S11 (§2.3/§A1) — transcribe mode's stdin protocol: line-oriented,
+// S11 (A1) — transcribe mode's stdin protocol: line-oriented,
 // UTF-8, `\n`-terminated `pause`/`resume` commands, EOF (zero-length
-// read) = shutdown (unchanged dead-man semantic). §A1 (lead
+// read) = shutdown (unchanged dead-man semantic). A1 (lead
 // adjudication): this is the ONLY stdin reader in transcribe mode —
 // two threads reading the same stdin would race and split lines
 // unpredictably — so `ShutdownSignal.startStdinEOFMonitor()` is NOT
@@ -24,7 +24,7 @@ import Darwin
 // (TranscribeConsumer.pollOnce, every ~4ms) while `pause`/`resume`
 // lines are applied from THIS type's own stdin-reading thread.
 public final class StdinCommandMonitor {
-    /// The two meaningful commands (§2.3) plus an explicit `.unknown`
+    /// The two meaningful commands plus an explicit `.unknown`
     /// case (rather than silently dropping at classification time) so
     /// `classify(_:)` stays a total, directly-assertable pure function;
     /// `apply` below is what actually implements "any other line is
@@ -125,11 +125,11 @@ public final class StdinCommandMonitor {
         case .resume:
             jsac_atomic_store_u64(pausedSlot, 0)
         case .unknown:
-            break // §2.3: "Any other line = ignored"
+            break // any other line is ignored
         }
     }
 
-    /// Pure line classification (§2.3) — `line` has already had its
+    /// Pure line classification — `line` has already had its
     /// trailing `\n` stripped by `feed` above; no whitespace tolerance
     /// (the wire contract specifies the exact bytes `pause\n`/`resume\n`,
     /// nothing fuzzier).

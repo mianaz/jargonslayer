@@ -2,7 +2,7 @@ import XCTest
 
 @testable import OsSpeechCore
 
-// S13 (Lane B) — asserts the pinned wire payload shapes (§2/§6 F1) at
+// S13 (Lane B) — asserts the pinned wire payload shapes (F1) at
 // the JSON level, not just via a round-trip decode (a round-trip through
 // the SAME Swift type can't distinguish "key omitted" from "key present
 // with an explicit null" — `JSONSerialization` can, since a JSON `null`
@@ -24,7 +24,7 @@ final class OsSpeechWireTests: XCTestCase {
   func testStatusPayloadOmitsNilOptionalKeysEntirely() throws {
     let payload = OsSpeechStatusPayload(kind: .starting, source: .session)
     let object = try jsonObject(try JSONEncoder().encode(payload))
-    // §2's TS type has these as optional KEYS (`message?: string`), not
+    // The TS type has these as optional KEYS (`message?: string`), not
     // required-nullable ones — a nil value must OMIT the key, not
     // null it (contrast OsSpeechCapabilitiesPayload.reason below).
     XCTAssertEqual(Set(object.keys), ["kind", "source"])
@@ -42,7 +42,7 @@ final class OsSpeechWireTests: XCTestCase {
     XCTAssertNil(object["resolvedLocale"])
   }
 
-  /// The CLOSED 13-kind set (§2.5) — field-exact wire strings, matching
+  /// The CLOSED 13-kind set — field-exact wire strings, matching
   /// osspeech.rs's own `OsSpeechStatusKind::as_str` and the TS
   /// `OsSpeechStatusKind` union verbatim.
   func testStatusKindRawValuesMatchClosedSet() {
@@ -67,7 +67,7 @@ final class OsSpeechWireTests: XCTestCase {
     }
   }
 
-  /// §6 F1 — the ONE field on this wire that's required-nullable rather
+  /// F1 — the ONE field on this wire that's required-nullable rather
   /// than optional-omittable: `reason` must serialize as an explicit
   /// `null`, never an omitted key, when there's no reason to report.
   func testCapabilitiesPayloadReasonIsExplicitNullNotOmitted() throws {

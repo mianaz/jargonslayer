@@ -3,15 +3,15 @@ import CoreMedia
 import Speech
 @preconcurrency import AVFoundation
 
-// S11 (§Q1/§3 Worker A) — the one framework-bound seam the blueprint
-// calls out explicitly: everything in this file only exists because it
+// S11 (Q1, Worker A) — the one framework-bound seam, deliberately
+// isolated: everything in this file only exists because it
 // has to touch live Speech.framework/AVFoundation objects, which is
 // exactly why it's kept as small and as separate as possible from
 // TranscribeConsumer (pure poll-loop skeleton, fully unit tested) and
 // TranscriptEvents/TranscriptThrottle/LocaleResolver (pure, fully unit
 // tested). `AnalyzerSeam` is the abstraction boundary main.swift's
 // runTranscribe depends on; `SpeechAnalyzerSession` is the one real
-// (fake-injectable in principle, per the blueprint's own phrasing)
+// (fake-injectable in principle)
 // conformance. No dedicated unit tests exist for this file itself (the
 // slice's own test list names five OTHER pure pieces, not this one) —
 // it's exercised by the build + the on-device `--probe-osspeech`/manual
@@ -26,7 +26,7 @@ public protocol AnalyzerSeam {
     /// closure (not a direct ProcessTapCapture call) so the CoreAudio
     /// object lifecycle stays entirely owned by main.swift (mirroring
     /// runCapture exactly — see that function's own comment) while this
-    /// seam only decides WHEN to actually start the device, per §Q1's
+    /// seam only decides WHEN to actually start the device, per Q1's
     /// own ordering ("asset ensure ... tap start ... analyzer.start").
     /// `stopTap` is called exactly once, right after the producer thread
     /// has fully stopped and BEFORE the true final ring drain — the same
@@ -78,10 +78,10 @@ public protocol AnalyzerSeam {
         emitProcessStatus: Bool
     ) async -> SpeechSessionOutcome
 
-    /// `--preinstall-osspeech`'s own flow (§A2/§Q5): locale resolve +
+    /// `--preinstall-osspeech`'s own flow (A2/Q5): locale resolve +
     /// asset ensure only — no tap, no analyzer, no results loop. Emits
     /// the same `{"type":"status","state":"finished"}` sentinel as `run`
-    /// on success (§2.2 makes no distinction for a background warm-up
+    /// on success (the wire makes no distinction for a background warm-up
     /// session — it's still "the transcribe analog of framing EOS", just
     /// for an asset-only session).
     func preinstall(locale bcp47: String) async -> SpeechSessionOutcome
@@ -137,7 +137,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
         emitProcessStatus: Bool = true
     ) async -> SpeechSessionOutcome {
         do {
-            // ---- locale (§Q4) ----
+            // ---- locale (Q4) ----
             let resolver = LocaleResolver(provider: SpeechTranscriberLocaleProvider())
             let resolvedLocale: Locale
             switch await resolver.resolve(bcp47: bcp47) {
@@ -151,7 +151,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
 
             let transcriber = SpeechTranscriber(locale: resolvedLocale, preset: .timeIndexedProgressiveTranscription)
 
-            // ---- asset (§Q5/spike "Asset model") ----
+            // ---- asset (Q5) ----
             // FIX S5 (S11 fix round) — `shutdown.isRequested` makes a
             // stop landing DURING the (measured up to 16.7s cold) asset
             // download abortable instead of parking uninterruptibly
@@ -161,7 +161,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
             try await ensureAssetInstalled(transcriber: transcriber, shouldAbort: shutdown.isRequested)
 
             // ---- format negotiation — the SIGTRAP-hazard boundary
-            // (blueprint's own #1 risk): `nativeFormat` describes
+            // (the #1 identified risk): `nativeFormat` describes
             // exactly the byte layout TranscribeConsumer's FrameSink
             // calls hand us (interleaved Float32, same sampleRate/
             // channels as the tap's own ASBD — see main.swift's
@@ -181,7 +181,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
                 throw OsSpeechError.audioFormat("SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith:) returned nil")
             }
 
-            // ---- contextual biasing (§Q11 — v1: glossary headwords only) ----
+            // ---- contextual biasing (Q11 — v1: glossary headwords only) ----
             let analysisContext = AnalysisContext()
             let contextualTerms = parseContextualTerms(contextualJSON)
             if !contextualTerms.isEmpty {
@@ -227,7 +227,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
                 try await analyzer.setContext(analysisContext)
             }
 
-            // ---- tap start — AFTER asset+converter are ready (§Q1's
+            // ---- tap start — AFTER asset+converter are ready (Q1's
             // own ordering: "asset ensure ... tap start ...
             // analyzer.start"); "starting" was already emitted by
             // main.swift right after tap/aggregate/IOProc creation
@@ -243,7 +243,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
 
             try await analyzer.start(inputSequence: stream)
 
-            // ---- producer thread (§Q1: "a dedicated producer Thread") ----
+            // ---- producer thread (Q1: "a dedicated producer Thread") ----
             let consumer = TranscribeConsumer(
                 ring: ring, channels: channels, isNonInterleaved: isNonInterleaved,
                 sink: sink, isPaused: isPaused, channel: channel, sampleRate: sampleRate
@@ -295,7 +295,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
             // time `stopTap()` runs.
             stopTap()
 
-            // ---- teardown (§2.7's own trio, transcribe analog, FIX S3
+            // ---- teardown (the capture trio's transcribe analog, FIX S3
             // reordering — S11 fix round): the true final ring drain
             // (`consumer.drainRemaining()`) MUST run BEFORE
             // `continuation.finish()`, not after: `drainRemaining` ends
@@ -325,7 +325,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
             }
             _ = await resultsTask.value // drain remaining finals
             consumer.emitFinalStats()
-            await SpeechModels.endRetention() // best-effort (§Q12), guarded
+            await SpeechModels.endRetention() // best-effort (Q12), guarded
 
             if let fatal = fatalBox.value {
                 TranscriptEvents.emitError(fatal)
@@ -403,7 +403,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
             // path keys off. `StatusEvents.emitError` (not
             // `TranscriptEvents.emitError`, which only takes an
             // `OsSpeechError`) preserves the exact same tap-level wire
-            // codes/shape §2.2's own "reused unchanged" list describes —
+            // codes/shape, reused unchanged —
             // consistent with this file's OWN `.starved` arm just above,
             // which already emits a tap-flavored `AudioCapError` the same
             // way.
@@ -450,16 +450,16 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
 
     // ---- private helpers ----
 
-    /// §Q5/spike "Asset model": `AssetInventory.status(forModules:)` is
+    /// Q5: `AssetInventory.status(forModules:)` is
     /// PER-MODULE-CONFIGURATION (querying with `transcriber` itself,
     /// exactly the module that will actually run, per the spike's own
     /// "always query with the exact module config you will run" rule) —
     /// installs (checking/downloading-with-progress/installed/failed
     /// events) only if not already installed; a re-run when already
-    /// installed is a fast, event-only no-op (spike: "no download").
+    /// installed is a fast, event-only no-op (no download).
     ///
     /// FIX S5 (S11 fix round) — `downloadAndInstall()` (measured up to
-    /// 16.7s on a cold locale, spike findings) now runs in its OWN
+    /// 16.7s on a cold locale) now runs in its OWN
     /// unstructured child `Task`, specifically so this method can WALK
     /// AWAY from it — never `await` its actual completion — the moment
     /// `shouldAbort()` trips, rather than parking uninterruptibly until
@@ -477,7 +477,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
     /// `shouldAbort()` never depends on either actually being honored
     /// promptly by the OS asset manager (unverified against a live cold
     /// download by this fix round — flagged for the on-device smoke
-    /// test, same posture as the blueprint's own §4.5 format-safety
+    /// test, same posture as the format-safety
     /// gate): once this method returns, `run` proceeds straight to its
     /// own teardown and the whole process exits shortly after regardless
     /// of whether the orphaned download task ever notices cancellation.
@@ -513,7 +513,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
         // is misleading/0-1 — poll fractionCompleted instead), on the
         // SAME poll-driven posture as every other periodic mechanism in
         // this helper rather than a one-off KVO observer — now ALSO the
-        // abort-check cadence (§FIX S5, see this method's own header
+        // abort-check cadence (FIX S5, see this method's own header
         // comment).
         let progress = request.progress
         var lastEmitted = -1.0
@@ -532,13 +532,13 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
         }
 
         if case .failure(let error) = outcomeBox.value {
-            // §Q9: the designed offline-first-start failure path.
+            // Q9: the designed offline-first-start failure path.
             throw OsSpeechError.assetDownloadFailed("asset download/install failed: \(error)")
         }
         TranscriptEvents.emitAssetInstalled()
     }
 
-    /// §Q11 v1: an optional JSON array of strings, capped/curated by the
+    /// Q11 v1: an optional JSON array of strings, capped/curated by the
     /// JS side (glossary headwords, <=100 terms) — this helper's own job
     /// is just "parse it, or don't" per the wire contract's own
     /// "Invalid JSON = ignore with a note event, not fatal." A free
@@ -557,7 +557,7 @@ public final class SpeechAnalyzerSession: AnalyzerSeam {
         return terms
     }
 
-    /// The concurrent results-consuming loop (§Q2/§Q10): each `Result`
+    /// The concurrent results-consuming loop (Q2/Q10): each `Result`
     /// is the FULL current-range progressive text for volatiles
     /// (replaces, not appends) and a range-final commit for finals
     /// (spike-confirmed: finals are strictly range-ordered/contiguous).

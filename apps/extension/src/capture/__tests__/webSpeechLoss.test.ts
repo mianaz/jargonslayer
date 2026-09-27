@@ -234,8 +234,8 @@ describe("WebSpeechEngine word-loss measurement harness (VAD supervisor)", () =>
     // rotate branches an opening (no pause ever reaches ROTATE_PAUSE_MS,
     // no real final ever lands to set realFinalSinceSoft) — the ONLY
     // rotation trigger left is the SESSION_ROTATE_HARD_MS ceiling,
-    // exactly the "forced mid-speech rotation" cost the design doc's
-    // own diagnosis names as inherent ("the loss is the gap itself...
+    // exactly the "forced mid-speech rotation" cost the original
+    // diagnosis names as inherent ("the loss is the gap itself...
     // Fix = move the gap into a true acoustic pause" — there IS no
     // acoustic pause here to move into). Each such forced cut pays a
     // fixed relaunch+warmup dead zone (~250ms restart + ~400ms

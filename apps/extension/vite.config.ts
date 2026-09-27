@@ -11,8 +11,8 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     rollupOptions: {
-      // permission.html (S7 chunk 3's mic first-grant page, blueprint
-      // §2 Decision A) is opened dynamically via chrome.tabs.create —
+      // permission.html (S7 chunk 3's mic first-grant page,
+      // Decision A) is opened dynamically via chrome.tabs.create —
       // it's never referenced by any manifest field (no "just a page
       // the extension opens itself" slot exists), so CRXJS's own
       // manifest-driven emitFile pipeline (side panel, service worker,

@@ -164,7 +164,7 @@ describe("POST /api/correct — error responses carry requestId (diagnostics)", 
   });
 });
 
-// Global daily budget (§5 A5's own "add EXACTLY that addition" to
+// Global daily budget (A5's own "add EXACTLY that addition" to
 // rateLimit.ts's DAILY_TASK_CAPS) + BYOK bypass — mirrors detect/
 // route.test.ts's identical coverage.
 describe("POST /api/correct — global daily budget (server-key only) + BYOK bypass", () => {

@@ -1,5 +1,5 @@
 // Anti-drift guard for the deliberate TS/Python prompt duplication
-// (v0.2.2 design doc Q6 open question #4 — see sidecar/agent_prompts.
+// (v0.2.2 Q6 open question #4 — see sidecar/agent_prompts.
 // py's module docstring for why this is two copies rather than one
 // shared resource: prompts.ts's buildDetectSystemPrompt/
 // buildDefineSystemPrompt are template functions that splice zh/en

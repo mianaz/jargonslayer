@@ -195,7 +195,7 @@ impl AudioPipeline {
         self.bytes_sent += n;
     }
 
-    /// One human-readable diagnostics line (blueprint S9.2: "input
+    /// One human-readable diagnostics line (S9.2: "input
     /// rate/channels, frames in/out, seq gaps, resampler ratio, channel
     /// bytes sent — never raw audio") — `seq_gaps` is threaded in from
     /// `FramingReader::seq_gaps()`, the only counter this pipeline
