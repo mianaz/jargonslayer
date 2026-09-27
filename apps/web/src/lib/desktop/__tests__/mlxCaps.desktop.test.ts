@@ -1,4 +1,4 @@
-// S12a fix round (§D F7) — mlxCaps.ts's IS_DESKTOP-guarded singleton
+// S12a fix round (F7) — mlxCaps.ts's IS_DESKTOP-guarded singleton
 // wrappers (probeMlxCaps/refreshMlxCaps), with IS_DESKTOP genuinely
 // TRUE. IS_DESKTOP is a module-scope import-time const (lib/platform/
 // desktop.ts) — vi.mock affects this whole file, so this lives in its
@@ -14,7 +14,7 @@
 // getInvoke() calls (one per probeMlxCaps()/refreshMlxCaps()
 // invocation) that must resolve to two DIFFERENT gated fakes.
 //
-// Covers the "clear each other's inFlight" half of §D F7's overlap-
+// Covers the "clear each other's inFlight" half of F7's overlap-
 // race fix (the "apply stale snapshots" half is covered directly via
 // probeMlxCapabilitiesWith in mlxCaps.test.ts, no IS_DESKTOP needed
 // there).
@@ -49,7 +49,7 @@ function makeGatedInvoke(): { invoke: InvokeFn; resolve: (caps: MlxCapabilities)
   return { invoke, resolve: resolveFn };
 }
 
-describe("probeMlxCaps/refreshMlxCaps — inFlight identity guard (§D F7, IS_DESKTOP=true)", () => {
+describe("probeMlxCaps/refreshMlxCaps — inFlight identity guard (F7, IS_DESKTOP=true)", () => {
   beforeEach(() => {
     resetMlxCapsCache();
     invokeQueue = [];
@@ -91,7 +91,7 @@ describe("probeMlxCaps/refreshMlxCaps — inFlight identity guard (§D F7, IS_DE
     expect(refreshResult).toEqual({ status: "ok", caps: { mlxSupported: true, reason: null } });
   });
 
-  it("§D F7's own fix: the OLDER probeMlxCaps() attempt settling AFTER a refreshMlxCaps() has taken over `inFlight` must NOT null out the refresh's still-pending reference — a THIRD probeMlxCaps() call made in between joins the refresh, never firing a third invoke", async () => {
+  it("F7's own fix: the OLDER probeMlxCaps() attempt settling AFTER a refreshMlxCaps() has taken over `inFlight` must NOT null out the refresh's still-pending reference — a THIRD probeMlxCaps() call made in between joins the refresh, never firing a third invoke", async () => {
     const probeGate = makeGatedInvoke();
     const refreshGate = makeGatedInvoke();
     invokeQueue.push(probeGate.invoke, refreshGate.invoke);

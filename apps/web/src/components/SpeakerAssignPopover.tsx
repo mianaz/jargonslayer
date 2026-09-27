@@ -70,7 +70,7 @@ export default function SpeakerAssignPopover({
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
-  // §5 A2: "union of manual roster + unique displayed segment
+  // A2: "union of manual roster + unique displayed segment
   // speakers" — covers diarized names even with an empty roster.
   const names: string[] = [];
   {

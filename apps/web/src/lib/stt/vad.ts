@@ -6,9 +6,9 @@
 // echo-cancellation/noise-suppression OFF, auto-gain ON) — this is a
 // listening pass, not a call, so EC/NS would actively fight exactly
 // the far-field/external audio this whole feature exists to notice.
-// Runs as its OWN independent getUserMedia stream in this phase (see
-// the design doc's Phase 2 note on sharing one raw-capture track with
-// the recognizer) — acceptable duplication for Phase 1's scope.
+// Runs as its OWN independent getUserMedia stream in this phase
+// (sharing one raw-capture track with the recognizer is a Phase 2
+// option) — acceptable duplication for Phase 1's scope.
 //
 // Strict enhancement: start() returns false on ANY failure (API
 // missing, permission denied, AudioContext unavailable, ...) and never

@@ -271,7 +271,7 @@ describe("history storage", () => {
   });
 
   // ---------------------------------------------------------------
-  // Coexistence guard (S7 blueprint §2 decision C): history.ts must
+  // Coexistence guard (S7 decision C): history.ts must
   // never touch chrome.storage — savedLookups.ts stays the sole
   // chrome.storage.local surface. Stubs `chrome` with a Proxy that
   // throws on ANY property access, then runs the full read/write

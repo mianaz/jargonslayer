@@ -3,11 +3,11 @@
 // supervisor. Worker B's own scope ONLY: this module supervises a SECOND
 // jargonslayer-audiocap invocation mode (`--transcribe`/`--probe-osspeech`/
 // `--preinstall-osspeech`, all new — Worker A's scope) that never writes
-// PCM to stdout at all (§0: "no PCM ever leaves the process, and no
+// PCM to stdout at all (by design: "no PCM ever leaves the process, and no
 // stdout wire is used") — everything (transcripts, asset/locale
 // lifecycle, errors) rides the existing stderr NDJSON lane as new
-// `type`s (§2.2), parsed here and re-emitted on two NEW, parallel event
-// lanes (`osspeech://transcript`/`osspeech://status`, §2.5) — never the
+// `type`s, parsed here and re-emitted on two NEW, parallel event
+// lanes (`osspeech://transcript`/`osspeech://status`) — never the
 // closed `audiocap://status` set audiocap.rs owns.
 //
 // audiocap.rs is this slice's PATTERN SOURCE, not a dependency: its
@@ -108,7 +108,7 @@ fn macos_version() -> (i64, i64) {
     (0, 0)
 }
 
-/// Blueprint §1 Q1/Q8: SpeechAnalyzer's transcribe lane is gated on
+/// Q1/Q8: SpeechAnalyzer's transcribe lane is gated on
 /// `major >= 26`, unlike audiocap's own 14.4 product floor — a whole
 /// major version higher, so minor is irrelevant either way (mirrors
 /// audiocap's own `is_macos_version_supported`'s "major jump" handling,
@@ -146,7 +146,7 @@ fn unsupported_capabilities(reason: impl Into<String>) -> OsSpeechCapabilities {
     }
 }
 
-/// DEVIATION from §2.4's pinned pseudocode return type (bare
+/// DEVIATION from the pinned return type (bare
 /// `OsSpeechCapabilities`): tauri 2.11.5 enforces (a compile error, not
 /// just a lint) that an ASYNC command taking a reference-shaped parameter
 /// — `tauri::State<'_, OsSpeechState>`, needed here for the process-once
@@ -176,7 +176,7 @@ pub async fn os_speech_capabilities(app: tauri::AppHandle, state: tauri::State<'
 }
 
 /// Spawns `--probe-osspeech`, drains its stderr for the single
-/// `{"type":"osspeech-probe",...}` line (§2.2), and folds any
+/// `{"type":"osspeech-probe",...}` line, and folds any
 /// resolve/spawn/parse failure into a `supported:false` result — never
 /// itself an `Err`; see `os_speech_capabilities`'s own doc comment for
 /// why ITS return type still had to grow a `Result` wrapper anyway.
@@ -186,7 +186,7 @@ async fn run_probe(app: &tauri::AppHandle) -> OsSpeechCapabilities {
         Err(e) => return unsupported_capabilities(format!("could not resolve the jargonslayer-audiocap sidecar: {e}")),
     };
     // No `.set_raw_out(true)`: this mode never writes to stdout at all
-    // (§0), so the plugin's default line-buffered ("cooked") stdout/
+    // by design, so the plugin's default line-buffered ("cooked") stdout/
     // stderr reading is fine — `LineReassembler` below is still applied
     // regardless, belt-and-suspenders against relying on that.
     let (mut rx, _child) = match command.args(["--probe-osspeech"]).spawn() {
@@ -223,9 +223,9 @@ async fn run_probe(app: &tauri::AppHandle) -> OsSpeechCapabilities {
     result.unwrap_or_else(|| unsupported_capabilities("osspeech probe produced no result"))
 }
 
-// ---- osspeech://status kind mapping (wire contract, §2.5) ----
+// ---- osspeech://status kind mapping (wire contract) ----
 
-/// The CLOSED 13-kind set §2.5 pins — same "closed set" posture as
+/// The CLOSED 13-kind set the wire contract pins — same "closed set" posture as
 /// audiocap's own `StatusKind` (that enum's own doc comment), one lane
 /// over: JS is expected to exhaustively match on `kind`, so an ad hoc
 /// extra value here would silently break that.
@@ -268,11 +268,11 @@ impl OsSpeechStatusKind {
 
 /// Maps a `type:"status"` record's `state` — immediate emission (unlike
 /// `error_record_kind` below, never deferred to exit). `"finished"` (the
-/// clean-stop sentinel, §2.2) deliberately returns `None` here: it's
+/// clean-stop sentinel) deliberately returns `None` here: it's
 /// internal bookkeeping for `finished_seen` (this module's `eos_seen`
 /// analog), never a kind surfaced to JS on its own — the eventual ended/
 /// crashed kind is decided at exit time (`final_kind`). Any other/unknown
-/// state (e.g. the reused `exclude-pid-inactive` note, §A5) is still
+/// state (e.g. the reused `exclude-pid-inactive` note, A5) is still
 /// mirrored to the log lane by the caller, but never emitted as a
 /// mistyped status event.
 fn status_record_kind(state: &str) -> Option<OsSpeechStatusKind> {
@@ -283,7 +283,7 @@ fn status_record_kind(state: &str) -> Option<OsSpeechStatusKind> {
     }
 }
 
-/// Maps a `type:"asset"` record's `state` (§2.2) — immediate emission,
+/// Maps a `type:"asset"` record's `state` — immediate emission,
 /// same posture as `status_record_kind`.
 fn asset_record_kind(state: &str) -> Option<OsSpeechStatusKind> {
     match state {
@@ -301,7 +301,7 @@ fn asset_record_kind(state: &str) -> Option<OsSpeechStatusKind> {
 /// process's eventual exit, and jargonslayer-audiocap always follows an
 /// emitError with an exit anyway. Covers BOTH the three tap-level
 /// `AudioCapError` codes reused unchanged on this path (permission-denied/
-/// unsupported-os/device-changed, §2.2's own "reused unchanged" list) and
+/// unsupported-os/device-changed) and
 /// three of the new `OsSpeechError` codes that map to a dedicated kind
 /// (unsupported-locale directly; asset-download-failed and
 /// asset-unavailable — R5: the latter covers noModel/cannotAllocate/
@@ -335,7 +335,7 @@ fn error_record_kind(code: &str) -> Option<OsSpeechStatusKind> {
 
 /// Mirrors audiocap's own `exit_status_kind` literally, substituting this
 /// module's own `finished_seen` (the `{"type":"status","state":"finished"}`
-/// sentinel, §2.2) for `eos_seen`: "clean finished-sentinel/exit-0 =>
+/// sentinel) for `eos_seen`: "clean finished-sentinel/exit-0 =>
 /// ended; nonzero exit with a mapped error code => that kind; nonzero
 /// without one => crashed." A clean exit-0 that never saw the finished
 /// sentinel is a truncated session, never reported Ended (same F8
@@ -406,7 +406,7 @@ fn preinstall_terminal_kind(code: Option<i32>, finished_seen: bool) -> Option<Os
     }
 }
 
-// ---- NDJSON parsing (§2.2) ----
+// ---- NDJSON parsing ----
 
 /// jargonslayer-audiocap's new stderr NDJSON shapes for the transcribe/
 /// probe/preinstall modes — all eight `type`s collapse onto this one
@@ -614,7 +614,7 @@ fn parse_osspeech_line(line: &str) -> ParsedOsSpeechLine {
 }
 
 // ---- OsSpeechState: single-flight + generation guard (clone of
-// AudiocapState's shape, §3 Worker B) ----
+// AudiocapState's shape, Worker B) ----
 
 /// Managed Tauri state (`.manage(OsSpeechState::default())`, lib.rs).
 /// `running`/`generation`/`paused` are a direct clone of `AudiocapState`'s
@@ -713,12 +713,12 @@ fn poison_err<T>(_: std::sync::PoisonError<T>) -> String {
 
 /// A running transcribe session and an in-flight preinstall are never
 /// concurrent — both post asset-lifecycle events to the SAME
-/// `osspeech://status` lane (§2.5). `source` (R2) now tags WHICH lane
+/// `osspeech://status` lane. `source` (R2) now tags WHICH lane
 /// emitted a given event, but that's a JS-side disambiguation signal, not
 /// a reason on its own to let two independent helper processes (two
 /// CoreAudio taps / asset-installer sessions) run at once — v1 still
 /// keeps them single-flighted against each other regardless. The two
-/// directions resolve differently (lead adjudication on the §A2 wording,
+/// directions resolve differently (lead adjudication on the A2 wording,
 /// 2026-07-14):
 /// - preinstall over a running session → REJECTED (this message);
 /// - session start over an in-flight preinstall → the preinstall is
@@ -778,12 +778,12 @@ impl OsSpeechState {
         }
     }
 
-    /// Writes a stdin command line (`pause\n`/`resume\n`, §2.3) to the
+    /// Writes a stdin command line (`pause\n`/`resume\n`) to the
     /// current session's child, if one is attached — a silent no-op when
     /// idle (nothing running yet, or the spawn is still in its own
     /// Starting window with no `CommandChild` attached) so `pause_os_
     /// speech`/`resume_os_speech` can stay `Ok(())`-always-when-idle per
-    /// their own pinned contract (§2.4).
+    /// their own pinned contract.
     fn write_stdin_command(&self, bytes: &[u8]) -> Result<(), String> {
         let mut guard = self.running.lock().map_err(poison_err)?;
         if let Some(session) = guard.as_mut() {
@@ -1046,7 +1046,7 @@ fn validate_source(source: &str) -> Result<(), String> {
 /// simply omits the param) must keep producing byte-identical argv to the
 /// pre-dual-capture build.
 fn build_transcribe_args(own_pid: String, locale: String, contextual_json: Option<String>, source: &str) -> Vec<String> {
-    // §2.1/A5: `--exclude-pid` is required in transcribe mode too (same
+    // A5: `--exclude-pid` is required in transcribe mode too (same
     // self-exclusion semantics as capture).
     let mut args = vec!["--transcribe".to_string(), "--exclude-pid".to_string(), own_pid, "--locale".to_string(), locale];
     if let Some(json) = contextual_json {
@@ -1103,7 +1103,7 @@ pub fn start_os_speech(
         .sidecar(AUDIOCAP_SIDECAR_PROGRAM)
         .map_err(|e| format!("could not resolve the jargonslayer-audiocap sidecar: {e}"))
         .and_then(|command| {
-            // No `.set_raw_out(true)`: no stdout wire in this mode (§0) —
+            // No `.set_raw_out(true)`: no stdout wire in this mode —
             // see `run_probe`'s own comment for why that's safe together
             // with still running stderr through `LineReassembler` anyway.
             command.args(args).spawn().map_err(|e| format!("failed to spawn jargonslayer-audiocap: {e}"))
@@ -1138,7 +1138,7 @@ pub fn stop_os_speech(app: tauri::AppHandle, state: tauri::State<'_, OsSpeechSta
         return Ok(()); // idempotent: nothing running, or a stop is already in flight
     };
     // Closes stdin — jargonslayer-audiocap's StdinCommandMonitor sees EOF
-    // and shuts down gracefully (§2.3/§A1). Does NOT send SIGKILL.
+    // and shuts down gracefully (A1). Does NOT send SIGKILL.
     drop(child);
     spawn_stop_watchdog(app, generation, pid);
     Ok(())
@@ -1150,7 +1150,7 @@ pub fn stop_os_speech(app: tauri::AppHandle, state: tauri::State<'_, OsSpeechSta
 /// command name. Idempotent; a no-op `Ok(())` when nothing is running.
 /// Unlike `AudiocapState`'s own pause (a Rust-side gate on a local
 /// pipeline), the actual pause effect lives entirely in the helper — this
-/// just relays `pause\n` over stdin (§2.3) and mirrors the flag locally
+/// just relays `pause\n` over stdin and mirrors the flag locally
 /// for observability (`OsSpeechState::paused`'s own doc comment).
 #[tauri::command]
 pub fn pause_os_speech(state: tauri::State<'_, OsSpeechState>) -> Result<(), String> {
@@ -1168,7 +1168,7 @@ pub fn resume_os_speech(state: tauri::State<'_, OsSpeechState>) -> Result<(), St
     Ok(())
 }
 
-// ---- preinstall_os_speech (§A2: a real 6th command, single-flighted) ----
+// ---- preinstall_os_speech (A2: a real 6th command, single-flighted) ----
 
 #[tauri::command]
 pub fn preinstall_os_speech(app: tauri::AppHandle, state: tauri::State<'_, OsSpeechState>, locale: String) -> Result<(), String> {
@@ -1255,7 +1255,7 @@ fn force_kill_pid(pid: u32) {
 #[cfg(not(target_os = "macos"))]
 fn force_kill_pid(_pid: u32) {}
 
-// ---- event payload structs (§2.5) + emit helpers ----
+// ---- event payload structs + emit helpers ----
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1298,7 +1298,7 @@ struct OsSpeechAudioStatsEvent {
     window_loud_ms: Option<u32>,
 }
 
-/// §2.5 R2 — PINNED CROSS-LANE CONTRACT: every `osspeech://status` payload
+/// R2 — PINNED CROSS-LANE CONTRACT: every `osspeech://status` payload
 /// carries a `source` provenance tag distinguishing the two independent
 /// Rust tasks that can both emit on this one shared, app-global event lane
 /// (risk register item 8's "app.emit is app-global" concern, one layer up
@@ -1378,7 +1378,7 @@ impl OsSpeechStatusEvent {
 
     /// The ONLY place `source` is ever set to a value that matters —
     /// `emit_os_speech_status` calls this immediately before every single
-    /// emission (§2.5 R2), so every event that reaches JS is correctly
+    /// emission (R2), so every event that reaches JS is correctly
     /// tagged regardless of which of this module's many construction call
     /// sites built it, with no risk of a call site forgetting to set it.
     fn tagged(mut self, source: OsSpeechEventSource) -> Self {
@@ -1442,7 +1442,7 @@ fn open_osspeech_log_file(app: &tauri::AppHandle) -> Option<std::fs::File> {
 /// (unconditionally — see the session/preinstall tasks below), alongside
 /// the ephemeral `uv://log` mirror every line also gets. For every record
 /// EXCEPT a transcript, that's the raw NDJSON line verbatim. A transcript
-/// record carries live meeting content in its `text` field (§2.2) — this
+/// record carries live meeting content in its `text` field — this
 /// would otherwise be the first local, durable log in the app to contain
 /// meeting content, violating the app's own no-transcript-in-diagnostics
 /// posture (`diag/log.ts`/`diag/report.ts`/`bootstrap.ts`) — so transcript
@@ -1526,10 +1526,10 @@ fn log_line_for<'a>(raw_line: &'a str, parsed: &ParsedOsSpeechLine) -> std::borr
 /// Owns one transcribe session's entire lifetime: reads CommandEvents,
 /// reassembles+mirrors every stderr line to both log lanes, maps
 /// transcript/asset/locale/status/error records to the two event lanes
-/// (§2.5, gated on `is_current`), and clears `OsSpeechState`'s running
+/// (gated on `is_current`), and clears `OsSpeechState`'s running
 /// slot when done. No stdout/framing/pipeline/Channel handling at all —
 /// unlike audiocap's own `spawn_session_task`, this mode never writes PCM
-/// to stdout (§0), so there is nothing on that side of the child to read.
+/// to stdout, so there is nothing on that side of the child to read.
 fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: tauri::async_runtime::Receiver<CommandEvent>) {
     tauri::async_runtime::spawn(async move {
         let mut stderr_lines = LineReassembler::new();
@@ -1586,7 +1586,7 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                                 }
                             }
                             ParsedOsSpeechLine::Locale { requested: _, resolved, supported } => {
-                                // §Q4: unsupported is signaled by a
+                                // Q4: unsupported is signaled by a
                                 // SEPARATE, deferred `error:unsupported-
                                 // locale` record — no direct emission
                                 // from the locale record itself in that
@@ -1732,7 +1732,7 @@ fn spawn_preinstall_task(app: tauri::AppHandle, attempt: u64, mut rx: tauri::asy
                 CommandEvent::Stderr(bytes) => {
                     for line in stderr_lines.feed(&bytes) {
                         // The preinstall lane shouldn't ever see a
-                        // transcript record (§0: no transcribe happens
+                        // transcript record (no transcribe happens
                         // during a preinstall) — routed through the same
                         // `log_line_for` choke point as the session task
                         // anyway, defensively, so that invariant isn't
@@ -1935,7 +1935,7 @@ mod tests {
         assert!(is_macos_26_or_later((27, 0)));
     }
 
-    // ---- NDJSON parsing (§2.2) ----
+    // ---- NDJSON parsing ----
 
     #[test]
     fn parses_an_interim_transcript_line() {
@@ -2530,7 +2530,7 @@ mod tests {
         assert!(!state.is_paused(), "a leftover pause from a finished session must never leak into the next one");
     }
 
-    // ---- preinstall single-flight (§A2) ----
+    // ---- preinstall single-flight (A2) ----
 
     #[test]
     fn preinstall_is_rejected_while_a_transcribe_session_is_running() {
@@ -2594,7 +2594,7 @@ mod tests {
         assert_ne!(slot_attempt, Some(p1), "the slot must never still read as p1's once p2 occupies it");
     }
 
-    // ---- session-start preempts an in-flight preinstall (lead §A2 amendment) ----
+    // ---- session-start preempts an in-flight preinstall (lead A2 amendment) ----
 
     #[test]
     fn preempt_on_an_idle_state_is_a_noop_and_sets_no_flag() {
@@ -2672,7 +2672,7 @@ mod tests {
         assert!(slot_is_empty, "a preempted slot must be empty so a late attach hands the child back for teardown");
     }
 
-    // ---- probe memo (§Q4: process-once per app run) ----
+    // ---- probe memo (Q4: process-once per app run) ----
 
     #[test]
     fn probe_memo_is_empty_by_default() {

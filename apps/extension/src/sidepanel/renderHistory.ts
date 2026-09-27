@@ -1,5 +1,5 @@
-// Renders the "历史记录" (history) section — S7 blueprint §2 decision C
-// / §4: one row per saved LiteSession, each with 导出 Markdown/导出
+// Renders the "历史记录" (history) section — S7 decision C:
+// one row per saved LiteSession, each with 导出 Markdown/导出
 // JSON/删除. Same vanilla-DOM convention as render.ts/renderLocked.ts:
 // a pure function of its input, no module state, returns ONE detached
 // root node the caller swaps in wholesale on every refresh (main.ts
@@ -10,7 +10,7 @@
 // render.ts's own save button uses (the ACTUAL storage write/refresh
 // stays the caller's job, main.ts, mirroring how saveLookup lives in
 // main.ts rather than render.ts). Export is the one deliberate
-// exception (blueprint's own file-ownership note): building the
+// exception (by design): building the
 // Blob/object-URL/synthetic-<a>-click needs no injected dependency —
 // sessionToMarkdown/sessionToJson/exportFilename are already pure — so
 // this file owns that DOM download code directly, and is the ONLY
@@ -91,7 +91,7 @@ function renderActionButton(label: string, onClick: () => void): HTMLButtonEleme
 }
 
 /** Blob + a synthetic `<a download>` click — needs no `"downloads"`
- *  permission (blueprint §9). The object URL is revoked right after
+ *  permission. The object URL is revoked right after
  *  the click; the browser has already captured what it needs to start
  *  the download by then, same as apps/web's own export flow. */
 function downloadSession(session: LiteSession, ext: "md" | "json"): void {

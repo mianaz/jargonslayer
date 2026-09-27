@@ -1,7 +1,7 @@
 // v0.4 S10 field-fix (Chunk A, item 2 + Q1 verdict) —
 // the RFC 8252 loopback OAuth callback
 // listener backing "Connect with OpenRouter" on desktop. Q1's own
-// grounds (blueprint, docs-verified): OpenRouter's PKCE docs bless
+// grounds (docs-verified): OpenRouter's PKCE docs bless
 // "localhost callbacks ... on any port" and never mention custom
 // schemes; Tauri deep links on macOS are bundle-only (untestable in
 // `tauri dev`); a loopback listener keeps the PKCE verifier in the JS
@@ -57,7 +57,7 @@ use tauri::{Emitter, Manager};
 /// exactly this event name before ever calling `oauth_loopback_start`.
 const EVENT_NAME: &str = "oauth://openrouter";
 
-/// "~300s overall deadline" (blueprint) — generous relative to JS's own
+/// ~300s overall deadline — generous relative to JS's own
 /// ~180s timeout (openrouterDesktop.ts) so Rust is never the side that
 /// gives up first; JS settling first and calling `oauth_loopback_cancel`
 /// is the expected common path, this deadline is the backstop for a
@@ -75,7 +75,7 @@ const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// promptly, long enough to not busy-loop.
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
-/// PINNED CONTRACT: exact zh success body (blueprint item 2).
+/// PINNED CONTRACT: exact zh success body.
 const SUCCESS_BODY: &str = "已连接，可关闭此页并返回 JargonSlayer";
 
 /// PINNED CONTRACT: `oauth://openrouter` event payload shape.
@@ -326,7 +326,7 @@ fn run_listener(app: tauri::AppHandle, listener: TcpListener, expected_ns: Strin
 
 // ---- command surface ----
 
-/// PINNED CONTRACT (blueprint item 2 + Q1 verdict): binds an ephemeral
+/// PINNED CONTRACT (Q1 verdict): binds an ephemeral
 /// `127.0.0.1` port, returns it, and spawns a background thread that
 /// waits for OpenRouter's browser redirect back to
 /// `http://127.0.0.1:{port}/oauth/openrouter/{ns}` (F13: ns is a PATH

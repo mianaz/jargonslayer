@@ -6,8 +6,7 @@
 // — SegmentRow's memo must hold, i.e. its render function must not be
 // invoked again at all.
 //
-// React.Profiler was tried first (per the design doc's instructions)
-// but proved unworkable here: empirically, <Profiler>.onRender fires
+// React.Profiler was tried first but proved unworkable here: empirically, <Profiler>.onRender fires
 // on every commit that touches its wrapped subtree REGARDLESS of a
 // memoized child bailing out (Profiler itself isn't memoized, so React
 // still "visits" it even when the child beneath it skips re-rendering)

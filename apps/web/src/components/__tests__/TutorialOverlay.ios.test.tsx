@@ -24,7 +24,7 @@ function resetStore() {
   useApp.setState({ settings: DEFAULT_SETTINGS });
 }
 
-describe("TutorialOverlay — iOS engine picker (S13 §6 Sol F5)", () => {
+describe("TutorialOverlay — iOS engine picker (S13 F5)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 

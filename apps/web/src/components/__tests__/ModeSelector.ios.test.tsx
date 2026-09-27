@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// ModeSelector — iOS-only coverage (blueprint §3 Q2 verbatim: "iOS shows
+// ModeSelector — iOS-only coverage (Q2 verbatim: "iOS shows
 // only 麦克风 + 导入"). IS_IOS is a module-scope import-time const —
 // vi.mock affects this whole file, mirroring engineOptions.ios.test.ts/
 // TutorialOverlay.ios.test.tsx's own split.

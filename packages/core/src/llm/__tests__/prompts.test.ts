@@ -345,9 +345,8 @@ describe("buildTranslateSystemPrompt — ASR-aware idiom translation", () => {
 });
 
 // ---------------------------------------------------------------
-// v0.5 Wave-1 Feature 2 (AI transcript correction, §5 A5) — "prompt
-// fixture (corrects jargon, preserves rest)" from the blueprint's §4
-// verification table: a deterministic structural fixture (asserts the
+// v0.5 Wave-1 Feature 2 (AI transcript correction, A5) — "prompt
+// fixture (corrects jargon, preserves rest)" verification item: a deterministic structural fixture (asserts the
 // PROMPT's own rules/JSON contract), not a live-model quality check
 // (that's an owner field-test item — "Correction QUALITY on a real
 // jargon transcript" — no fixture test can substitute for it).

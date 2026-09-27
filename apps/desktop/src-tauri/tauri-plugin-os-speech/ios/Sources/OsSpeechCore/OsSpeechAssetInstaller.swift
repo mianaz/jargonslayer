@@ -2,7 +2,7 @@ import Speech
 
 // S13 (Lane B) — the locale-resolve + asset-ensure steps shared by both
 // OsSpeechSession (a real transcribe session) and OsSpeechPreinstall (a
-// background warm-up, §A2 on macOS) — factored into free functions
+// background warm-up, A2 on macOS) — factored into free functions
 // (rather than duplicated verbatim in both places the way macOS's own
 // SpeechAnalyzerSession.run/preinstall duplicate their locale-resolve
 // block) since iOS's two callers share the exact same `emit`-closure
@@ -11,7 +11,7 @@ import Speech
 //
 // Pattern source: apps/desktop/src-tauri/audiocap-helper/Sources/
 // AudioCapCore/SpeechAnalyzerSession.swift's own `ensureAssetInstalled`
-// (§Q5/spike "Asset model", FIX S5) — ported with `shouldAbort` widened
+// (Q5, FIX S5) — ported with `shouldAbort` widened
 // to `async` (checked every ~200ms poll tick, same cadence as the
 // progress-emission itself): iOS's abort signal isn't only "did the user
 // press stop" (a same-process flag check would suffice for that alone)
@@ -64,7 +64,7 @@ struct OsSpeechAbort: Error {}
 
 @available(iOS 26.0, macOS 26.0, *)
 enum OsSpeechAssetInstaller {
-  /// §Q5/spike "Asset model" (macOS pattern source): `AssetInventory
+  /// Q5 (macOS pattern source): `AssetInventory
   /// .status(forModules:)` is per-module-configuration; installs
   /// (checking/downloading-with-progress/installed events) only if not
   /// already installed — a re-run when already installed is a fast,
@@ -154,7 +154,7 @@ final class DownloadOutcomeBox: @unchecked Sendable {
   }
 }
 
-/// §A2 (macOS pattern source) — `preinstall_os_speech`'s own flow:
+/// A2 (macOS pattern source) — `preinstall_os_speech`'s own flow:
 /// locale resolve + asset ensure only, no tap/analyzer/results loop.
 /// Mirrors `SpeechAnalyzerSession.preinstall` + osspeech.rs's own R7
 /// `preinstall_terminal_kind`: a clean finish emits NOTHING further (the

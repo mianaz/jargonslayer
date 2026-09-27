@@ -671,7 +671,7 @@ describe("Header — EnginePostureChip (v0.4.7 Lane C tri-state)", () => {
     });
   }
 
-  it("engine:soniox renders the cloud-transient chip — short label, doc §4 hint as title, amber color", async () => {
+  it("engine:soniox renders the cloud-transient chip — short label, full hint as title, amber color", async () => {
     useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "soniox" }, status: "idle" });
     await renderHeader();
 

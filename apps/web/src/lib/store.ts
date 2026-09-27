@@ -223,7 +223,7 @@ export interface TranslateStatus {
  * aliasesAfterRename), never by an auto-update — that's what makes
  * "rename-wins" hold.
  *
- * v0.5 Wave-1 Feature 1 / §5 A2 (manual-assignment guard, REWRITTEN
+ * v0.5 Wave-1 Feature 1 / A2 (manual-assignment guard, REWRITTEN
  * from a rev-1 draft that skipped locked segments wholesale): the
  * sidecar sends CHANGED-ONLY assignments (whisper_server.py:1126-1148)
  * — a locked segment may never appear in another update again, so
@@ -343,8 +343,8 @@ export function seedChannelAlias(
 // the realtime-diarization helpers immediately above.
 // ---------------------------------------------------------------
 
-/** Soft cap (§5 A1: "cap 200 enforced in store", not merely a UI
- *  decoration) — a roster this large is almost certainly a stuck/
+/** Soft cap (A1: the cap of 200 is enforced in the store, not merely a
+ *  UI decoration) — a roster this large is almost certainly a stuck/
  *  runaway auto-number loop rather than a real meeting's speaker list. */
 export const SPEAKER_ROSTER_CAP = 200;
 
@@ -432,8 +432,8 @@ export function unlockSpeakerInSegments(
   });
 }
 
-/** Legacy-session roster fallback (§5 A2: "legacy loaded sessions
- *  derive roster from unique segment.speaker values"): a session saved
+/** Legacy-session roster fallback (A2: legacy loaded sessions
+ *  derive the roster from unique segment.speaker values): a session saved
  *  before the roster feature existed has no `speakerRoster` at all —
  *  reconstruct one from whatever distinct display names its segments
  *  already carry, in first-seen order, so a loaded old session still
@@ -740,7 +740,7 @@ interface AppState {
   // exact semantics each wraps). Available whenever a session exists
   // (stopped/paused/listening) — a USER action, not an engine mutation,
   // so unlike updateSegmentText/updateCard/updateTerm below these are
-  // NOT gated to status==="stopped" (doc §1 F1's own "UX shape"); each
+  // NOT gated to status==="stopped" (F1's own UX shape); each
   // still triggers the same post-stop re-save top-up as every other
   // post-stop-reachable mutation in this file when the meeting has
   // already ended.
@@ -1077,7 +1077,7 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *  engine's own start() reports a missing-key zh error — stt/soniox.ts,
  *  stt/tabAudioCloud.ts), same UX a full-tier keyless BYOK pick already
  *  has, rather than a special preview-only failure mode. Deliberately
- *  NOT key-aware either (blueprint's own "explicitly rejected" list): a
+ *  NOT key-aware either (explicitly rejected by design): a
  *  restored backup with engine:"deepgram" and stripped keys lands on a
  *  selectable engine that errors honestly at start instead of being
  *  silently coerced away — full-tier parity, and it keeps engine
@@ -1242,7 +1242,7 @@ export function applyOpenRouterModelDefaults(settings: Settings): Settings {
   return Object.keys(patch).length > 0 ? { ...settings, ...patch } : settings;
 }
 
-/** v0.5 Wave-1 Feature 5 / §5 A3 — the three shells this repo builds
+/** v0.5 Wave-1 Feature 5 / A3 — the three shells this repo builds
  *  for, named (rather than two booleans) because modeForPersistedEngine
  *  below has one genuinely three-way branch (osspeech). */
 export type ModePlatform = "web" | "desktop" | "ios";
@@ -1256,7 +1256,7 @@ const VALID_MODES = new Set<Settings["mode"]>([
   "url",
 ]);
 
-/** §5 A3: "persisted mode strings runtime-validated" — an untrusted/
+/** A3: persisted mode strings are runtime-validated — an untrusted/
  *  garbage/future-unknown value is treated as absent (triggers
  *  back-derivation below) rather than blindly trusted, unlike `engine`
  *  elsewhere in this file (no picker ever writes a bad `mode` string,
@@ -1265,7 +1265,7 @@ function isValidMode(x: unknown): x is Settings["mode"] {
   return typeof x === "string" && VALID_MODES.has(x as Settings["mode"]);
 }
 
-/** §5 A3 (BLOCKER) — total, platform-aware back-derivation of `mode`
+/** A3 (BLOCKER) — total, platform-aware back-derivation of `mode`
  *  from a persisted `engine`, for every returning user who saved
  *  settings before `mode` existed (or whose saved `mode` didn't
  *  validate — see isValidMode above). Exported for tests: this is the
@@ -1282,7 +1282,7 @@ function isValidMode(x: unknown): x is Settings["mode"] {
  *  other branch reads it, since by then it's guaranteed legal for
  *  `platform`.
  *
- *  Mapping (§5 A3, verbatim): import/browser-whisper(raw)->import;
+ *  Mapping (A3): import/browser-whisper(raw)->import;
  *  tabaudio/tabaudio-cloud->tab; webspeech/whisper/soniox/deepgram->mic;
  *  appaudio->system-audio(desktop); osspeech->{persisted source or
  *  system-audio} on desktop (dual capture v1 exception, below)/mic on
@@ -1460,7 +1460,7 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   // either way, but this needs the fully-folded `baseUrl` (from
   // `legacy`/DEFAULT_SETTINGS above) to decide.
   const openRouterSettings = applyOpenRouterModelDefaults(tierSettings);
-  // v0.5 Wave-1 Feature 5 / §5 A3: mode back-derivation. `hadSavedMode`
+  // v0.5 Wave-1 Feature 5 / A3: mode back-derivation. `hadSavedMode`
   // reads the RAW saved object, before the defaults fold above — mirrors
   // `hadSavedEngine`'s own "engine" in saved check for applyTierDefaults.
   // Runs LAST (after platform/tier coercion) so it derives `mode` from a
@@ -3131,7 +3131,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (webhookUrl) {
       void autoExporter.postWebhook(session, webhookUrl);
     }
-    // v0.5 F9 / blueprint §5 A8 (F0b, lead-owned): AnkiConnect delivery
+    // v0.5 F9 / A8 (F0b, lead-owned): AnkiConnect delivery
     // rides the SAME post-save hook as the webhook — a stopped session
     // re-saves many times (late diarization/translations/edits), and
     // deliverSessionNotes' ledger is what makes those repeats
@@ -3185,7 +3185,7 @@ export const useApp = create<AppState>((set, get) => ({
       pauseStartedAt: null,
       pauseIntervals,
       speakerAliases: session.speakerAliases ?? {},
-      // v0.5 Wave-1 Feature 1 / §5 A2: a session saved by the new code
+      // v0.5 Wave-1 Feature 1 / A2: a session saved by the new code
       // always carries `speakerRoster` (even []) — only a session saved
       // BEFORE this feature existed lacks the key entirely, and only
       // THAT case derives a roster from the segments' own distinct

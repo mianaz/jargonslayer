@@ -222,7 +222,7 @@ describe("flushSecrets — resolves only after every enqueued write has settled"
   });
 });
 
-// The blueprint's own load-bearing migration matrix — store-level half:
+// The load-bearing migration matrix — store-level half:
 // hydrate() uses hydrateSecrets' returned envelope correctly (the
 // migration ALGORITHM itself is secret.desktop.test.ts's job).
 describe("hydrate() — keychain migration orchestration", () => {

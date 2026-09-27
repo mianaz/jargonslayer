@@ -1,7 +1,7 @@
 import XCTest
 @testable import AudioCapCore
 
-// S11 (§Q2) — TranscriptThrottle is pure (no CoreAudio, no Speech, no
+// S11 (Q2) — TranscriptThrottle is pure (no CoreAudio, no Speech, no
 // real I/O): every test drives it with a manually-advanced `var now`
 // closure (same injected-clock style as TranscribeConsumerTests), never
 // a real sleep.

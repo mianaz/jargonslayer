@@ -2,8 +2,8 @@ import Foundation
 
 // S9.1 — the stdout wire format toward the Rust sidecar supervisor
 // (D5: "Framing v1 (stdout, all little-endian, versioned)"). Pure byte
-// encoding, no CoreAudio, no I/O — this is the piece the blueprint
-// explicitly calls out for a `swift test` golden-bytes test (see
+// encoding, no CoreAudio, no I/O — this is the piece explicitly
+// singled out for a `swift test` golden-bytes test (see
 // Tests/AudioCapCoreTests/FramingTests.swift). main.swift is the only
 // production caller; it writes the returned byte arrays straight to
 // FileHandle.standardOutput.

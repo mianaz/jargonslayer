@@ -1,4 +1,4 @@
-// v0.5 Wave-1 Feature 2 (AI transcript correction, §5 A5) — postFilter
+// v0.5 Wave-1 Feature 2 (AI transcript correction, A5) — postFilter
 // coverage: "shared zod CorrectResponseSchema validation (reject blank/
 // duplicate ids, filter to requested ids)". The schema itself
 // (providerCore.ts's CorrectResponseSchema) is shape-only (mirrors

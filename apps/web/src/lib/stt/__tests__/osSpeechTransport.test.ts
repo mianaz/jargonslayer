@@ -1,4 +1,4 @@
-// osSpeechTransport.ts (S13 blueprint §2/§6 D2, Lane D) — desktop-branch
+// osSpeechTransport.ts (S13 D2, Lane D) — desktop-branch
 // coverage (ambient test env: NEXT_PUBLIC_IOS unset, so the REAL IS_IOS
 // resolves false, same as every other build-flag suite's "false by
 // default" convention). See osSpeechTransport.ios.test.ts for the iOS

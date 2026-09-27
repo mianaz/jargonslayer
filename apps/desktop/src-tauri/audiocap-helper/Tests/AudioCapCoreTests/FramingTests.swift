@@ -4,8 +4,8 @@ import XCTest
 // S9.1 deliverable list: "Swift unit test (`swift test`): framing
 // encoder golden-bytes test (header + one chunk + EOS), pure function,
 // no CoreAudio." Framing.swift touches no CoreAudio API at all, so this
-// runs the same in CI (no CoreAudio session available there — see the
-// blueprint's own "Slices" preamble) as on a dev machine.
+// runs the same in CI (no CoreAudio session available there) as on a dev
+// machine.
 final class FramingTests: XCTestCase {
     func testStreamHeaderGoldenBytes() {
         let header = Framing.encodeStreamHeader(sampleRate: 48_000, channels: 2)

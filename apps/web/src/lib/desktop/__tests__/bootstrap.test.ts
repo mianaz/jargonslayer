@@ -6,7 +6,7 @@
 // state, so it never needs to touch a real `@tauri-apps/*` package.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// S11 osspeech blueprint (§A4) — bootstrap.ts's own top-level
+// S11 osspeech (A4) — bootstrap.ts's own top-level
 // `import { preinstallOsSpeech } from "./osspeechCaps"` means every test
 // in this file (which imports bootstrap.ts) needs this module to
 // resolve, mocked rather than real (Worker C's file — not on disk yet
@@ -39,7 +39,7 @@ import type { InvokeFn, ListenFn, TauriEvent, TauriFetchFn } from "../tauriApi";
 import { pipInstallDiar, type DesktopPaths } from "../uvCommands";
 import { clearDiag, getDiagEntries } from "../../diag/log";
 import { resetMlxCapsCache } from "../mlxCaps";
-// S11 osspeech blueprint (§A4) — chooseOsSpeechEngine() reads/writes the
+// S11 osspeech (A4) — chooseOsSpeechEngine() reads/writes the
 // REAL store (dynamic-imported by bootstrap.ts itself), so this suite
 // seeds/reads it directly rather than mocking zustand's own shape —
 // mirrors SettingsDialog.desktop.test.tsx's own "import the real useApp,
@@ -127,7 +127,7 @@ function jsonResponse(body: unknown, status = 200): Response {
  *  AMENDMENT's own WIZARD_CONSENT_REQUIRED pause — the exact pattern a
  *  real subscriber (chunk 6's wizard) would use, since bootstrapDesktop
  *  itself resolves before the drive loop finishes (see that file's own
- *  header comment on why). S11 osspeech blueprint (§A4): OSSPEECH_ACTIVE
+ *  header comment on why). S11 osspeech (A4): OSSPEECH_ACTIVE
  *  joins the set — the drive loop `return`s for it the exact same way
  *  it does for WIZARD_CONSENT_REQUIRED, so it's every bit as much a
  *  stopping point; existing tests never produce this phase, so this
@@ -517,7 +517,7 @@ describe("bootstrapDesktop — F14 quarantine (persisted parakeet marker, mlx un
     expect(runUvModels).toEqual(["small"]);
   });
 
-  it("§D F2 case (b): mlx_capabilities{mlxSupported:true} but mlx_import_preflight RESOLVED {ok:false} (mlx-venv invalid) ALSO routes to the re-choice pause, but WITHOUT any durable persist — settings.whisperModel/the marker stay untouched", async () => {
+  it("F2 case (b): mlx_capabilities{mlxSupported:true} but mlx_import_preflight RESOLVED {ok:false} (mlx-venv invalid) ALSO routes to the re-choice pause, but WITHOUT any durable persist — settings.whisperModel/the marker stay untouched", async () => {
     const persisted: string[] = [];
     const deps: BootstrapDeps = {
       invoke: makeFakeInvoke({
@@ -538,7 +538,7 @@ describe("bootstrapDesktop — F14 quarantine (persisted parakeet marker, mlx un
     const handle = await bootstrapDesktop(deps);
     const gated = await waitForStable(handle);
     expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
-    // §D F2's own case-(b) distinction from case (a): NO durable
+    // F2's own case-(b) distinction from case (a): NO durable
     // write — settings.whisperModel keeps whatever the user actually
     // saved ("parakeet-tdt-0.6b-v3"), only THIS session's in-memory
     // ctx falls back (proven by the no-arg beginProvision() test
@@ -546,7 +546,7 @@ describe("bootstrapDesktop — F14 quarantine (persisted parakeet marker, mlx un
     expect(persisted).toEqual([]);
   });
 
-  it("§D F2 case (b) continued: the session STILL runs the fallback model this session (a no-arg beginProvision() provisions 'small'), even though nothing was durably persisted", async () => {
+  it("F2 case (b) continued: the session STILL runs the fallback model this session (a no-arg beginProvision() provisions 'small'), even though nothing was durably persisted", async () => {
     const runUvModels: string[] = [];
     let probeCalls = 0;
     const persisted: string[] = [];
@@ -590,7 +590,7 @@ describe("bootstrapDesktop — F14 quarantine (persisted parakeet marker, mlx un
     expect(persisted).toEqual(["small"]);
   });
 
-  // S12a fix round (§D F2, case c, HIGH) — RED-VERIFICATION: the OLD
+  // S12a fix round (F2, case c, HIGH) — RED-VERIFICATION: the OLD
   // code's own bug, reproduced at the bootstrap.ts level. Pre-fix,
   // bootstrap.ts's own mirrored quarantine check read
   // `event.mlxUsable !== true` and persisted UNCONDITIONALLY whenever
@@ -601,7 +601,7 @@ describe("bootstrapDesktop — F14 quarantine (persisted parakeet marker, mlx un
   // `expect(persisted).toEqual([])` directly below is what a revert to
   // that old unconditional-persist logic would FAIL — the old code
   // would have pushed "small" here.
-  it("§D F2 case (c): mlx_capabilities invoke() REJECTS TWICE (surviving the internal retry) -> parks on a retriable STEP/ERROR, ZERO durable persist, ctx never reseeded either", async () => {
+  it("F2 case (c): mlx_capabilities invoke() REJECTS TWICE (surviving the internal retry) -> parks on a retriable STEP/ERROR, ZERO durable persist, ctx never reseeded either", async () => {
     const persisted: string[] = [];
     let capsCalls = 0;
     const deps: BootstrapDeps = {
@@ -637,7 +637,7 @@ describe("bootstrapDesktop — F14 quarantine (persisted parakeet marker, mlx un
     expect(persisted).toEqual([]);
   });
 
-  it("§D F2 case (c): mlx_import_preflight invoke() REJECTS TWICE -> ALSO parks on retriable STEP/ERROR with the OTHER '无法检测' message, zero persist", async () => {
+  it("F2 case (c): mlx_import_preflight invoke() REJECTS TWICE -> ALSO parks on retriable STEP/ERROR with the OTHER '无法检测' message, zero persist", async () => {
     const persisted: string[] = [];
     const deps: BootstrapDeps = {
       invoke: makeFakeInvoke({
@@ -668,7 +668,7 @@ describe("bootstrapDesktop — F14 quarantine (persisted parakeet marker, mlx un
     expect(persisted).toEqual([]);
   });
 
-  it("§D F2 case (c): retryStep() on the probe-error landing re-runs CHECKING from scratch — a transient hiccup that clears on retry recovers all the way to HEALTHY, still with zero persist along the way", async () => {
+  it("F2 case (c): retryStep() on the probe-error landing re-runs CHECKING from scratch — a transient hiccup that clears on retry recovers all the way to HEALTHY, still with zero persist along the way", async () => {
     const persisted: string[] = [];
     let capsCalls = 0;
     let probeCalls = 0;
@@ -855,7 +855,7 @@ describe("bootstrapDesktop — fresh-provision consent gate (LEAD AMENDMENT)", (
   });
 });
 
-describe("bootstrapDesktop — osspeech ENGINE_CHOICE pre-consent branch (S11 blueprint §A4)", () => {
+describe("bootstrapDesktop — osspeech ENGINE_CHOICE pre-consent branch (S11 A4)", () => {
   it("a fresh NEEDS_PROVISION with persistedEngine already 'osspeech' never pauses for consent — lands on OSSPEECH_ACTIVE and never calls run_uv (does not re-show on relaunch)", async () => {
     let runUvCalls = 0;
     const deps: BootstrapDeps = {
@@ -1051,7 +1051,7 @@ describe("bootstrapDesktop — STARTING's start_server carries lazyLoad for a pr
   });
 });
 
-describe("chooseOsSpeechEngine() (S11 blueprint §3 Worker D, §A4)", () => {
+describe("chooseOsSpeechEngine() (S11 Worker D, A4)", () => {
   afterEach(() => {
     useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: false });
     mockPreinstallOsSpeech.mockClear();
@@ -2283,7 +2283,7 @@ describe("bootstrapDesktop — S4 chunk 3: model picker wiring (beginProvision(m
   });
 });
 
-// S12b fix round (§F FB1, BLOCKER) — the first-run WIZARD's own
+// S12b fix round (FB1, BLOCKER) — the first-run WIZARD's own
 // ensureMlxExtras wiring (drive()'s own DOWNLOAD_MODEL pre-step hook —
 // see that hook's own doc comment, bootstrap.ts, for why it reuses
 // ensureMlxExtras() verbatim rather than a new driven step/effect).
@@ -2291,7 +2291,7 @@ describe("bootstrapDesktop — S4 chunk 3: model picker wiring (beginProvision(m
 // prewarm_model for an mlx-family ctx.model with NO prior venv
 // creation — server.rs's venv_for_model would then resolve
 // mlxVenvPython, a nonexistent interpreter, and prewarm would fail.
-describe("bootstrapDesktop — first-run WIZARD parakeet provisioning (§F FB1)", () => {
+describe("bootstrapDesktop — first-run WIZARD parakeet provisioning (FB1)", () => {
   const parakeetModel = "parakeet-tdt-0.6b-v3";
 
   /** Distinguishes the MLX venv's own run_uv calls from the BASE
@@ -2302,7 +2302,7 @@ describe("bootstrapDesktop — first-run WIZARD parakeet provisioning (§F FB1)"
    *  --python 3.12` calls share args[0]==="venv"). Returns `null` (not
    *  pushed to the test's own `order` array) for every base-venv/
    *  irrelevant call, keeping the asserted order focused on exactly
-   *  what §F FB1 is about: mlx sequencing relative to prewarm_model. */
+   *  what FB1 is about: mlx sequencing relative to prewarm_model. */
   function mlxRunUvLabel(args: string[]): string | null {
     if (args[0] === "venv" && args[1] === paths.mlxVenvDir) return "run_uv:mlx-venv-create";
     if (args[0] === "pip" && args[1] === "install" && args[3] === paths.mlxVenvPython) return "run_uv:mlx-pip-install";
@@ -2545,7 +2545,7 @@ describe("bootstrapDesktop — first-run WIZARD parakeet provisioning (§F FB1)"
 });
 
 // ---------------------------------------------------------------
-// S4 chunk 4 (blueprint decision C: switch flow) — switchModel() +
+// S4 chunk 4 (decision C: switch flow) — switchModel() +
 // installedModel(). Every test below starts from a HEALTHY (adopted)
 // handle via healthyDeps() — switchModel() is only ever meaningful
 // from there (see the "non-HEALTHY rejection" test for the opposite
@@ -2575,7 +2575,7 @@ function healthyDeps(overrides: Partial<BootstrapDeps> = {}): BootstrapDeps {
   };
 }
 
-describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)", () => {
+describe("bootstrapDesktop — switchModel() (S4 chunk 4, decision C)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -2676,7 +2676,7 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
   // ts's startServer effect does (provisionRunner.test.ts's own
   // "hfToken passthrough" coverage) — this suite proves the SAME
   // contract holds for the switch flow's direct (non-Effect) call.
-  describe("hfToken passthrough on the restart's start_server call (§C Q6)", () => {
+  describe("hfToken passthrough on the restart's start_server call (Q6)", () => {
     function stubMediumDownload(): void {
       vi.stubGlobal(
         "fetch",
@@ -3395,13 +3395,13 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
   });
 });
 
-// S12b fix round (§F FB8, MED) — switchModel()'s own SAME-TARGET no-op:
+// S12b fix round (FB8, MED) — switchModel()'s own SAME-TARGET no-op:
 // re-selecting the model that's ALREADY installed+running must not
 // repeat the download poll or restart an already-healthy sidecar. (The
 // OTHER half of FB8 — installedModel() staleness after a download-task
 // completes — is worker B2's, in SettingsDialog.tsx; not this file's
 // concern.)
-describe("bootstrapDesktop — switchModel() SAME-TARGET no-op (§F FB8)", () => {
+describe("bootstrapDesktop — switchModel() SAME-TARGET no-op (FB8)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     resetMlxCapsCache();
@@ -3552,7 +3552,7 @@ describe("bootstrapDesktop — switchModel() SAME-TARGET no-op (§F FB8)", () =>
 // S12a (v0.4.4, provision) — performSwitchModel's new leading Phase 1 (ensureMlxExtras)
 // for an MLX_ONLY_MARKER_MODELS target, gated so a plain whisper-family
 // switch (every test in the describe block above) stays byte-identical.
-describe("bootstrapDesktop — switchModel() to an mlx-family model (§C Provision, ensureMlxExtras)", () => {
+describe("bootstrapDesktop — switchModel() to an mlx-family model (ensureMlxExtras)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     resetMlxCapsCache();
@@ -3568,11 +3568,11 @@ describe("bootstrapDesktop — switchModel() to an mlx-family model (§C Provisi
     vi.stubGlobal("fetch", fetchMock);
   }
 
-  // S12a fix round (§D F6, MEDIUM) — ensureMlxExtras' own combined
+  // S12a fix round (F6, MEDIUM) — ensureMlxExtras' own combined
   // pre-Phase-1 disk-space precheck, BEFORE the first venv mutation
   // (venvCreateMlx's own run_uv call). Cross-lane pinned contract (A1):
   // invoke("app_data_disk_free") -> {freeBytes: number}.
-  describe("combined pre-Phase-1 disk-space precheck (§D F6)", () => {
+  describe("combined pre-Phase-1 disk-space precheck (F6)", () => {
     it("pass: plenty of free space -> app_data_disk_free is called BEFORE the first run_uv (venv create), install proceeds normally", async () => {
       stubParakeetDownload();
       const order: string[] = [];

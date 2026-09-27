@@ -590,7 +590,7 @@ export interface Settings {
   // rather than inferred from `engine` alone, because intent and
   // mechanism can legitimately diverge (StatusLine's engine dropdown
   // stays a power-user override that writes `engine` directly without
-  // touching `mode` — see doc §1 F5's "Store shape decision"). Picking
+  // touching `mode` — F5's store-shape decision). Picking
   // a mode tile (a later lane's ModeSelector) derives+writes BOTH
   // `mode` and `engine` together via deriveEngineForMode (engineOptions.
   // ts, that lane's job). "system-audio" = 本机会议声音, "tab" = 浏览器
@@ -627,7 +627,7 @@ export interface Settings {
   // SETTINGS) allow-list both pick this up automatically, same as
   // partials/preferOnDeviceSpeech — no extra migration code needed.
   sidecarMode: "managed" | "external";
-  // v0.4 S4 (blueprint decision C): the user's TARGET Whisper model for
+  // v0.4 S4 (decision C): the user's TARGET Whisper model for
   // the managed desktop sidecar — a preference, not the installed
   // truth. The provision marker's own `model` field stays what
   // start_server actually launches (marker wins on provisioned-dead
@@ -767,7 +767,7 @@ export interface Settings {
   // diarization (pyannote); "" = disabled. Never leaves the browser
   // except over localhost to the sidecar (see upload.ts).
   hfToken: string;
-  // v0.4 S4 (blueprint decision E): Soniox BYOK API key for the
+  // v0.4 S4 (decision E): Soniox BYOK API key for the
   // "soniox" cloud engine; "" = engine unavailable. Sent ONLY inside
   // sonioxTransport.ts's wss config message to stt-rt.soniox.com.
   // diag/report.ts's SECRET_KEY_RE catches the name automatically

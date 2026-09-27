@@ -1,4 +1,4 @@
-// Mic first-grant pure logic (S7 blueprint §2 Decision A / chunk 3).
+// Mic first-grant pure logic (S7 Decision A / chunk 3).
 // getUserMedia() cannot show its permission PROMPT inside the side
 // panel (or the popup, or an offscreen document) — Chrome dismisses
 // it silently and hands back a permission-denied error; "ask for the
@@ -7,8 +7,7 @@
 // chrome-extension:// is a secure context, the grant then persists
 // for the whole origin — so the panel's SpeechRecognition and the
 // VAD's own getUserMedia both work afterward with no further
-// prompting. See the blueprint's §0/§2-A and anchors 1/5 for the doc
-// citations this is built on.
+// prompting.
 //
 // This file is the PURE decision layer only — it never touches the
 // DOM and never calls getUserMedia itself. permission.html/permission.ts
@@ -25,7 +24,7 @@ export type MicPermissionAction =
  * Pure decision table, no I/O. `state` is either a real
  * `navigator.permissions.query({name:"microphone"})` result or
  * `"unknown"` when that API is unavailable/unsupported or the query
- * itself rejects (best-effort only — blueprint anchor 5).
+ * itself rejects (best-effort only).
  *
  * - "granted" -> "start": already usable, skip the grant tab entirely.
  * - "prompt" -> "open-grant-page": the browser has definitely NOT
@@ -38,8 +37,8 @@ export type MicPermissionAction =
  *   explicit denial, so show the recovery copy instead of a tab.
  * - "unknown" -> "start": no proactive signal either way (the query
  *   API is unavailable/unreliable here). Optimistically try capture
- *   directly — the "try" half of the blueprint's "fall back to
- *   try-then-catch"; the caller's reactive not-allowed handling
+ *   directly — the "try" half of a "fall back to
+ *   try-then-catch" design; the caller's reactive not-allowed handling
  *   (captureController, S7 chunk 6) is the "catch" half that opens
  *   the grant page if this attempt turns out to fail. This avoids
  *   forcing every returning user through an extra tab just because
@@ -81,9 +80,8 @@ export async function queryMicPermission(): Promise<PermissionState | "unknown">
 
 /**
  * Opens the one-time mic-grant page in a visible tab — the only place
- * the getUserMedia prompt can actually render (blueprint anchors
- * 1/5). `chrome.tabs.create` needs no `"tabs"` permission for this
- * call shape (blueprint §9), and `chrome.runtime.getURL` resolves the
+ * the getUserMedia prompt can actually render. `chrome.tabs.create`
+ * needs no `"tabs"` permission for this call shape, and `chrome.runtime.getURL` resolves the
  * packaged path the same way regardless of how the bundler emits it.
  */
 export function openPermissionPage(): Promise<chrome.tabs.Tab> {

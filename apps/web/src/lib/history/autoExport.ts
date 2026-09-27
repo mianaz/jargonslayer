@@ -289,7 +289,7 @@ function stripKeyMaterial(settings: Settings): Settings {
     apiKeyOllama: "",
     apiKeyCustom: "",
     hfToken: "",
-    // v0.4 S4 (blueprint decision E): Soniox BYOK key — same hand-listed
+    // v0.4 S4 (decision E): Soniox BYOK key — same hand-listed
     // strip as the other BYOK/pairing fields here (types.ts's own
     // sonioxKey doc comment points back at this exact line).
     sonioxKey: "",
@@ -351,7 +351,7 @@ function overlaySecrets(settings: Settings, keychainValues: Partial<Record<Secre
  *  re-teaching the app every known term, which is why this ships in
  *  the same release as #48 step 1 (known-term suppression).
  *
- *  `customPacks` (v0.5 Wave-1 F8, §5 A7): the named custom-pack
+ *  `customPacks` (v0.5 Wave-1 F8, A7): the named custom-pack
  *  registry (glossary.ts's own IDB slice, not a Settings field) — same
  *  "optional field, schemaVersion stays 1" precedent as learnset
  *  above. glossary.loadCustomEntries() above already loads+normalizes
@@ -441,7 +441,7 @@ interface BackupShape {
   // tolerates absence (0 count / no restore writes / learn-set left
   // untouched), never assumes the key exists.
   learnset?: Record<string, unknown>;
-  // v0.5 Wave-1 F8 (§5 A7): absent on any pre-F8 backup — restore
+  // v0.5 Wave-1 F8 (A7): absent on any pre-F8 backup — restore
   // below tolerates absence (0 packs restored; "personal" still
   // exists via glossary.ts's own load-time auto-create, so a legacy
   // restore just ends up with "personal" only, per A7).
@@ -532,7 +532,7 @@ export function previewBackup(json: string): {
  *  contributes zero records — the current learn-set is left completely
  *  untouched, never cleared.
  *
- *  `customPacks` (v0.5 Wave-1 F8, §5 A7): upserted by `id`, same
+ *  `customPacks` (v0.5 Wave-1 F8, A7): upserted by `id`, same
  *  posture as glossary entries — a pack id already present locally is
  *  overwritten by the backup's copy (name/enabled/createdAt), packs
  *  not mentioned stay untouched. A backup with no `customPacks` key

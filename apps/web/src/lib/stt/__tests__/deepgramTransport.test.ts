@@ -80,7 +80,7 @@ describe("buildDeepgramUrl", () => {
     );
   });
 
-  it("sends mip_opt_out=true UNCONDITIONALLY, even with no opts at all (doc §9 D7 — the whole reason this integration is honestly cloud-transient)", () => {
+  it("sends mip_opt_out=true UNCONDITIONALLY, even with no opts at all (D7 — the whole reason this integration is honestly cloud-transient)", () => {
     const p = params(buildDeepgramUrl(DEFAULT_SETTINGS));
     expect(p.get("mip_opt_out")).toBe("true");
   });
@@ -479,7 +479,7 @@ describe("DeepgramTransport", () => {
     expect(onStatus.mock.calls[0]).toEqual(["connecting"]);
     expect(onStatus.mock.calls[1]).toEqual(["listening"]);
     // THE regression pin: a literal Soniox-style copy (first-message
-    // JSON config) fails Deepgram auth entirely (doc §9, Sol F12) — this
+    // JSON config) fails Deepgram auth entirely (Sol F12) — this
     // asserts BOTH halves of the real mechanism at once: the handshake
     // carries the token, and nothing rides the message channel instead.
     expect(ws.protocols).toEqual(["token", "sk-abc"]);

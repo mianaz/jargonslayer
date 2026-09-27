@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2017",
     // No "dom"/"dom.iterable" on purpose — this package must stay
-    // React/DOM-free (#53 core extraction, PLAN-v0.4 §1D). Any
+    // React/DOM-free (#53 core extraction). Any
     // accidental `document`/`window`/browser-global reference fails
     // typecheck here as an undefined name, on top of the grep check
     // and the DOM-freeness unit test (see src/__tests__/).

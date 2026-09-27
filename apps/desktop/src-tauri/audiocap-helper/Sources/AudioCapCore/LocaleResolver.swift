@@ -1,6 +1,6 @@
 import Foundation
 
-// S11 (§Q4/§3 Worker A) — resolves the CLI's `--locale` (a BCP-47 tag,
+// S11 (Q4, Worker A) — resolves the CLI's `--locale` (a BCP-47 tag,
 // e.g. "zh-Hans", "en-US") to the Locale SpeechTranscriber actually
 // supports, driving both the `{"type":"locale",...}` NDJSON emission
 // and the `unsupported-locale` typed-error path. Split in two, same

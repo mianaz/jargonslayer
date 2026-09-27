@@ -5,8 +5,8 @@
 // app (`完整版`) or the desktop app (`桌面版`) — never "local", since
 // Lite itself IS the local/offline surface. Pure data, no DOM, no
 // module state; src/sidepanel/renderLocked.ts is the only consumer
-// that touches the DOM. Every string below is VERBATIM from blueprint
-// §7 — lockedFeatures.test.ts hardcodes the same copy independently so
+// that touches the DOM. Every string below is the approved copy,
+// verbatim — lockedFeatures.test.ts hardcodes the same copy independently so
 // an accidental edit here fails a test instead of drifting silently.
 
 export type LockedFeatureBadge = "完整版" | "桌面版";

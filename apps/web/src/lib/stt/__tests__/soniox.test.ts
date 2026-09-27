@@ -1,4 +1,4 @@
-// SonioxEngine (v0.4 S4 chunk 5, blueprint decision E): the thin
+// SonioxEngine (v0.4 S4 chunk 5, decision E): the thin
 // mic-acquisition shell around SonioxTransport — mirrors
 // whisperSocket.ts's own shape (and acquireCancellation.test.ts's own
 // coverage of that shape) with SonioxTransport module-mocked so

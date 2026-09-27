@@ -1,7 +1,7 @@
 import XCTest
 @testable import AudioCapCore
 
-// S11 (§2.2) — golden-byte NDJSON tests against the pure `*Bytes`
+// S11 — golden-byte NDJSON tests against the pure `*Bytes`
 // encoders (TranscriptEvents.swift's own header comment on why these
 // are split out from the real stderr-writing `emit*` functions:
 // StatusEvents itself has no injectable output either, so this file
@@ -95,7 +95,7 @@ final class TranscriptEventsTests: XCTestCase {
         XCTAssertEqual(string(data), #"{"code":"unsupported-locale","message":"zh-Yue","type":"error"}"# + "\n")
     }
 
-    // ---- CMTime seconds -> ms (§Q10) ----
+    // ---- CMTime seconds -> ms (Q10) ----
 
     func testMillisecondsFromSecondsRoundsToNearestInteger() {
         XCTAssertEqual(TranscriptEvents.milliseconds(fromSeconds: 3.2), 3_200)

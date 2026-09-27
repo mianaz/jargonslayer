@@ -6,9 +6,8 @@
 // STEP/ERROR machine state: the ONLY point besides the two true
 // terminals (HEALTHY, TERMINAL_ERROR) where an automatic drive loop can
 // meaningfully pause — every other STEP status (RUNNING/POLLING) keeps
-// auto-advancing with no user action needed (the blueprint's own Data
-// flow section describes the whole uv pipeline as one unattended
-// sequence, "uv python install -> uv venv -> uv pip install ->
+// auto-advancing with no user action needed (the whole uv pipeline is
+// designed as one unattended sequence, "uv python install -> uv venv -> uv pip install ->
 // prewarm(small) -> marker -> start_server -> /health", not a
 // click-through wizard).
 //
@@ -82,7 +81,7 @@ import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import { diagLog } from "../diag/log";
 import { setTransport, type Transport } from "../llm/llmTransport";
 import { probeSidecar, type SidecarProbeResult } from "../stt/sidecarHealth";
-// S4 chunk 4 (blueprint decision C): the model-switch flow's own HTTP
+// S4 chunk 4 (decision C): the model-switch flow's own HTTP
 // leg reuses upload.ts's httpBaseFromWs (the SAME ws://…:8765 ->
 // http://…:8766 derivation every other sidecar-HTTP caller in this
 // codebase already uses) and pollJob (the single GET /jobs/{id} fetch)
@@ -100,7 +99,7 @@ import { httpBaseFromWs, pollJob } from "../stt/upload";
 // vi.mock in every test that reaches this file (bootstrap.test.ts +
 // every DesktopWizard.tsx-importing suite), never stubbed on disk.
 import { preinstallOsSpeech } from "./osspeechCaps";
-// S12a (v0.4.4, §C Provision) — probeMlxCapabilitiesWith (NOT the
+// S12a (v0.4.4) — probeMlxCapabilitiesWith (NOT the
 // getInvoke()-owning probeMlxCaps() singleton, which is IS_DESKTOP-
 // gated and bypasses this file's own injected `deps.invoke` entirely —
 // bootstrapDesktop's whole testable-core contract is "zero
@@ -184,11 +183,11 @@ export interface DesktopLogLine {
  *  over the other's units (whisper_server.py's JobStatus.progress is
  *  already a 0..1 fraction; PrewarmProgressEvent is raw byte counts).
  *  switchModel's own signature stays the plain `(model) => Promise<void>`
- *  the blueprint specifies — this is how SettingsDialog's 下载并切换
+ *  by design — this is how SettingsDialog's 下载并切换
  *  confirm button gets a live readout DURING that awaited call, the
  *  same way the wizard's 下载模型 row gets one from
- *  downloadProgress$ during beginProvision(). S12a (v0.4.4, §C
- *  Provision/Task 7) — the phase union widens with three mlx-install
+ *  downloadProgress$ during beginProvision(). S12a (v0.4.4) — the
+ *  phase union widens with three mlx-install
  *  sub-phases (`"mlx-venv"|"mlx-pip"|"mlx-preflight"`), emitted by
  *  ensureMlxExtras BEFORE the pre-existing "downloading"/"restarting"
  *  phases whenever performSwitchModel's target is an
@@ -226,7 +225,7 @@ export const PROVISION_STEP_LABELS: Record<ProvisionStep, string> = {
   DOWNLOAD_MODEL: "下载模型",
   STARTING: "启动本地服务",
   POLLING_HEALTH: "启动本地服务",
-  // S12a (v0.4.4, §C Provision) — provisionMachine.ts's Record<
+  // S12a (v0.4.4) — provisionMachine.ts's Record<
   // ProvisionStep,string> completeness forces this entry the moment
   // INSTALL_MLX joins ProvisionStep; unused by THIS sprint's actual
   // drive (ensureMlxExtras below never lands `current.state` on this
@@ -236,7 +235,7 @@ export const PROVISION_STEP_LABELS: Record<ProvisionStep, string> = {
   INSTALL_MLX: "安装 MLX 运行环境",
 };
 
-/** S12a (v0.4.4, §C Provision/Task 7) — Chinese labels for
+/** S12a (v0.4.4) — Chinese labels for
  *  SwitchModelProgress's three mlx sub-phases, shared by ensureMlxExtras
  *  (which emits them) and jobsBridge.ts's trackSwitchModel (which reads
  *  them for the "mlx-install" task row's own `stage` text) — single
@@ -248,8 +247,8 @@ export const MLX_INSTALL_STAGE_LABELS: Record<"mlx-venv" | "mlx-pip" | "mlx-pref
   "mlx-preflight": "检查依赖",
 };
 
-/** The 5 rows chunk 6's wizard actually shows (blueprint §Chunk 6:
- *  "安装 Python / 创建虚拟环境 / 安装依赖 / 下载模型 / 启动本地服务") —
+/** The 5 rows chunk 6's wizard actually shows:
+ *  "安装 Python / 创建虚拟环境 / 安装依赖 / 下载模型 / 启动本地服务" —
  *  POLLING_HEALTH folds into the same "启动本地服务" row as STARTING
  *  (wizardRowStep below) rather than getting a confusing 6th row of its
  *  own; from the user's POV waiting for the just-spawned server to
@@ -269,7 +268,7 @@ export function wizardRowStep(step: ProvisionStep): ProvisionStep {
   return step === "POLLING_HEALTH" ? "STARTING" : step;
 }
 
-/** small — first-run reliability (blueprint architecture decision 4);
+/** small — first-run reliability (architecture decision 4);
  *  S4's model picker is what makes this caller-chosen. */
 const DEFAULT_DESKTOP_MODEL = "small";
 
@@ -332,7 +331,7 @@ const EXTERNAL_SIDECAR_MODE_MESSAGE = "当前为外部管理模式，此操作�
  *  own readLazyLoad below). */
 const SIDECAR_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
 
-/** S12a fix round (§D F6, MEDIUM) — ensureMlxExtras' own combined
+/** S12a fix round (F6, MEDIUM) — ensureMlxExtras' own combined
  *  pre-Phase-1 disk-space reserve, named honestly (each summand is what
  *  it actually is, not a bare round "5GB") so a future re-tuning has
  *  something real to adjust against:
@@ -342,14 +341,14 @@ const SIDECAR_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
  *    but a FRESH mlx extras resolve still has to populate it the first
  *    time);
  *  - the parakeet model download that follows immediately after this
- *    phase succeeds (§C R1 F12's own live-verified 2.51GB —
+ *    phase succeeds (R1 F12's own live-verified 2.51GB —
  *    config.json + model.safetensors, exactly);
  *  - headroom for uv's own temp/partial-write overhead during
  *    extraction/linking, so this reserve isn't a razor's-edge minimum.
- *  Totals ≈5.0GB — the blueprint's own "~5GB reserve" figure. */
+ *  Totals ≈5.0GB — the intended ~5GB reserve. */
 const MLX_VENV_DISK_RESERVE_BYTES = 1 * 1024 ** 3; // ~1GB: the mlx venv's own installed footprint
 const MLX_UV_CACHE_DISK_RESERVE_BYTES = 0.5 * 1024 ** 3; // ~0.5GB: uv's package cache for a fresh mlx resolve
-const MLX_MODEL_DISK_RESERVE_BYTES = 2.51 * 1024 ** 3; // 2.51GB: the parakeet model itself (§C R1 F12, live-verified)
+const MLX_MODEL_DISK_RESERVE_BYTES = 2.51 * 1024 ** 3; // 2.51GB: the parakeet model itself (R1 F12, live-verified)
 const MLX_INSTALL_DISK_HEADROOM_BYTES = 1 * 1024 ** 3; // ~1GB: safety margin (temp files, partial writes)
 const MLX_INSTALL_DISK_RESERVE_BYTES =
   MLX_VENV_DISK_RESERVE_BYTES +
@@ -365,7 +364,7 @@ const MLX_INSTALL_DISK_RESERVE_BYTES =
 const defaultNow = (): string => new Date().toISOString();
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** S12a (v0.4.4, §C Q6/HF-token) — the `{hfToken}` fragment to spread
+/** S12a (v0.4.4, Q6/HF-token) — the `{hfToken}` fragment to spread
  *  into performSwitchModel's own direct start_server invoke() call
  *  below (that call isn't a provisionMachine Effect, so it never goes
  *  through provisionRunner.ts's runEffects/hfTokenArg at all). `{}`
@@ -384,7 +383,7 @@ function hfTokenArg(deps: BootstrapDeps): { hfToken: string } | Record<string, n
  *  sidecar endpoint) — httpBaseFromWs(DEFAULT_SETTINGS.whisperUrl) is
  *  the SAME managed-mode derivation runnerDeps.settings/probeSidecar
  *  already use elsewhere in this file (managed mode's whisperUrl is
- *  fixed, blueprint architecture decision 6). Plain global fetch, not
+ *  fixed, architecture decision 6). Plain global fetch, not
  *  deps.tauriFetch — every other sidecar-HTTP call in this codebase
  *  (uploadRecording/fetchSidecarHealth/pollJob/ingestUrl/probeSidecar)
  *  already talks to localhost this same way; tauriFetch exists only to
@@ -463,7 +462,7 @@ async function withUvLog<T>(deps: BootstrapDeps, onLog: OnLog, run: () => Promis
  *  covers the up case — a real MachineState phase already, no widening
  *  needed there).
  *
- *  S11 osspeech blueprint (§A4): OSSPEECH_ACTIVE is the THIRD synthetic
+ *  S11 osspeech (A4): OSSPEECH_ACTIVE is the THIRD synthetic
  *  phase this file alone produces — a fresh NEEDS_PROVISION decision
  *  whose persisted `settings.engine` already reads "osspeech" (the
  *  user's own past EngineChoiceScreen pick, or a direct Settings pick)
@@ -489,7 +488,7 @@ export type DesktopBootstrapState =
  *  source" error. */
 export type DesktopLogSource = "whisper_server.log" | "audiocap.log" | "osspeech.log";
 
-/** Minimal subscription surface (blueprint chunk 5: "a tiny listener
+/** Minimal subscription surface (chunk 5: "a tiny listener
  *  set, not a new dependency; NOT zustand — this predates store
  *  hydration") — a single subscribe function (returns its own
  *  unsubscribe), a state snapshot getter, and a retry trigger. Chunk 6/7
@@ -509,7 +508,7 @@ export interface DesktopBootstrapHandle {
   /** LEAD AMENDMENT: resumes driving past a WIZARD_CONSENT_REQUIRED
    *  pause — a no-op outside that exact state (never throws on a
    *  stray/late call, same contract as retryStep).
-   *  S4 chunk 3 (blueprint decision A + C): `model` is the user's pick
+   *  S4 chunk 3 (decision A + C): `model` is the user's pick
    *  from the wizard's <ModelPicker> — reseeds `ctx.model` (ctx is
    *  reassignable now, see bootstrapDesktop's own `let ctx` below) so
    *  every effect this drive issues from here on (prewarmModel/
@@ -618,7 +617,7 @@ export interface DesktopBootstrapHandle {
    *  `null = not probed yet` idiom just above it in that file. */
   installedModel: () => Promise<string | null>;
   /** SettingsDialog's 转录引擎 「更换模型」 confirm button (S4 chunk 4,
-   *  blueprint decision C's switch flow): POST :8766 /download-model
+   *  decision C's switch flow): POST :8766 /download-model
    *  {model} -> poll its job to done/error -> write the marker
    *  (invokeWriteMarker, reused verbatim from provisionRunner.ts) AND
    *  persist settings.whisperModel TOGETHER (decision C: "this keeps
@@ -669,7 +668,7 @@ export interface DesktopBootstrapHandle {
    *  await, aborting silently if superseded — mirrors drive()'s own
    *  pattern, belt-and-suspenders on top of the shared latch.
    *
-   *  S12b fix round (§F FB8, MED) — SAME-TARGET NO-OP: settles with
+   *  S12b fix round (FB8, MED) — SAME-TARGET NO-OP: settles with
    *  zero download/stop/start/marker-write when the on-disk marker's
    *  own model ALREADY equals `model` (and, for an mlx-family target,
    *  its own extras are still verified valid — see
@@ -909,7 +908,7 @@ export interface BootstrapDeps {
    *  today's only behavior — see bootstrapWithRealDeps below for the
    *  one real implementation. */
   getSidecarMode?: () => Promise<"managed" | "external">;
-  /** S4 chunk 3 (blueprint decision C): hydration-gated read of the
+  /** S4 chunk 3 (decision C): hydration-gated read of the
    *  user's persisted `settings.whisperModel` preference — mirrors
    *  getSidecarMode's own "await BEFORE any provisioning decision"
    *  contract exactly, just for the model instead of the sidecar mode.
@@ -926,7 +925,7 @@ export interface BootstrapDeps {
    *  DEFAULT_DESKTOP_MODEL exactly as before this chunk — see
    *  bootstrapWithRealDeps below for the one real implementation. */
   getDesktopModel?: () => Promise<string>;
-  /** S11 osspeech blueprint (§A4): the user's persisted `settings.engine`
+  /** S11 osspeech (A4): the user's persisted `settings.engine`
    *  string, read the same "await BEFORE any provisioning decision"
    *  way as getSidecarMode/getDesktopModel above — the ONE input the
    *  new ENGINE_CHOICE pre-consent branch needs (see
@@ -939,7 +938,7 @@ export interface BootstrapDeps {
    *  branch is a no-op and every existing behavior is unchanged — see
    *  bootstrapWithRealDeps below for the one real implementation. */
   getDesktopEngine?: () => Promise<string>;
-  /** S4 chunk 3 (blueprint decision C's wiring bullet): persists a
+  /** S4 chunk 3 (decision C's wiring bullet): persists a
    *  beginProvision(model) pick to `settings.whisperModel` — "ride the
    *  store's normal persistence" means going through the exact same
    *  `updateSettings` action every other settings write in this app
@@ -1036,7 +1035,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     persistedModel !== undefined && ALLOWED_MARKER_MODELS.includes(persistedModel)
       ? persistedModel
       : DEFAULT_DESKTOP_MODEL;
-  // S11 osspeech blueprint (§A4): gathered the SAME "up front, before
+  // S11 osspeech (A4): gathered the SAME "up front, before
   // any provisioning decision" way as sidecarMode/persistedModel above —
   // isFreshProvisionEntry's own call site below is the ONE place this
   // is read.
@@ -1154,7 +1153,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   const runnerDeps = {
     invoke: deps.invoke,
     listen: deps.listen,
-    // Managed mode's whisperUrl is fixed (blueprint architecture
+    // Managed mode's whisperUrl is fixed (architecture
     // decision 6), and DEFAULT_SETTINGS.whisperUrl ("ws://
     // localhost:8765") already matches start_server's own fixed --host
     // 127.0.0.1 --port 8765 (server.rs) — no override needed today. A
@@ -1219,7 +1218,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   // EXTERNALLY-visible state (externalState() below) and whether the
   // drive loop keeps looping are affected.
   let awaitingConsent = false;
-  // S11 osspeech blueprint (§A4): true the instant a fresh NEEDS_
+  // S11 osspeech (A4): true the instant a fresh NEEDS_
   // PROVISION decision lands with persistedEngine already "osspeech" —
   // see isFreshProvisionEntry's own call site below. Mutually exclusive
   // with awaitingConsent (the SAME branch sets exactly one of the two,
@@ -1297,7 +1296,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
 
   function externalState(): DesktopBootstrapState {
     if (externalUnmanaged) return { phase: "EXTERNAL_UNMANAGED" };
-    // S11 osspeech blueprint (§A4): checked ahead of awaitingConsent —
+    // S11 osspeech (A4): checked ahead of awaitingConsent —
     // the two are mutually exclusive by construction (see
     // osspeechDormant's own doc comment above), so ordering between
     // them never actually matters, but this mirrors externalUnmanaged's
@@ -1367,7 +1366,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
           // flag" contract — see prewarmCancelRequested's own doc
           // comment above.
           prewarmCancelRequested = false;
-          // S12b fix round (§F FB1, BLOCKER) — the first-run WIZARD's
+          // S12b fix round (FB1, BLOCKER) — the first-run WIZARD's
           // own counterpart of performSwitchModel's leading
           // ensureMlxExtras phase. Without this, an mlx-family
           // ctx.model reaching DOWNLOAD_MODEL via beginProvision() ->
@@ -1383,8 +1382,8 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
           // function already owns the disk check, the skip-if-
           // already-valid check, the venv/pip/preflight/pip-check
           // sequence, its OWN `--clear` self-heal, AND emits through
-          // switchModelProgress$ (the mlx-install task row surface,
-          // §Task 7) — routing this through provisionMachine.ts's pure
+          // switchModelProgress$ (the mlx-install task row
+          // surface) — routing this through provisionMachine.ts's pure
           // transition()/runEffects instead would mean re-plumbing
           // that SAME progress surface (plus `paths`) into
           // provisionRunner.ts, which has neither, for zero
@@ -1406,7 +1405,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
               // (unredacted) display.
               notifyLog("stderr", `安装 MLX 运行环境失败：${message}`);
               // Lands on DOWNLOAD_MODEL/ERROR — deliberately NOT
-              // INSTALL_MLX (this file's own §D F2 code already uses
+              // INSTALL_MLX (this file's own F2 code already uses
               // that landing, for a DIFFERENT scenario: a fresh
               // CHECKING-time capability probe with nothing yet
               // attempted, whose own handleRetry branch re-enters
@@ -1497,7 +1496,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       }
       current = transition(ctx, current.state, event);
       if (event.type === "CHECK_RESULT" && event.mlxUsability) {
-        // S12a (§C Provision, F14 / Store coercion; redesigned §D F2,
+        // S12a (F14 / Store coercion; redesigned F2,
         // HIGH) — mirrors provisionMachine.ts's OWN per-status handling
         // (handleCheckResult) from this file's separate vantage point:
         // see QUARANTINE_FALLBACK_MODEL's own doc comment
@@ -1507,7 +1506,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         // identically to an ordinary first-time install — a pure
         // reducer has nowhere to persist anything, so THIS file is the
         // one place that can act on the durable-vs-session-only
-        // distinction §D F2's lead-adjudicated matrix draws between
+        // distinction F2's lead-adjudicated matrix draws between
         // `unsupported` and `invalid-venv` (see MlxUsability's own doc
         // comment, provisionMachine.ts, for the full rationale of each
         // branch below — this block only re-derives it from its own
@@ -1515,7 +1514,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         const checkedMarker = parseMarker(event.markerRaw);
         const markerLabel = checkedMarker?.model ?? "parakeet";
         if (event.mlxUsability.status === "unsupported") {
-          // §D F2 case (a): a DEFINITIVE hardware/OS verdict — durable
+          // F2 case (a): a DEFINITIVE hardware/OS verdict — durable
           // quarantine, exactly as before this fix round. Also durably
           // corrects the PERSISTED settings.whisperModel (fire-and-
           // forget, mirroring beginProvision()'s own un-awaited
@@ -1547,7 +1546,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
           ctx = { ...ctx, model: QUARANTINE_FALLBACK_MODEL };
           void deps.persistDesktopModel?.(QUARANTINE_FALLBACK_MODEL);
         } else if (event.mlxUsability.status === "invalid-venv") {
-          // §D F2 case (b): a DEFINITIVE but FIXABLE verdict (a broken/
+          // F2 case (b): a DEFINITIVE but FIXABLE verdict (a broken/
           // missing mlx venv, not a hardware limit) — re-choice pause
           // WITHOUT any durable persist: settings.whisperModel and the
           // on-disk marker both stay "parakeet-tdt-0.6b-v3" (no
@@ -1570,7 +1569,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         // provisioned-dead STARTING path the machine itself already
         // produced. "probe-error": ALSO no action here — the machine
         // never produced a fresh-INSTALL_PYTHON-shaped state for this
-        // case at all (it parks directly on INSTALL_MLX/ERROR, §D F2
+        // case at all (it parks directly on INSTALL_MLX/ERROR, F2
         // case c), so there is nothing for ctx to get out of sync
         // with; zero writes to marker/preference/ctx is satisfied by
         // this branch simply not existing.
@@ -1591,7 +1590,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         if (event.step === "DOWNLOAD_MODEL") resetDownloadProgress();
       }
       if (event.type === "CHECK_RESULT" && isFreshProvisionEntry(current.state)) {
-        // S11 osspeech blueprint (§A4): a fresh NEEDS_PROVISION decision
+        // S11 osspeech (A4): a fresh NEEDS_PROVISION decision
         // whose persisted engine already reads "osspeech" (the user's
         // own past EngineChoiceScreen pick, or a direct Settings pick)
         // must NOT pause on WIZARD_CONSENT_REQUIRED — that would silently
@@ -1607,7 +1606,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         // persistedEngine and falls through to the unchanged
         // awaitingConsent branch below — "still show provisioning if the
         // user later switches to whisper without a provisioned model"
-        // (blueprint §3 Worker D), achieved for free by re-deriving this
+        // (Worker D), achieved for free by re-deriving this
         // check from scratch on every bootstrapDesktop() call rather
         // than caching the decision anywhere durable.
         if (persistedEngine === "osspeech" && !forceEngineSetupOnce) {
@@ -1704,7 +1703,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     }
   }
 
-  // S4 chunk 4 (blueprint decision C) — the switch flow's own "land on
+  // S4 chunk 4 (decision C) — the switch flow's own "land on
   // a truthful STEP/ERROR" step, used by performSwitchModel below for
   // every failure from stop_server onward (the old server is already
   // gone by then — see switchModel's own interface doc comment on the
@@ -1737,7 +1736,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     notify();
   }
 
-  /** S12a fix round (§D F6, MEDIUM) — ensureMlxExtras' own combined
+  /** S12a fix round (F6, MEDIUM) — ensureMlxExtras' own combined
    *  pre-Phase-1 disk-space precheck, invoking the cross-lane-pinned
    *  Rust command `app_data_disk_free` (worker A1, landing alongside
    *  this fix) → `{freeBytes: number}`. Throws a STEP_ERROR-style
@@ -1748,7 +1747,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
    *  failure, no special-casing needed there.
    *
    *  Best-effort on the PROBE's own availability (deliberate choice,
-   *  §D F6): an invoke() rejection (a spawn/IPC failure, OR simply an
+   *  F6): an invoke() rejection (a spawn/IPC failure, OR simply an
    *  older packaged build that predates this command entirely) does
    *  NOT hard-block the install — this diagLogs and returns as if the
    *  check had passed, rather than throwing. The precheck is a
@@ -1783,7 +1782,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
    *  model downloaded -> ..." pinned order. Called from EXACTLY one
    *  place today (performSwitchModel, gated on
    *  MLX_ONLY_MARKER_MODELS.includes(model) — see that function's own
-   *  new leading branch): "one ensure-mlx service" per §C, structured
+   *  new leading branch): "one ensure-mlx service", structured
    *  so a FUTURE wizard-path caller (S12b, once parakeet's
    *  `available:false` catalog flip lands) can reuse it identically —
    *  it reads no switchModel-specific state (no `model`/`ctx`
@@ -1796,12 +1795,12 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
    *  provisionMachine.ts's own INSTALL_MLX doc comment explains why
    *  this stays OUT of that pure machine's auto-advance vocabulary this
    *  sprint) — chosen specifically because THIS caller (jobsBridge.ts's
-   *  "mlx-install" task row, §Task 7) needs live, per-substep progress
+   *  "mlx-install" task row) needs live, per-substep progress
    *  (venv create / pip install / preflight+check) that a single opaque
    *  provisionMachine Effect would hide; each notifySwitchModelProgress
    *  call below fires BEFORE its own sub-step starts.
    *
-   *  Transactional per §C Provision, step (1)-(3): a fresh attempt
+   *  Transactional across provision steps (1)-(3): a fresh attempt
    *  tries WITHOUT `--clear` first, short-circuiting entirely via a
    *  cheap mlx_import_preflight probe if an earlier install already
    *  left a working venv (S5 installDiarization's own "skip if already
@@ -1842,7 +1841,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         if (already?.ok) return; // already installed+valid — nothing to do
       }
 
-      // S12a fix round (§D F6, MEDIUM) — the combined pre-Phase-1 disk
+      // S12a fix round (F6, MEDIUM) — the combined pre-Phase-1 disk
       // check, BEFORE this attempt's own first venv mutation (the
       // venvCreateMlx run_uv call right below) — see
       // checkMlxInstallDiskSpace's own doc comment for the reserve's
@@ -1889,7 +1888,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     }
   }
 
-  /** S12b fix round (§F FB8, MED) — performSwitchModel's own SAME-
+  /** S12b fix round (FB8, MED) — performSwitchModel's own SAME-
    *  TARGET no-op check: `true` iff the on-disk marker's own model
    *  ALREADY equals `model` AND (for an mlx-family target only) its
    *  own extras are still verified valid.
@@ -1904,7 +1903,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
    *  ensureMlxExtras' own fresh (non-`--clear`) attempt leads with —
    *  a real `mlx_import_preflight` re-import, not a cached/assumed
    *  answer — so a marker that says "parakeet" but whose mlx venv has
-   *  since gone missing/broken (§D F2's own `invalid-venv` case,
+   *  since gone missing/broken (F2's own `invalid-venv` case,
    *  should the user have hit that earlier) correctly falls through
    *  to the real (repair) install below, rather than wrongly no-op-
    *  ing over a broken environment. */
@@ -1944,7 +1943,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     // inherit an earlier one's cancel click.
     switchModelCancelRequested = false;
     try {
-      // S12b fix round (§F FB8, MED) — the SAME-TARGET no-op, checked
+      // S12b fix round (FB8, MED) — the SAME-TARGET no-op, checked
       // FIRST (before even the mlx-extras bucket below): deliberately
       // NOT placed in switchModel() itself, ahead of the busy-latch
       // check there — this method's own pre-latch gates must stay
@@ -1966,7 +1965,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       // F4 (review round): before the possibly-slow ensureMlxExtras
       // phase below — see switchModelCancelRequested's own doc comment.
       if (switchModelCancelRequested) throw new Error("已取消");
-      // S12a (§C Provision, Q5's two-phase flow): Phase 1, only for an
+      // S12a (Q5's two-phase flow): Phase 1, only for an
       // mlx-family target — a plain whisper-family switchModel() call
       // never enters this branch, so its own bucket 1 (below) stays
       // byte-identical to pre-S12a. A failure here throws BEFORE bucket
@@ -2061,8 +2060,8 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       // this chunk's touch list to export; a fallback only matters for
       // the pathological case of reaching HEALTHY with no marker at all
       // (e.g. an adopted external-ish server), and neither field is
-      // ever compared — parseMarker only shape-checks them (blueprint
-      // risk register #5: "pin comparison still skipped").
+      // ever compared — parseMarker only shape-checks them (a known
+      // gap: pin comparison is still skipped).
       const existingMarker = parseMarker(
         await deps.invoke<string | null>("read_provision_marker").catch(() => null),
       );
@@ -2279,7 +2278,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         diagLog("info", "desktop-provision", "重新运行安装向导");
         restartState = initialRestartState();
         awaitingConsent = false;
-        // S11 osspeech blueprint (§A4): same "a stale parking flag must
+        // S11 osspeech (A4): same "a stale parking flag must
         // not survive a reset" rationale as externalUnmanaged just
         // below — reprovision() is a deliberate "redo setup" action, so
         // the fresh drive it kicks off must re-decide osspeechDormant
@@ -2567,7 +2566,7 @@ async function persistDesktopModelToStore(model: string): Promise<void> {
   useApp.getState().updateSettings({ whisperModel: model });
 }
 
-/** S11 osspeech blueprint (§A4) — mirrors getPersistedDesktopModel above
+/** S11 osspeech (A4) — mirrors getPersistedDesktopModel above
  *  exactly (same dynamic-import + hydration-gate shape, same
  *  rationale), just reading `settings.engine` instead of
  *  `settings.whisperModel`. Wired as BootstrapDeps.getDesktopEngine
@@ -2588,7 +2587,7 @@ async function getPersistedEngine(): Promise<string> {
   return useApp.getState().settings.engine;
 }
 
-/** S11 osspeech blueprint (§3 Worker D, §A4) — EngineChoiceScreen's own
+/** S11 osspeech (Worker D, A4) — EngineChoiceScreen's own
  *  "选系统识别" action, wired directly by DesktopWizard.tsx rather than
  *  threaded onto DesktopBootstrapHandle: unlike beginProvision/
  *  reprovision/etc. this action needs NOTHING from a specific
@@ -2604,14 +2603,14 @@ async function getPersistedEngine(): Promise<string> {
  *  persistDesktopModelToStore above already uses (store's normal
  *  setter, own un-awaited storage.saveSettings), then fire-and-forgets
  *  preinstallOsSpeech(settings.language) so the model is warm by the
- *  user's first real meeting (blueprint §Q5) — NOT awaited: a slow or
+ *  user's first real meeting (Q5) — NOT awaited: a slow or
  *  offline download must never block the wizard from dismissing
  *  (DesktopWizard.tsx calls onDismissConsent immediately after firing
  *  this, without awaiting it either). The `.catch()` below is
  *  deliberately silent, not a swallowed bug: osspeechCaps.ts's own
  *  preinstallOsSpeech already drives an "os-speech-asset" 后台任务 row
  *  for this attempt's whole duration (its own doc comment), which is
- *  this failure's real user-facing surface (blueprint §Q9's designed
+ *  this failure's real user-facing surface (Q9's designed
  *  asset-download-failed path) — this call site only needs to stop an
  *  unhandled-rejection warning from a promise nothing else awaits.
  *  Durably prevents the wizard from re-showing on a LATER relaunch
@@ -2813,7 +2812,7 @@ export function resetDesktopBootstrap(): void {
 // (setTransport(tauri-plugin-http fetch), byte-identical to
 // bootstrapDesktop's own step ① above) — none of initDesktop's
 // sidecar/uv/wizard machinery: v1 iOS ships no uv/server/provision
-// modules at all (blueprint D3 — those Rust modules are `#[cfg(desktop)]`-
+// modules at all (D3 — those Rust modules are `#[cfg(desktop)]`-
 // gated out of the iOS binary entirely), so there is nothing here for a
 // DesktopBootstrapHandle/DesktopWizard to drive. A separate function
 // rather than parameterizing bootstrapDesktop itself: that function's
@@ -2857,8 +2856,7 @@ async function bootstrapIos(): Promise<void> {
   // INERT there and the transient shift remains. The full fix is
   // native: observe UIKeyboardWillShow/Hide in lib.rs (objc2
   // NSNotificationCenter), emit the keyboard height to JS, and feed it
-  // into this same --app-vvh mechanism — next-train item, recorded in
-  // the handoff doc. Kept (not reverted) because it is the correct
+  // into this same --app-vvh mechanism — a next-train item. Kept (not reverted) because it is the correct
   // web-standard behavior wherever vv DOES report the keyboard, and
   // it is the ready-made consumer for the native event when it lands.
   // rAF batches the writes off the resize storm.

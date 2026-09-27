@@ -29,7 +29,7 @@ const nextConfig = {
   // S13 (D4/F4) —
   // widened from desktop-only to "any Tauri shell target" (macOS
   // desktop OR iOS): iOS is ALSO a static-export webview with no server
-  // (blueprint F4 — iOS's own frontend build goes through the same
+  // (F4 — iOS's own frontend build goes through the same
   // API-route-stripping build-desktop.mjs wrapper as desktop, just with
   // BUILD_TARGET=ios).
   ...(process.env.BUILD_TARGET === "desktop" || process.env.BUILD_TARGET === "ios"
@@ -76,7 +76,7 @@ const nextConfig = {
     //
     // Flag containment (F2, codex v04-integration review): only ever
     // forward the AMBIENT env var when this is genuinely a Tauri-shell
-    // build (BUILD_TARGET=desktop or ios — S13 blueprint §6 D4/F4
+    // build (BUILD_TARGET=desktop or ios — S13 D4/F4
     // widens this from desktop-only: iOS ALSO has no /api/* route to
     // fall back to, same as desktop). A shared CI environment that
     // happens to export NEXT_PUBLIC_LLM_TRANSPORT=client (e.g. alongside
@@ -103,7 +103,7 @@ const nextConfig = {
     // explicit-default-via-`env` requirement as every flag above (an
     // unset var isn't reliably inlined by DefinePlugin) — "1" only for a
     // BUILD_TARGET=desktop build, "" (falsy) for every ordinary web build.
-    // S13 (§6 D4): deliberately UNCHANGED for BUILD_TARGET=ios — IS_DESKTOP
+    // S13 (D4): deliberately UNCHANGED for BUILD_TARGET=ios — IS_DESKTOP
     // means exactly "macOS desktop shell" (see src/lib/platform/ios.ts's
     // own header comment) and must stay "" on an iOS build.
     NEXT_PUBLIC_DESKTOP: process.env.BUILD_TARGET === "desktop" ? "1" : "",

@@ -48,13 +48,13 @@ export interface ModelCatalogEntry {
    *  has no capability gate at all. Undefined/omitted reads as false —
    *  every existing entry below is left unannotated on purpose. */
   mlxOnly?: boolean;
-  /** S12a prelude stub flag (§C L1): false while an entry exists in
+  /** S12a prelude stub flag (L1): false while an entry exists in
    *  this catalog only to pin its shape but must NOT be selectable/
-   *  offered yet. S12b worker B2 (§C L1's own flip point, §E "B2 is
+   *  offered yet. S12b worker B2 (L1's own flip point: "B2 is
    *  genuinely just the availability flip plus integration") flipped
    *  this true for the parakeet entry once the parakeet install +
    *  backend lane (S12a's provisioning state machine + S12b B1's backend
-   *  seam) was verified end-to-end (§C/§E merge gates, all landed).
+   *  seam) was verified end-to-end (merge gates, all landed).
    *  Undefined/omitted reads as available — every existing (already-
    *  shippable) entry below is left unannotated on purpose; ModelPicker.
    *  tsx's own gating (worker A3, unchanged by this flip) is what
@@ -96,17 +96,17 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     qualityHint: "英文场景精度高，中文稍弱于 large-v3",
     recommended: false,
   },
-  // S12 (v0.4.4) parakeet-v3 — §C L1's prelude commit + §C Product/L3's
+  // S12 (v0.4.4) parakeet-v3 — L1's prelude commit + L3's
   // opt-in copy verbatim ("英文加速 · Apple 芯片 · 约 2.5 GB", NO 推荐
   // chip; zh strings get a later 4.6 pass, not polished here). S12b
-  // worker B2 flip (§C L1/§E): `available: true` — the parakeet install
+  // worker B2 flip (L1): `available: true` — the parakeet install
   // + backend lane (S12a's provisioning state machine, S12b B1's backend
-  // seam) is verified end-to-end (§E's live gates), so this row is now
+  // seam) is verified end-to-end (live gates), so this row is now
   // offered same as every other catalog entry above; ModelPicker.tsx's
   // own SEPARATE mlxOnly/mlxCaps gate (worker A3, unaffected by this
   // flip) still disables it with a visible reason on non-Apple-Silicon/
   // pre-macOS-14 hardware or a caps-probe error — see that component's
-  // own doc comment. Live repo size is 2.51 GB (§C R1 F12) — displayed
+  // own doc comment. Live repo size is 2.51 GB (R1 F12) — displayed
   // rounded, matching this catalog's own one-decimal-GB convention
   // elsewhere.
   {
@@ -121,10 +121,10 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
   },
 ] as const;
 
-/** First-run wizard's pre-selected pick (blueprint decision A's veto
+/** First-run wizard's pre-selected pick (decision A's veto
  *  window: medium — "the honest scenario default" — vs small — S3's
  *  own risk-1 reliability default). A standalone constant, NOT derived
  *  from MODEL_CATALOG's own `recommended` flag, so a veto ("pre-select
- *  small instead") is the one-line change the blueprint promises,
+ *  small instead") stays a one-line change,
  *  without touching the 推荐 chip's own, separate meaning. */
 export const WIZARD_PRESELECTED_MODEL = "medium";

@@ -13,7 +13,7 @@
 // path (lib/llm/clientProvider.ts, raw fetch only, Tauri desktop has no
 // Node server to route through). Moving the SHARED pieces here once —
 // rather than forking a second copy for the client path — is the
-// "extract, don't fork" contract from the S2 design doc. anthropic.ts
+// "extract, don't fork" contract (S2). anthropic.ts
 // re-exports every symbol below under its original name, so every
 // existing importer (routes, anthropic-openai-compat.test.ts) is
 // unaffected by the move.
@@ -120,7 +120,7 @@ export const TranslateSegmentsSchema = z.object({
   ),
 }) satisfies z.ZodType<TranslateResponse>;
 
-// AI transcript correction (v0.5 Wave-1 Feature 2, §5 A5) — id-keyed,
+// AI transcript correction (v0.5 Wave-1 Feature 2, A5) — id-keyed,
 // mirrors TranslateSegmentsSchema's shape exactly. This schema is shape
 // validation ONLY (id: string, text: string); rejecting a blank/
 // duplicate id and filtering to requested ids is the task module's job
@@ -405,8 +405,8 @@ export function buildSystemParam(system: string, cacheSystem?: boolean) {
  *  anthropic.ts's SDK-based callJsonViaFallback (server, the SDK's
  *  `.messages.create()` takes this exact shape) and clientProvider.ts's
  *  raw-fetch callAnthropicDirect (client — JSON.stringify'd straight
- *  into the POST body). This is the "provider request-shaping" the S2
- *  design doc calls out to extract rather than fork: prompt-cache
+ *  into the POST body). This is the "provider request-shaping" S2
+ *  extracts rather than forks: prompt-cache
  *  survival (risk #4) depends on both paths sending byte-identical
  *  `system`. Deliberately the manual-extraction shape only (no
  *  `output_config`/structured-output params) — matches

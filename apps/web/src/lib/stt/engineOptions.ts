@@ -63,7 +63,7 @@ import {
   type RetentionClass,
 } from "./engineCapabilities";
 import type { OnDeviceMode } from "./onDeviceSpeech";
-// v0.5 Wave-1 Feature 5 (mode-first UI, §5 A3/A4): deriveEngineForMode's
+// v0.5 Wave-1 Feature 5 (mode-first UI, A3/A4): deriveEngineForMode's
 // own "always run the result through applyPlatformEngineDefaults+
 // applyTierDefaults semantics" sanitize pass reuses those two pure,
 // already-tested store.ts coercions verbatim rather than re-deriving
@@ -78,7 +78,7 @@ import { applyPlatformEngineDefaults, applyTierDefaults } from "@/lib/store";
 // sidecarOnly (#61 preview tier): whisper/tabaudio/appaudio require the
 // local sidecar process, which the hosted preview build never has —
 // greyed out there rather than removed (showroom posture: show
-// everything, no dead ends). byokOnly (v0.4 S4, blueprint decision E):
+// everything, no dead ends). byokOnly (v0.4 S4, decision E):
 // soniox is an unproven BYOK cloud engine (no local sidecar involved,
 // but not benchmark-cleared either) — same preview lock as sidecarOnly.
 //
@@ -94,7 +94,7 @@ export interface EngineOption {
   /** Recognizer family for picker grouping; capture source stays in Settings.mode. */
   family: EngineFamily;
   posture: "local" | "cloud";
-  // v0.4.7 Lane C (tri-state privacy label, doc §4/§9 D5-D7): the richer
+  // v0.4.7 Lane C (tri-state privacy label, D5-D7): the richer
   // axis StatusLine/Header now read instead of the coarse posture above.
   // Always populated by toEngineOption below — posture stays alongside
   // it unchanged (TutorialOverlay.tsx/SettingsDialog.tsx's own separate
@@ -169,7 +169,7 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
 // round); see that const's comment for the hand-copy hazard it closes.
 const IOS_ENGINE_OPTIONS: EngineOption[] = IOS_ENGINE_KINDS.map(toEngineOption);
 
-/** PINNED CONTRACT (S10 blueprint wave 2): StatusLine's engine dropdown
+/** PINNED CONTRACT (S10 wave 2): StatusLine's engine dropdown
  *  and Header's EnginePostureChip both consume this exact list — see
  *  this module's own header comment for the desktop webspeech drop /
  *  D7 tabaudio->appaudio swap it already bakes in. IS_IOS branches FIRST
@@ -205,7 +205,7 @@ export const POSTURE_LABEL: Record<"local" | "cloud", string> = {
 // future cloud-stored engine used to collapse into the same amber
 // "云端" — a privacy-positioned tool should never say that. `label` is
 // the compact chip form (Header's EnginePostureChip); `hint` is the
-// doc §4 wording verbatim (WHERE audio goes + what the vendor
+// pinned wording verbatim (WHERE audio goes + what the vendor
 // retains) — StatusLine's wider privacy segment shows it directly,
 // Header's badge carries it as its `title` tooltip. Colors keep the
 // established green=local/amber=cloud idiom (lab-green/warn-soft,
@@ -244,7 +244,7 @@ export const RETENTION_COPY: Record<
   },
 };
 
-/** D7 two-layer truth (doc §9 D7 + Lane C addendum, Opus C5): the ONE
+/** D7 two-layer truth (D7 + Lane C addendum, Opus C5): the ONE
  *  place StatusLine's privacy segment and Header's EnginePostureChip
  *  both resolve the ACTIVE retentionClass for the selected engine, so
  *  the two surfaces can never disagree (the addendum's own failure
@@ -374,15 +374,15 @@ export interface DeriveEnginePlatform {
   isIos: boolean;
 }
 
-/** §1 F5's mode→engine table + §5 A4, as a pure(-ish) function: given
+/** F5's mode→engine table + A4, as a pure(-ish) function: given
  *  the mode a ModeSelector tile just picked (or a mode already
  *  persisted from before), returns the engine that mode should run WITH
  *  on this platform/settings.
  *
  *  - "import"/"url" open ImportHub (page.tsx) rather than starting a
- *    live engine — `settings.engine` passes through UNCHANGED (§1 F5:
+ *    live engine — `settings.engine` passes through UNCHANGED (F5:
  *    "engine unchanged").
- *  - "system-audio" (desktop only in the real tile set, §3 Q2): osspeech
+ *  - "system-audio" (desktop only in the real tile set, Q2): osspeech
  *    when the shared macOS-26 floor probe (osspeechCaps.ts) says so,
  *    else appaudio (S9's CoreAudio tap) — reads the SAME single-flight
  *    cache engineOptionGate already consults (getOsSpeechCapsSnapshot)

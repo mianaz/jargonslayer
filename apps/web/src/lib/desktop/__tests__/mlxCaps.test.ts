@@ -7,7 +7,7 @@
 // coverage) — DELIBERATELY the opposite fail-CLOSED assertions
 // throughout, per this module's own POLICY doc comment.
 //
-// S12a fix round (§D F7) — every probe/refresh now resolves the pinned
+// S12a fix round (F7) — every probe/refresh now resolves the pinned
 // `{status: "ok" | "error", caps}` envelope (not a bare
 // `MlxCapabilities`); `reason` is `string | null` (required); a new
 // "overlap races" describe block covers the request-generation guard
@@ -180,7 +180,7 @@ describe("refreshMlxCaps — worker A2's live-retry affordance (distinct from re
   });
 });
 
-// S12a fix round (§D F7) — the "apply stale snapshots" half of the
+// S12a fix round (F7) — the "apply stale snapshots" half of the
 // overlap-race fix, exercised via probeMlxCapabilitiesWith directly
 // (the ONE place `cached`/notify()/the request-generation counter are
 // ever touched) — no IS_DESKTOP-forcing needed, matching this suite's
@@ -190,7 +190,7 @@ describe("refreshMlxCaps — worker A2's live-retry affordance (distinct from re
 // themselves (IS_DESKTOP-gated) — see mlxCaps.desktop.test.ts (mirrors
 // engineOptions.desktop.test.ts's own "IS_DESKTOP is module-scope
 // import-time, needs its own file" precedent) for that half.
-describe("overlap races (§D F7) — stale-snapshot guard", () => {
+describe("overlap races (F7) — stale-snapshot guard", () => {
   beforeEach(() => resetMlxCapsCache());
   afterEach(() => resetMlxCapsCache());
 

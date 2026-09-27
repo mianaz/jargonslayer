@@ -15,7 +15,7 @@ import Speech
 import UIKit
 @preconcurrency import AVFoundation
 
-// S13 (§D6/§3 Lane B) —
+// S13 (D6, Lane B) —
 // the in-process port of macOS's SpeechAnalyzerSession.run (pattern
 // source: apps/desktop/src-tauri/audiocap-helper/Sources/AudioCapCore/
 // SpeechAnalyzerSession.swift). Same phase ordering (mic permission ->
@@ -374,9 +374,9 @@ public final class OsSpeechSession: @unchecked Sendable {
   // ---- AVAudioSession / engine lifecycle ----
 
   /// `.measurement` reduces system AGC/processing that hurts ASR quality
-  /// (blueprint D6) — owner-tunable on device: fall back to `.default`
+  /// (D6) — owner-tunable on device: fall back to `.default`
   /// mode here if input gain measures too low in practice. `.allowBluetoothHFP`
-  /// (not the blueprint pseudocode's `.allowBluetooth`, deprecated since
+  /// (not `.allowBluetooth`, deprecated since
   /// iOS 8.0 — caught by the iOS-target Swift build's own zero-warnings
   /// gate): same Bluetooth-mic-input behavior, current API name.
   private func configureAudioSession() throws {
@@ -427,8 +427,8 @@ public final class OsSpeechSession: @unchecked Sendable {
     }
   }
 
-  /// `.began` -> stop + terminal `.ended`, no auto-resume (blueprint
-  /// D6: v1 posture). Route change -> terminal `.deviceChanged` ONLY for
+  /// `.began` -> stop + terminal `.ended`, no auto-resume (D6:
+  /// v1 posture). Route change -> terminal `.deviceChanged` ONLY for
   /// the two reasons that mean capture actually broke (see
   /// `RouteChangePolicy`'s own doc comment) — unlike macOS, where
   /// device-changed comes from genuine IO starvation, a raw iOS route

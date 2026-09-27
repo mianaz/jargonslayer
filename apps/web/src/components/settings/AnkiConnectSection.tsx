@@ -1,10 +1,10 @@
 "use client";
 
 // AnkiConnect settings subcomponent (v0.5 Wave-1 Feature 9, A8/A9). A
-// self-contained, props-driven block per the blueprint's SettingsDialog
-// contention rule (§2: "each lane delivers its section as a
-// self-contained subcomponent... referenced by a SINGLE import + render
-// line; the lead serializes those one-line insertions") — no store
+// self-contained, props-driven block per the SettingsDialog contention
+// rule ("each lane delivers its section as a self-contained
+// subcomponent... referenced by a SINGLE import + render line; the lead
+// serializes those one-line insertions") — no store
 // imports, value+onChange only, mirroring CredentialFields.tsx's own
 // shape. Hidden entirely on iOS (there is no local Anki app to reach).
 //

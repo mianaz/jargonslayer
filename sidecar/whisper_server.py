@@ -1274,11 +1274,11 @@ class WhisperServer:
 # `parakeet_mlx`/`mlx.core` are lazily imported inside every method
 # that actually needs them — this file's OWN top-level imports must
 # stay satisfiable under EITHER venv (the shared base venv OR the
-# separate, hash-locked mlx venv, §C R1): neither faster_whisper NOR
+# separate, hash-locked mlx venv, R1): neither faster_whisper NOR
 # parakeet_mlx/mlx may ever be imported at module scope.
 # =================================================================
 
-PARAKEET_CONTEXT_SIZE = (256, 256)  # §C R2 pinned (upstream-validated defaults)
+PARAKEET_CONTEXT_SIZE = (256, 256)  # R2 pinned (upstream-validated defaults)
 PARAKEET_DEPTH = 1
 
 
@@ -1291,7 +1291,7 @@ class ParakeetMlxBackend:
     to produce live partials; every wire final instead comes from ONE
     batch inference per boundary (batch_final) over the scheduler's
     own exact, non-overlapping PCM range — so finals are batch-quality
-    by construction and the MAX_SEGMENT overlap-dedup machinery §C R2
+    by construction and the MAX_SEGMENT overlap-dedup machinery R2
     specced is out of scope (deleted, L5).
 
     `_workload_lock` (S12b fix round FB4, HIGH — Sol4=Opus3; supersedes
@@ -1354,7 +1354,7 @@ class ParakeetMlxBackend:
         docstring's `_executor` note — loading anywhere else binds the
         model's weights to the WRONG thread for every later call) via
         from_pretrained(repo, cache_dir=None) — NEVER pass cache_dir
-        explicitly (§C R1/F10; see test_model_registry.py's cache-
+        explicitly (R1/F10; see test_model_registry.py's cache-
         root-invariant section): HF_HOME (set by the Rust launcher,
         S12a) already anchors both a predownload and this load to the
         same derived HF_HUB_CACHE root — an explicit cache_dir here
@@ -1374,7 +1374,7 @@ class ParakeetMlxBackend:
 
     def try_acquire_stream(self) -> bool:
         """L2/F4 + FB4: True iff the ONE shared parakeet workload slot
-        (§ class docstring's `_workload_lock`) is currently free (and
+        (the class docstring's `_workload_lock`) is currently free (and
         this call claims it); False otherwise. Called by BOTH
         ParakeetMlxServer.handle (a live ws session — must reject the
         connection with a typed `parakeet-busy` event and a clean
@@ -1462,7 +1462,7 @@ class ParakeetMlxBackend:
         return result.text.strip()
 
     def transcribe_file(self, file_path: str, language: str) -> tuple[list[dict], float]:
-        """JobManager's normalized file-job path (§C R4). Synchronous
+        """JobManager's normalized file-job path (R4). Synchronous
         — called from JobManager's OWN plain background thread
         (threading.Thread, no event loop; see _run_job/_run_url_job),
         so this blocks that thread on the dedicated executor via
@@ -1522,7 +1522,7 @@ class _ParakeetBoundary:
     t0: float
     t1: float
     seg_id: int
-    # time.monotonic() at PUT time (§C R3/F6): lag_ms for parakeet is
+    # time.monotonic() at PUT time (R3/F6): lag_ms for parakeet is
     # boundary-enqueue -> final-send wall time, NOT the batch call's
     # own time alone (contrast WhisperServer's faster-whisper lag_ms,
     # deliberately left unredefined — see that class's own docstring).
@@ -1561,12 +1561,12 @@ class ParakeetMlxServer:
     """S12b L5 hybrid: the parakeet-mlx analog of WhisperServer, active
     only when backend_for_model(model) == "parakeet-mlx" (main() picks
     one or the other per process — never both). Reuses ConnectionState
-    for VAD/buffering (§C R3: "VAD/buffering stays where it is") but
+    for VAD/buffering (R3: "VAD/buffering stays where it is") but
     owns a wholly different per-connection scheduling mechanism: a
     serialized asyncio.Queue of ordered Audio/Boundary/Stop commands
     (Flush collapses into Boundary — see _handle_text's "flush" branch
     for why), drained by ONE dedicated worker task that owns the
-    streaming context and every actual model call (§C R3, the
+    streaming context and every actual model call (R3, the
     adversarial-review amendment this design implements).
 
     Deliberately NOT a WhisperServer subclass: the two backends'
@@ -1754,7 +1754,7 @@ class ParakeetMlxServer:
         cmd_queue: "asyncio.Queue[Any]",
         data: bytes,
     ) -> None:
-        """VAD/buffering (§C R3: "stays where it is") — same energy-VAD
+        """VAD/buffering (R3: "stays where it is") — same energy-VAD
         algorithm/constants as WhisperServer._handle_binary. The
         receive loop ONLY enqueues here too: Audio commands (the speech
         samples accumulated during THIS call, for live partials) and
@@ -1878,10 +1878,10 @@ class ParakeetMlxServer:
         cmd_queue: "asyncio.Queue[Any]",
     ) -> None:
         """The ONE task per connection that owns the streaming context
-        and ALL model access (§C R3) — drains Audio/Boundary/Stop in
+        and ALL model access (R3) — drains Audio/Boundary/Stop in
         strict FIFO order, so `stopped` is always sent strictly after
-        every final ahead of it in the queue has already gone out (§C
-        R3/F6's stop-drain fix). Audio -> feed the (lazily-opened, per-
+        every final ahead of it in the queue has already gone out (R3/F6's
+        stop-drain fix). Audio -> feed the (lazily-opened, per-
         utterance) streaming context, emit a throttled partial with the
         L5 regression guard (P1_api_shape.py: draft_tokens/result.text
         observed regressing non-empty -> empty -> recovered mid-
@@ -2776,7 +2776,7 @@ class JobManager:
         reserving its own tail for the diarization-hold phase exactly
         as the plain floor=0.0 case does.
 
-        S12b (§C R4): when this JobManager's model is a
+        S12b (R4): when this JobManager's model is a
         ParakeetMlxBackend (main() decides which at process startup —
         see backend_for_model), delegates to the normalized
         Backend.transcribe_file() below instead — its batch API
@@ -2825,7 +2825,7 @@ class JobManager:
     def _transcribe_job_parakeet(
         self, job_id: str, file_path: str, progress_floor: float
     ) -> None:
-        """S12b (§C R4): the ParakeetMlxBackend arm of _transcribe_job.
+        """S12b (R4): the ParakeetMlxBackend arm of _transcribe_job.
         Backend.transcribe_file() already maps AlignedSentence -> the
         {"start","end","text"} job segment shape and raises the exact
         "未检测到 ffmpeg" RuntimeError faster-whisper's file-job path
@@ -2979,7 +2979,7 @@ class JobManager:
                     pass
 
         # Remap pyannote's native labels (SPEAKER_00, SPEAKER_01, ...)
-        # to the spec's SPEAKER_1/2/... in first-seen order.
+        # to SPEAKER_1/2/... in first-seen order.
         label_order: list[str] = []
         for _start, _end, label in turns:
             if label not in label_order:
@@ -3410,8 +3410,7 @@ MODEL_DOWNLOAD_ALLOW_PATTERNS = [
 # files on the repo are simply never read. A pre-download that mirrors
 # EXACTLY this two-file set is therefore both the honest disk-space
 # total (model.safetensors alone is 2,508,288,736 bytes = ~2.51GB live
-# 2026-07-16, NOT the ~1GB an earlier estimate assumed — §B finding
-# 12) and precisely what a later `from_pretrained(repo, cache_dir=
+# 2026-07-16, NOT the ~1GB an earlier estimate assumed) and precisely what a later `from_pretrained(repo, cache_dir=
 # None)` call needs — no wasted bytes on the unused tokenizer/vocab
 # files, same invariant MODEL_DOWNLOAD_ALLOW_PATTERNS keeps above.
 PARAKEET_REPO_ID = "mlx-community/parakeet-tdt-0.6b-v3"
@@ -3420,8 +3419,7 @@ PARAKEET_ALLOW_PATTERNS = ["config.json", "model.safetensors"]
 
 def backend_for_model(model: str) -> str:
     """Pure map: model id -> which Backend serves it ("faster-whisper"
-    or "parakeet-mlx") — §C 3.1's `backend_for_model`, the one
-    genuinely new seam Q1 calls for. A sidecar process loads exactly
+    or "parakeet-mlx") — the one genuinely new seam Q1 calls for. A sidecar process loads exactly
     one model for its whole lifetime (see parse_args's --model), so
     main() calls this once at startup to choose between (WhisperServer,
     JobManager(raw faster-whisper model)) — byte-unchanged — and
