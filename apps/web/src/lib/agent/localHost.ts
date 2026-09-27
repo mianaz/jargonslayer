@@ -21,8 +21,7 @@
 //      after-the-fact kill for already-shipped builds if official
 //      policy tightens faster than a new release can go out. Fetch
 //      failure/timeout/404 = ALLOWED (a broken/missing flags.json must
-//      never brick a feature the user already has working — see the
-//      design doc's kill-switch rationale).
+//      never brick a feature the user already has working).
 //
 // Mirrors src/lib/stt/upload.ts's httpBaseFromWs/fetchSidecarHealth
 // probe pattern and src/lib/llm/client.ts's detectApi/defineApi error
@@ -53,7 +52,7 @@ export interface AgentHealth {
  *  own distinct case (see agentDetect/agentDefine's catch block):
  *  the sidecar HOST wasn't reachable at all (connection refused/DNS/
  *  network-level fetch failure, never got an HTTP response at all) —
- *  per the design doc this ALONE falls through silently to the
+ *  by design this ALONE falls through silently to the
  *  existing Next.js path, never toasts, never forces dictionary mode. */
 export class AgentUnreachableError extends Error {
   constructor(message = "无法连接订阅直连 sidecar") {
@@ -208,7 +207,7 @@ export async function agentDetect(
   } catch {
     // Any network-level fetch() failure (connection refused because
     // the sidecar isn't running, DNS, or our own 20s abort timing
-    // out) is treated as "host unreachable" — per the design doc this
+    // out) is treated as "host unreachable" — by design this
     // falls through SILENTLY to the existing Next.js path (see
     // client.ts's catch(AgentUnreachableError) branch), never toasts,
     // never forces dictionary mode. A slow-but-running sidecar timing

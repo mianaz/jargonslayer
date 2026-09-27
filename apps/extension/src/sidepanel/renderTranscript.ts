@@ -1,5 +1,5 @@
 // Renders the live transcript — finalized segments + one trailing
-// interim line — S7 blueprint §4 (captureController's onTranscriptChange).
+// interim line — fed by captureController's onTranscriptChange.
 // Same vanilla-DOM convention as render.ts/renderLocked.ts: a pure
 // function of its input, no module state, returns ONE detached root
 // node the caller swaps in wholesale (main.ts does

@@ -1,15 +1,15 @@
-// S13 §D1/§2 (Lane B) — the Rust<->Swift bridge. `OsSpeech<R>` wraps the
+// S13 D1 (Lane B) — the Rust<->Swift bridge. `OsSpeech<R>` wraps the
 // `PluginHandle<R>` `register_ios_plugin` hands back and exposes ONE
-// thin method per Swift plugin method (§2's pinned table); the app
+// thin method per Swift plugin method (pinned table); the app
 // crate's osspeech_ios.rs commands are thin wrappers over THESE (state
-// lives here, not in the app crate — §6 amendment: "lib.rs needs NO
+// lives here, not in the app crate — by design: "lib.rs needs NO
 // extra `.manage`").
 //
 // iOS-only in practice (the app crate only path-deps this crate under
-// `cfg(target_os = "ios")`, blueprint §3 Lane A), but this file compiles
+// `cfg(target_os = "ios")`, Lane A), but this file compiles
 // for `cfg(mobile)` generally (ios OR android) per the scaffold's own
 // convention — the `target_os = "android"` arm below is dead code (never
-// built, Android out of scope per the blueprint) kept only because
+// built, Android out of scope) kept only because
 // removing it would make an eventual Android lane's job strictly harder
 // for zero benefit today.
 use serde::de::DeserializeOwned;
@@ -36,7 +36,7 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 }
 
 /// Access to the os-speech APIs — one method per Swift plugin method
-/// (§2's pinned table: `startTranscribe`/`stopTranscribe`/
+/// (pinned table: `startTranscribe`/`stopTranscribe`/
 /// `pauseTranscribe`/`resumeTranscribe`/`capabilities`/`preinstall`).
 /// Zero-arg Swift methods are called with a `()` payload
 /// (`serde_json::to_value(())` -> `null`) — the Swift side never calls

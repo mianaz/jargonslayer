@@ -195,7 +195,7 @@ const ALL_ENGINE_CARDS: {
   // THIS dialog and dead-end on ws://localhost until the next reload's
   // applyTierDefaults coercion).
   sidecarOnly?: boolean;
-  // v0.4 S4 (blueprint decision E): a BYOK cloud engine that hasn't
+  // v0.4 S4 (decision E): a BYOK cloud engine that hasn't
   // cleared the zh-en benchmark gate yet — same preview lock as
   // sidecarOnly (preview never collects a visitor's own credentials),
   // AND doubles as this card's "实验" tag trigger below (every byokOnly
@@ -315,7 +315,7 @@ const ALL_ENGINE_CARDS: {
   {
     value: "soniox",
     label: "Soniox 云端识别",
-    // Honest per the blueprint's benchmark gate (decision E) — BYOK,
+    // Honest per the benchmark gate (decision E) — BYOK,
     // opt-in, NOT claimed to beat local Whisper until Miana's zh-en
     // clip benchmark clears it. Soniox preview lane (hosted trial,
     // SONIOX_PREVIEW_LANE, deployTier.ts): the trial needs no BYOK key
@@ -333,7 +333,7 @@ const ALL_ENGINE_CARDS: {
   },
   // v0.4.7 (Lane D) — second cloud engine, same BYOK/byokOnly posture as soniox
   // above. Honest about scope: Nova-3's own `language=multi` mode has no
-  // Chinese (doc §9 Lane D wire spec), so this is single-language
+  // Chinese, so this is single-language
   // English-only in v0.4.7 — soniox stays the zh-en code-switching
   // engine; the hint must not market this one for zh-en.
   {
@@ -368,7 +368,7 @@ const ALL_ENGINE_CARDS: {
 // this card grid's richer per-card `hint` copy keeps the two arrays
 // from cleanly sharing one data shape (see that module's own header
 // comment), so the semantics are mirrored here instead of forked.
-// S13 (§6 Sol F5, BLOCKER) pinned iOS to the osspeech card only; the
+// S13 (Sol F5, BLOCKER) pinned iOS to the osspeech card only; the
 // iOS-cloud round (post-v0.6.0, 手机版显然应该允许云端) widens it to the
 // SAME osspeech+BYOK-cloud-trio matrix — read from IOS_ENGINE_KINDS
 // (engineCapabilities.ts), the single source all four iOS engine-matrix
@@ -388,7 +388,7 @@ const ENGINE_CARDS = IS_IOS
 // their own paired {engine, mode} writes.
 const MODE_PLATFORM: ModePlatform = IS_IOS ? "ios" : IS_DESKTOP ? "desktop" : "web";
 
-// S11 osspeech blueprint §Q5's 预下载模型 button (see its own JSX below):
+// S11 osspeech Q5's 预下载模型 button (see its own JSX below):
 // exported (tech-debt ledger #4, 2026-07-17) so SettingsDialog.desktop.
 // test.tsx imports these instead of re-pinning its own copy of the zh
 // busy/done/idle labels.
@@ -869,9 +869,9 @@ function formatLastPackCheck(checkedAt: number | undefined, now: number = Date.n
   return `上次检查：${Math.floor(hours / 24)} 天前`;
 }
 
-// S12b fix round FB7-settings (§F) — pyannote (speaker diarization)
+// S12b fix round FB7-settings — pyannote (speaker diarization)
 // lives only in the shared BASE venv; parakeet rides a fully separate,
-// airtight-isolated MLX venv (§C R1) that never has pyannote installed,
+// airtight-isolated MLX venv (R1) that never has pyannote installed,
 // so 实时说话人分离/说话人分离扩展 are structurally dead for it, not just
 // unconfigured. Reuses modelCatalog.ts's own `mlxOnly` discriminator
 // (the same one ModelPicker.tsx/DesktopWizard.tsx already gate on)
@@ -1312,14 +1312,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // an optimistic default here is only ever a brief cosmetic gap, never
   // a real safety hole).
   const [audiocapCaps, setAudiocapCaps] = useState<AudiocapCapabilities | null>(null);
-  // S11 osspeech blueprint (§3 Worker D) — 系统识别's own macOS-26 floor
+  // S11 osspeech (Worker D) — 系统识别's own macOS-26 floor
   // gate, same "shown-but-disabled below floor" policy as 系统/App 音频
   // just above, just via Worker C's own hook (osspeechCaps.ts owns its
   // probe/subscribe lifecycle internally, unlike audiocapCaps above
   // which this file still hand-rolls its own useState/useEffect for —
   // no need to duplicate that here).
   const osSpeechCaps = useOsSpeechCaps();
-  // 预下载模型 button (blueprint §Q5): a simple local busy/done pair, the
+  // 预下载模型 button (Q5): a simple local busy/done pair, the
   // same "immediate action, local busy state" shape
   // handleCheckDiarizationStatus/checkingDiarization above already uses
   // — preinstallOsSpeech itself also drives an "os-speech-asset" 后台任务
@@ -1439,7 +1439,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // 转录引擎 category, desktop-only: 「重新运行安装向导」busy flag — see
   // handleReprovisionDesktop below.
   const [reprovisioningDesktop, setReprovisioningDesktop] = useState(false);
-  // 转录引擎 category, desktop-managed only (v0.4 S4 chunk 4, blueprint
+  // 转录引擎 category, desktop-managed only (v0.4 S4 chunk 4,
   // decision C's switch flow): 当前模型 line + 更换模型 flow state.
   // installedModel is the TRUTHFUL installed model (read from the
   // provision marker via handle.installedModel(), see that method's own
@@ -1465,7 +1465,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const switchingModel = useTasks(
     (s) => switchModelTaskId !== null && s.tasks[switchModelTaskId]?.status === "running",
   );
-  // S12b fix round FB8-refresh (§F): mirrors diarInstallDone's own
+  // S12b fix round FB8-refresh: mirrors diarInstallDone's own
   // "read a specific dispatched task id's own terminal status" shape
   // exactly (see that field's own doc comment a few lines up) —
   // installedModel below is a ONE-SHOT snapshot read at effect-mount
@@ -1846,7 +1846,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // above. IS_DESKTOP is a build-time const (see platform/desktop.ts),
   // so this is inert on a web build.
   //
-  // S12b fix round FB8-refresh (§F): `switchModelDone` in the deps array
+  // S12b fix round FB8-refresh: `switchModelDone` in the deps array
   // — mirrors F7's own diarInstallDone fix for the exact same class of
   // staleness (see that field's own doc comment): jobsBridge.
   // trackSwitchModel's own success handler settles the TASK registry
@@ -2735,7 +2735,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   };
 
-  // v0.4 S4 chunk 4 (blueprint decision C): 转录引擎 更换模型 — opens the
+  // v0.4 S4 chunk 4 (decision C): 转录引擎 更换模型 — opens the
   // inline <ModelPicker>, preselected to the truthful installed model
   // (falling back to the user's own persisted preference,
   // draft.whisperModel, while that's still loading/unknown — decision
@@ -2745,7 +2745,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setModelPickerOpen(true);
   };
 
-  // v0.4 S4 chunk 4 (blueprint decision C's switch flow), S10 field-fix
+  // v0.4 S4 chunk 4 (decision C's switch flow), S10 field-fix
   // #6 jobsBridge swap (wave 2): 下载并切换 — an IMMEDIATE action (like
   // 重新运行安装向导 above), not a draft-saved setting — settings.
   // whisperModel is written by handle.switchModel() itself on success
@@ -2795,7 +2795,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   };
 
-  // v0.4 S5 chunk 3 (blueprint decisions A/B), S10 field-fix #6
+  // v0.4 S5 chunk 3 (decisions A/B), S10 field-fix #6
   // jobsBridge swap (wave 2): 说话人分离 安装扩展 — an IMMEDIATE action
   // (like 重新运行安装向导/下载并切换 above), never routed through
   // patch()/draft/保存. DISPATCHES the install as a "diar-install"
@@ -2839,7 +2839,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   };
 
-  // S11 osspeech blueprint (§3 Worker D, §Q5) — 系统识别 卡片's own 预下载
+  // S11 osspeech (Worker D, Q5) — 系统识别 卡片's own 预下载
   // 模型 button: an immediate action (like handleCheckDiarizationStatus
   // above), calling Worker C's preinstallOsSpeech(locale) directly.
   // draft.language is this dialog's own in-progress pick (mirrors every
@@ -3008,8 +3008,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // settings export) from evaluating true and enabling the checkbox
   // despite the section's greyed-out fields.
   //
-  // S12b fix round FB7-settings (§F): parakeet rides the SAME `whisper`
-  // STTEngineKind (blueprint Q1 — it's a MODEL under `whisper`, not a
+  // S12b fix round FB7-settings: parakeet rides the SAME `whisper`
+  // STTEngineKind (Q1 — it's a MODEL under `whisper`, not a
   // new engine), so `draft.engine === "whisper"` alone can't tell
   // parakeet apart from faster-whisper here — isMlxOnlyModel does. Both
   // the SELECTED preference (draft.whisperModel — what 保存 would make
@@ -3307,9 +3307,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <SectionHeading>转录引擎</SectionHeading>
             <div className="grid grid-cols-2 gap-2">
               {ENGINE_CARDS.map((opt) => {
-                // v0.4 S4 (blueprint decision E, risk 4) originally
+                // v0.4 S4 (decision E, risk 4) originally
                 // joined byokOnly to sidecarOnly in the preview lock —
-                // the BYOK preview sprint (2026-07-21, blueprint D3)
+                // the BYOK preview sprint (2026-07-21, D3)
                 // drops that arm: a byokOnly card (soniox/deepgram/
                 // tabaudio-cloud) is selectable on preview exactly like
                 // full tier now, since its own Key row below is no
@@ -3385,7 +3385,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 // null (not probed yet this open, or this isn't even the
                 // appaudio card) never locks — only an EXPLICIT
                 // appAudioSupported:false does (see that module's own
-                // POLICY doc). S11 osspeech blueprint (§3 Worker D): joins
+                // POLICY doc). S11 osspeech (Worker D): joins
                 // the SAME "shown-but-disabled below floor" gate via
                 // isOsSpeechFloorLocked/osSpeechLockReason — a structural
                 // no-op for every card besides appaudio/osspeech, so the
@@ -3512,7 +3512,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <div className="text-xs text-mut2">会议进行中，无法切换引擎；暂停或结束会议后可切换</div>
             )}
 
-            {/* S11 osspeech blueprint (§3 Worker D, §Q5): 预下载模型 —
+            {/* S11 osspeech (Worker D, Q5): 预下载模型 —
                background-preinstalls the SpeechAnalyzer asset for
                draft.language so it's warm before the first real meeting,
                same rationale as EngineChoiceScreen's own background
@@ -3627,7 +3627,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
-            {/* Soniox API Key (v0.4 S4 chunk 6, blueprint decision E):
+            {/* Soniox API Key (v0.4 S4 chunk 6, decision E):
                engine-conditional like 本地服务 above — unlike 麦克风/识别
                语言/Whisper 地址 below (always shown, scope explained by
                their own hint text), this field is meaningless for any
@@ -3809,7 +3809,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
-            {/* 标签页音频·云端 provider picker (v0.5 Wave-1 Feature 4, §5
+            {/* 标签页音频·云端 provider picker (v0.5 Wave-1 Feature 4,
                A4; ITEM 3 fix, fix round Opus#1): unlike Soniox/Deepgram
                above, this card has no key input of its own — it rides
                whichever provider Settings.tabAudioCloudProvider resolves
@@ -3945,7 +3945,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               )}
             </div>
 
-            {/* 托管模式 (v0.4 S3 chunk 6, desktop build only, blueprint
+            {/* 托管模式 (v0.4 S3 chunk 6, desktop build only,
                architecture decision 6): managed = the app itself
                provisions+spawns the local sidecar (lib/desktop/
                bootstrap.ts) and Whisper 地址 below is fixed/greyed
@@ -3986,7 +3986,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
                 {draft.sidecarMode === "managed" && (
                   <>
-                    {/* 当前模型 + 更换模型 (v0.4 S4 chunk 4, blueprint
+                    {/* 当前模型 + 更换模型 (v0.4 S4 chunk 4,
                        decision C's switch flow) — an IMMEDIATE action,
                        deliberately laid out beside 重新运行安装向导 below
                        (same "act now, not on 保存" posture) rather than
@@ -4025,7 +4025,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       </button>
                     </div>
 
-                    {/* S12a (§C Provision state machine) — mlx-install's
+                    {/* S12a (provision state machine) — mlx-install's
                        own progress lives in TaskCenterDrawer/TaskTray
                        exactly like model-download/diar-install's does
                        (see installingMlx's own doc comment above); this
@@ -4132,7 +4132,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                governs the webspeech engine, which desktop builds filter out
                entirely (ENGINE_CARDS above) — rendering a 「仅浏览器识别引擎
                生效」 toggle in an app with no such engine was pure noise. S13
-               (§6 Sol F5): !IS_TAURI, not !IS_DESKTOP — webspeech doesn't
+               (Sol F5): !IS_TAURI, not !IS_DESKTOP — webspeech doesn't
                exist on iOS either (ENGINE_CARDS above drops it there too,
                same as desktop). */}
             {!IS_TAURI && (
@@ -4169,7 +4169,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               {PREVIEW_TIER && <PreviewLockedBadge />}
             </div>
 
-            {/* 安装扩展 (v0.4 S5 chunk 3, blueprint decision A: a
+            {/* 安装扩展 (v0.4 S5 chunk 3, decision A: a
                Settings-only affordance, never a first-run wizard step —
                desktop-managed only, mirroring the SAME IS_DESKTOP &&
                sidecarMode==="managed" gate the 转录引擎 托管模式 block
@@ -4198,7 +4198,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   )}
                 </div>
 
-                {/* S12b fix round FB7-settings (§F) — "the 安装扩展
+                {/* S12b fix round FB7-settings — "the 安装扩展
                    action for diarization should communicate the same"
                    (parakeet incompatibility): informational only, NOT a
                    disable — installing the extension into the shared
@@ -4358,7 +4358,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       ? "为本地实时转录标注说话人（SPEAKER_1/2…），可随时在转录里重命名。分离过程在本机完成，音频不离开设备。beta：标签会延迟几秒出现，随会议推进逐步修正，可能增加 CPU 占用；转录本身不受影响。"
                       : draft.engine === "osspeech"
                         ? "该引擎不支持说话人分离"
-                        : // S12b fix round FB7-settings (§F) — NEW string,
+                        : // S12b fix round FB7-settings — NEW string,
                           // 4.6 pass (house convention, not polished here):
                           // parakeet's own MLX venv never has pyannote, a
                           // structural limitation, not a missing-token one
@@ -4376,7 +4376,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               />
             </label>
 
-            {/* v0.4 S5 chunk 3 (blueprint chunk 3, minor-taste call): an
+            {/* v0.4 S5 chunk 3 (minor-taste call): an
                INLINE warning, not a hard gate — realtimeDiarizeAvailable
                above is untouched by diarizationInstalled, so the toggle
                itself stays exactly as governed by the HF Token check it
@@ -4643,8 +4643,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <div className="text-xs leading-[1.7] text-warn-soft">{proxyDraftDirtyHint}</div>
                 )}
 
-                {/* v0.4.5 ambient AI-status mirror (design doc
-                   v045-ai-transparency-qc.md Part A) — the same
+                {/* v0.4.5 ambient AI-status mirror — the same
                    4-row AiStatusPanel StatusLine's popover shows,
                    right here as the config-moment host. */}
                 <AiStatusPanel />
@@ -4724,8 +4723,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   低于该置信度的 AI 检测结果不会生成表达卡片。调高更准但更少，调低更多但可能误报；词典、我的词典命中不受影响；此项不影响术语卡片。
                 </div>
 
-                {/* v0.4.5 detect-span QC (design doc v045-ai-
-                   transparency-qc.md Part B, owner ruling: 「行话最大词数/
+                {/* v0.4.5 detect-span QC (owner ruling: 「行话最大词数/
                    字符数」are configurable, not a hardcoded constant) —
                    settings.detectIdiomMaxWords/detectIdiomMaxChars,
                    consumed by lib/detect/spanQc.ts's category-aware cap
@@ -4833,8 +4831,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               />
             </label>
 
-            {/* v0.5 F6 (L4 lane subcomponent, lead-inserted per blueprint
-               §2's SettingsDialog serialization rule): 翻译引擎 selector —
+            {/* v0.5 F6 (L4 lane subcomponent, lead-inserted per the
+               SettingsDialog serialization rule): 翻译引擎 selector —
                LLM (default) vs Chrome 内置系统翻译 (web-only, on-device). */}
             <div data-ui-level="aiDetectTranslateEngine">
               <TranslationEngineRow
@@ -5956,8 +5954,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             </div>
 
-            {/* v0.5 F9 (L7 lane subcomponent, lead-inserted per blueprint
-               §2's SettingsDialog serialization rule): AnkiConnect —
+            {/* v0.5 F9 (L7 lane subcomponent, lead-inserted per the
+               SettingsDialog serialization rule): AnkiConnect —
                module-only for now; the post-save delivery hook lands in
                F0b (store wiring), so 测试并授权 works but auto-delivery
                starts once that hook merges. Hidden on iOS inside the

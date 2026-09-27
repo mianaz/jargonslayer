@@ -36,7 +36,7 @@ vi.mock("@/lib/desktop/audiocapCaps", () => ({
   appAudioLockReason: () => "",
 }));
 
-// S11 osspeech blueprint (§3 Worker D) — only useOsSpeechCaps/
+// S11 osspeech (Worker D) — only useOsSpeechCaps/
 // preinstallOsSpeech are mocked (both would otherwise reach
 // tauriApi.ts's getInvoke(), which throws synchronously outside a real
 // desktop build, same reason audiocapCaps is mocked above);
@@ -62,7 +62,7 @@ vi.mock("@/lib/oauth/openrouterDesktop", () => ({
   connectOpenRouterDesktop: () => mockConnectOpenRouterDesktop(),
 }));
 
-// S12b fix round FB8-refresh (§F) — the ONE describe block below that
+// S12b fix round FB8-refresh — the ONE describe block below that
 // actually opens the embedded <ModelPicker> (every pre-existing block in
 // this file only checks 更换模型's own `disabled` attribute, never
 // clicks it) needs mlxCaps.ts's real probe short-circuited: with
@@ -568,7 +568,7 @@ const FAKE_PATHS = {
  *  DesktopBootstrapHandle compliance) but inert, mirroring bootstrap.ts's
  *  own NOT_DESKTOP_HANDLE constant's exact shape/posture.
  *
- *  `overrides` (S12b fix round FB7/FB8, §F): an optional partial spread
+ *  `overrides` (S12b fix round FB7/FB8): an optional partial spread
  *  onto the base shape above — added so the FB7-settings/FB8-refresh
  *  describe block below can drive `installedModel` to a specific value
  *  (e.g. "parakeet-tdt-0.6b-v3") without depending on bootstrap.ts's
@@ -819,7 +819,7 @@ describe("SettingsDialog (desktop) — F6: 查看本地日志 discards a stale r
   });
 });
 
-describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下载模型 + diarize hint (§3 Worker D)", () => {
+describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下载模型 + diarize hint (Worker D)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
@@ -1104,7 +1104,7 @@ describe("SettingsDialog (desktop) — 转录引擎 本地模型 card hint copy 
 // reusing its makeFakeHandle()/FAKE_PATHS/diarSeedSettings.
 // ---------------------------------------------------------------
 
-describe("SettingsDialog (desktop) — S12a mlx-install task progress + gating (§C Provision state machine, worker A3)", () => {
+describe("SettingsDialog (desktop) — S12a mlx-install task progress + gating (provision state machine, worker A3)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
@@ -1238,7 +1238,7 @@ describe("SettingsDialog (desktop) — S12a mlx-install task progress + gating (
 });
 
 // ---------------------------------------------------------------
-// S12b fix round FB7-settings + FB8-refresh (§F) — both driven off
+// S12b fix round FB7-settings + FB8-refresh — both driven off
 // makeFakeHandle()'s own scriptable installedModel/switchModel (never
 // bootstrap.ts's REAL switchModel internals, which are actively being
 // developed by a concurrent lane in this same worktree as this suite
@@ -1253,7 +1253,7 @@ describe("SettingsDialog (desktop) — S12a mlx-install task progress + gating (
 // mlx-install task progress, reused here for switchModelDone.
 // ---------------------------------------------------------------
 
-describe("SettingsDialog (desktop) — S12b fix round FB7-settings + FB8-refresh (§F)", () => {
+describe("SettingsDialog (desktop) — S12b fix round FB7-settings + FB8-refresh", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 

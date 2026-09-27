@@ -14,8 +14,8 @@
 // --help` documents both `-p/--python <PYTHON>` and `-r/--requirements
 // <REQUIREMENTS>`; and `UV_PYTHON_PREFERENCE`'s possible values (visible
 // in the binary's own embedded clap value strings) are exactly
-// `only-managed`/`managed`/`system`/`only-system` — "only-managed" matches
-// the blueprint's App-data layout section verbatim.
+// `only-managed`/`managed`/`system`/`only-system` — "only-managed" is
+// the one the app-data layout uses.
 
 /** Mirrors S3 chunk 3's Rust `AppPaths` (apps/desktop/src-tauri/src/
  *  paths.rs) exactly, field-for-field, as it crosses the `app_paths()`
@@ -57,7 +57,7 @@ export interface DesktopPaths {
    *  mlxVenvDir's doc above. */
   mlxVenvPython: string;
   /** The bundled, hash-pinned `requirements-mlx.lock` resource path
-   *  (§C R1's lock strategy — `uv pip compile --generate-hashes`, the
+   *  (R1's lock strategy — `uv pip compile --generate-hashes`, the
    *  lockfile IS the SBOM) — same "bundled Tauri resource" shape as
    *  `requirementsPath`/`diarRequirementsPath` above. See mlxVenvDir's
    *  doc above. */
@@ -77,8 +77,8 @@ export interface UvCommand {
  *  `py` field records this same value, not a re-typed copy). */
 export const PINNED_PYTHON_MINOR = "3.12";
 
-/** Every uv call carries these four (blueprint's App-data layout
- *  section, verbatim): nothing ever leaks to ~/.local or system Python —
+/** Every uv call carries these four (the app-data layout):
+ *  nothing ever leaks to ~/.local or system Python —
  *  UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR keep both the interpreter and uv's
  *  own download/build cache fully inside this app's app-data dir,
  *  UV_PYTHON_PREFERENCE=only-managed refuses to fall back to whatever
@@ -149,7 +149,7 @@ export function pipInstallDiar(paths: DesktopPaths): UvCommand {
 // S12a (v0.4.4) — the separate, hash-locked MLX venv's own builders.
 // Unlike pipInstallDiar above (which installs INTO the already-
 // provisioned BASE venv), these three target `paths.mlxVenvDir`/
-// `mlxVenvPython` — a wholly separate venv (§C F8's redesign: airtight
+// `mlxVenvPython` — a wholly separate venv (F8's redesign: airtight
 // isolation from the base whisper venv, no shared numpy/numba pins to
 // conflict over). CROSS-LANE CONTRACT pinned for worker A1 (Rust,
 // uv.rs's validate_uv_args) at S12a implementation time: venvCreateMlx's
@@ -169,7 +169,7 @@ export function pipInstallDiar(paths: DesktopPaths): UvCommand {
 // `-p/--python <PYTHON>`, no positional operand.
 // ---------------------------------------------------------------------
 
-/** `uv venv <mlxVenvDir> --python 3.12 [--clear]` — §C Provision's
+/** `uv venv <mlxVenvDir> --python 3.12 [--clear]` — the mlx
  *  transactional venv build step (1): `clear:true` is the RETRY arm
  *  (`--clear` wipes and recreates the target directory instead of
  *  erroring on an already-populated one), used only when a PRIOR
@@ -185,8 +185,8 @@ export function venvCreateMlx(paths: DesktopPaths, opts: { clear?: boolean } = {
 }
 
 /** `pip install --python <mlxVenvPython> -r <mlxRequirementsLockPath>`
- *  — §C Provision's transactional venv build step (2): installs the
- *  hash-pinned `requirements-mlx.lock` (§C R1's `uv pip compile
+ *  — the mlx transactional venv build step (2): installs the
+ *  hash-pinned `requirements-mlx.lock` (R1's `uv pip compile
  *  --generate-hashes` lockfile, the SBOM) into the mlx venv just
  *  created by venvCreateMlx above. Named "…Lock" (not a bare
  *  "…Mlx", mirroring pipInstall/pipInstallDiar's own naming) to make
@@ -199,7 +199,7 @@ export function pipInstallMlxLock(paths: DesktopPaths): UvCommand {
   };
 }
 
-/** `uv pip check --python <mlxVenvPython>` — §C Provision's
+/** `uv pip check --python <mlxVenvPython>` — the mlx
  *  transactional venv build step (3)'s second half (alongside the
  *  separate `mlx_import_preflight` Rust command's own real-import
  *  check — see bootstrap.ts's ensureMlxExtras): verifies the mlx

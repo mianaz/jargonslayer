@@ -3,7 +3,7 @@
 // engineOptions.test.ts/.desktop.test.ts/.ios.test.ts already pin
 // ENGINE_OPTIONS' exact byte-for-byte shape per platform — those keep
 // passing unmodified as the "projection reproduces today's gating
-// byte-for-byte" check (§2 Migration) now that ALL_ENGINE_OPTIONS/
+// byte-for-byte" migration check now that ALL_ENGINE_OPTIONS/
 // IOS_ENGINE_OPTIONS are generated off ENGINE_CAPABILITIES. This file
 // covers the NEW table itself: the D5 shape, the D7 static/runtime
 // split, and the D5 cross-invariant test (capability gate ×

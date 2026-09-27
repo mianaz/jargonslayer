@@ -6,7 +6,7 @@ test_whisper_protocol.py's own style/harness exactly: no pytest, no network,
 no real model, no server start — module import is side-effect free.
 
 This file runs under the BASE sidecar venv (sidecar/.venv), which
-never has mlx/parakeet_mlx installed (§C R1: those live only in the
+never has mlx/parakeet_mlx installed (R1: those live only in the
 separate, hash-locked mlx venv) — every test below either (a) stubs
 ParakeetMlxBackend's OWN methods directly on the instance (mirrors
 test_whisper_protocol.py's make_server()._transcribe stub idiom), for
@@ -27,7 +27,7 @@ Covers:
   - backend_for_model: parakeet id -> "parakeet-mlx", every other
     MODEL_CHOICES id -> "faster-whisper"
   - ParakeetMlxBackend.load(): from_pretrained(PARAKEET_REPO_ID) only
-    (NEVER cache_dir= — §C R1/F10), model set, returns a wall-time float
+    (NEVER cache_dir= — R1/F10), model set, returns a wall-time float
   - ParakeetMlxBackend.try_acquire_stream/release_stream (L2/F4)
   - ParakeetMlxBackend.open_streaming_context: pinned context_size/depth
   - ParakeetMlxBackend.add_audio: wraps the chunk via mlx.core.array
@@ -213,7 +213,7 @@ def _install_fake_parakeet_modules():
     def fake_from_pretrained(repo):
         # Deliberately single-positional-arg only — a future regression
         # that starts passing cache_dir= would raise TypeError here,
-        # which is exactly the point (§C R1/F10's "NEVER pass cache_dir
+        # which is exactly the point (R1/F10's "NEVER pass cache_dir
         # explicitly" invariant).
         record["from_pretrained_repo"].append(repo)
         return model
@@ -283,7 +283,7 @@ async def test_open_and_close_streaming_context_passes_pinned_context_size_and_d
         backend.model = model
         ctx = await backend.open_streaming_context()
         check(
-            "open_streaming_context: transcribe_stream receives the §C R2-pinned context_size/depth",
+            "open_streaming_context: transcribe_stream receives the R2-pinned context_size/depth",
             model._transcribe_stream_calls == [{"context_size": PARAKEET_CONTEXT_SIZE, "depth": PARAKEET_DEPTH}],
         )
         check(
@@ -698,7 +698,7 @@ async def test_boundary_emits_final_with_scheduler_seg_id_t0_t1() -> None:
         )
         check("boundary: text is backend.batch_final's own result", finals[0]["text"] == "final tail text")
         check(
-            "boundary: lag_ms present and numeric (§C R3/F6: boundary-enqueue -> final-send)",
+            "boundary: lag_ms present and numeric (R3/F6: boundary-enqueue -> final-send)",
             isinstance(finals[0].get("lag_ms"), (int, float)),
         )
         check(

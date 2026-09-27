@@ -1,6 +1,6 @@
 // Docx export: mirrors buildMarkdownReport's structure (export.ts:67)
 // section-for-section, as an OOXML Word document instead of Markdown.
-// v05-wave1-blueprint.md §1 Feature 3.
+// v0.5 Wave-1 Feature 3.
 //
 // The "docx" package is DYNAMICALLY imported inside buildDocxReport —
 // this file must have NO top-level `import ... from "docx"` (pinned
@@ -11,7 +11,7 @@
 // A few small formatters (pad2/formatDate/formatDuration/
 // ENGINE_LABELS) are duplicated from export.ts rather than imported —
 // this lane's edit surface on export.ts is scoped to adding
-// `downloadBlob` only (v05-wave1-blueprint.md §2 lane table), so this
+// `downloadBlob` only, so this
 // file stays self-contained instead of exporting export.ts's private
 // helpers.
 

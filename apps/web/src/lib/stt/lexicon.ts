@@ -21,8 +21,8 @@
 // extension-point comment marking where a future 术语偏置 Settings
 // toggle would gate the whole build+pass step.
 //
-// v0.5 Wave-1 Feature 8 (named custom dictionary packs, blueprint §1
-// F8 + §5 A7) — the ONE exception to D8's "no store reads" purity:
+// v0.5 Wave-1 Feature 8 (named custom dictionary packs, F8 + A7) —
+// the ONE exception to D8's "no store reads" purity:
 // isCustomPackEnabled reads glossary.ts's own synchronous, already-
 // loaded pack registry (NOT the zustand store — same category of read
 // packTermsForBias already does against core's built-in pack table).
@@ -248,8 +248,8 @@ function capTermsByCountAndBytes(terms: string[], maxTerms: number, maxBytes: nu
   return out;
 }
 
-// osspeech: S11/Q11's own caps, unchanged (doc §3: "keeping Q11's ~8KB
-// size discipline") — packs are now IN the candidate list feeding this
+// osspeech: S11/Q11's own caps, unchanged (keeping Q11's ~8KB size
+// discipline) — packs are now IN the candidate list feeding this
 // cap (previously glossary-only), everything else about the wire value
 // is byte-identical.
 export const OSSPEECH_MAX_CONTEXTUAL_TERMS = 100;
@@ -267,8 +267,8 @@ export function projectForOsSpeechContextualJson(lexicon: MeetingLexicon): strin
   return terms.length > 0 ? JSON.stringify(terms) : null;
 }
 
-// soniox: doc §3 — "verified limit ≈8,000 tokens / ~10,000 chars total
-// context — cap conservatively (Sol F10)". Well under that verified
+// soniox: verified limit ≈8,000 tokens / ~10,000 chars total
+// context — cap conservatively (Sol F10). Well under that verified
 // ceiling, same dual-cap discipline as osspeech.
 export const SONIOX_MAX_CONTEXT_TERMS = 100;
 export const SONIOX_MAX_CONTEXT_BYTES = 4 * 1024;
@@ -312,7 +312,7 @@ export function projectForElevenLabsKeyterms(lexicon: MeetingLexicon): string[] 
 // prompt to its LAST (max_length // 2 - 1) tokens (verified against
 // the installed faster-whisper==1.2.1 source, transcribe.py's
 // get_prompt: self.max_length is 448, so the real ceiling is exactly
-// 223 tokens — doc §3/D3's "LAST 223 prompt tokens" claim, source-
+// 223 tokens — D3's "LAST 223 prompt tokens" claim, source-
 // pinned). Sizing this cap to exactly 223 TOKENS would require a real
 // tokenizer this layer doesn't have; these term/byte counts are sized
 // comfortably ABOVE what 223 tokens can hold (short jargon terms, not

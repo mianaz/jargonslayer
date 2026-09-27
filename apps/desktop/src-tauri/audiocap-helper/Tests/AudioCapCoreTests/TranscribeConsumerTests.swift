@@ -2,7 +2,7 @@ import AudioToolbox
 import XCTest
 @testable import AudioCapCore
 
-// S11 (§Q1/§3 Worker A) — TranscribeConsumer's own poll/starvation/
+// S11 (Q1, Worker A) — TranscribeConsumer's own poll/starvation/
 // stats/pause-discard/dropped-frame state machine, exercised entirely
 // through a `FakeFrameSink` + an INJECTED, manually-advanced clock (a
 // deliberate departure from WriterTests' own "real Date(), just a short
@@ -149,7 +149,7 @@ final class TranscribeConsumerTests: XCTestCase {
         XCTAssertFalse(consumer.pollOnce(), "must not starve — under 1.0s has passed since the LAST activity")
     }
 
-    // ---- pause-discard (§Q3) ----
+    // ---- pause-discard (Q3) ----
 
     func testPauseDiscardsRealAudioFromTheSinkButStillDrainsTheRing() {
         let ring = SPSCByteRing(capacity: 1024)

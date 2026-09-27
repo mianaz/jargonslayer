@@ -218,8 +218,8 @@ describe("glossary.ts", () => {
     });
   });
 
-  // v0.5 Wave-1 Feature 8 (named custom dictionary packs, blueprint
-  // §1 F8 + §5 A7 "path-complete registry").
+  // v0.5 Wave-1 Feature 8 (named custom dictionary packs,
+  // F8 + A7 "path-complete registry").
   describe("pack-aware filtering — getCachedEntries/scanCustomEntries (A7)", () => {
     it("excludes a disabled custom pack's entries from scanCustomEntries", async () => {
       const glossary = await import("../glossary");

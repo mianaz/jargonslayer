@@ -14,7 +14,7 @@ import Foundation
 // real SDK headers (Xcode 26.5 SDK, CoreAudio.framework's
 // CATapDescription.h / AudioHardwareTapping.h / AudioHardware.h /
 // AudioHardwareBase.h) and by actually typechecking/building small
-// probes against them — not assumed from the blueprint's prose or
+// probes against them — not assumed from design prose or
 // AudioCap's own (different-language-surface, in-process) usage. Two
 // notable deltas from a naive reading, both load-bearing:
 //   - kAudioObjectSystemObject imports into Swift as Int32 (it's
@@ -29,8 +29,7 @@ import Foundation
 //     an unmatched PID through as if it were a real exclusion target.
 @available(macOS 14.2, *)
 public enum ProcessTapCapture {
-    /// D3 (as amended after the 2026-07-13 spike run — blueprint
-    /// §S9.1-outcome): "Rust passes its own PID to the helper
+    /// D3 (as amended after the 2026-07-13 spike run): "Rust passes its own PID to the helper
     /// (--exclude-pid); helper translates via
     /// kAudioHardwarePropertyTranslatePIDToProcessObject and excludes
     /// the result" — but a noErr + kAudioObjectUnknown answer returns

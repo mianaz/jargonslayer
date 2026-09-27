@@ -7,8 +7,8 @@
 // different engine, different wire shape ({mlxSupported, reason}).
 //
 // POLICY — deliberately the OPPOSITE of audiocapCaps.ts's/
-// osspeechCaps.ts's fail-OPEN posture (§C Gating, explicit call-out in
-// the blueprint): ANY probe error (or a `getInvoke()` failure) resolves
+// osspeechCaps.ts's fail-OPEN posture (an explicit design call-out):
+// ANY probe error (or a `getInvoke()` failure) resolves
 // parakeet as UNSUPPORTED. The 2.5 GB opt-in install is what flips the
 // S11 "probe-error-stays-open" convention — staying open on an
 // unconfirmed probe would let a user kick off a multi-GB download the
@@ -21,7 +21,7 @@
 // hiccup" discipline as the fail-open siblings, applied to the opposite
 // default).
 //
-// S12a fix round (§D F7, LOW, both reviewers — folded together with F2
+// S12a fix round (F7, LOW, both reviewers — folded together with F2
 // since F2's own probeMlxUsable needs the SAME ok/error distinction
 // this module's own callers do): probeMlxCaps()/refreshMlxCaps() used
 // to resolve a bare `MlxCapabilities`, which is genuinely AMBIGUOUS —
@@ -35,7 +35,7 @@
 // (comparing the settled result against getMlxCapsSnapshot() by
 // reference) — fixed at the SOURCE instead: every probe/refresh now
 // resolves an EXPLICIT `{status: "ok" | "error", caps}` envelope, no
-// inference left anywhere downstream. PINNED CONTRACT (§D F7, verified
+// inference left anywhere downstream. PINNED CONTRACT (F7, verified
 // against worker A3's own already-landed ModelPicker.tsx/
 // ModelPicker.render.test.tsx): `probeMlxCaps()/refreshMlxCaps() ->
 // Promise<{status: "ok" | "error", caps: MlxCapabilities}>`.
@@ -53,7 +53,7 @@
 // literal with an explicit `reason: null`/`reason: "..."` key, per the
 // pinned contract.
 //
-// Also fixes the OTHER half of §D F7 (not race-sensitive in outcome —
+// Also fixes the OTHER half of F7 (not race-sensitive in outcome —
 // fail-closed direction always held — but a real correctness gap):
 // probeMlxCaps()'s own `inFlight`-clearing `.finally()` used to be
 // unconditional, so an OLDER probeMlxCaps() attempt superseded by a
@@ -70,8 +70,8 @@
 // started (and possibly already resolved) in the meantime — the
 // "stale snapshot" half of the same overlap.
 //
-// This module only PINS the shape for the S12a prelude fan-out (§C
-// L1) — worker A2 owns the real capability logic + tests. Framework-
+// This module only PINS the shape for the S12a prelude fan-out (L1)
+// — worker A2 owns the real capability logic + tests. Framework-
 // agnostic on purpose (no React import), mirroring audiocapCaps.ts's
 // own posture: a caller wires its own useState/useEffect (or its own
 // hook) against getMlxCapsSnapshot/subscribeMlxCaps, this module owns
@@ -80,16 +80,16 @@
 import { getInvoke, type InvokeFn } from "./tauriApi";
 import { IS_DESKTOP } from "../platform/desktop";
 
-// {mlxSupported, reason} camelCase — §3.4's mlx_capabilities() wire
-// shape (native arm64 + macOS >= 14.0 + mlx pinned, §C Gating).
-// `reason: string | null` — see this file's own header doc (§D F7) for
+// {mlxSupported, reason} camelCase — the mlx_capabilities() wire
+// shape (native arm64 + macOS >= 14.0 + mlx pinned).
+// `reason: string | null` — see this file's own header doc (F7) for
 // why this is required-and-nullable, not optional.
 export interface MlxCapabilities {
   mlxSupported: boolean;
   reason: string | null;
 }
 
-/** §D F7's own pinned envelope — every probe/refresh below resolves
+/** F7's own pinned envelope — every probe/refresh below resolves
  *  this, never a bare `MlxCapabilities`, so "did the invoke itself
  *  fail" is never re-inferred downstream (ModelPicker.tsx's own
  *  mlxGateFor/useMlxCaps, provisionRunner.ts's probeMlxUsable, F2). */
@@ -111,7 +111,7 @@ type Listener = () => void;
 
 let cached: MlxCapabilities | null = null; // null = not yet resolved
 let inFlight: Promise<MlxCapsResult> | null = null;
-// §D F7 — bumped once per REAL probeMlxCapabilitiesWith() attempt (the
+// F7 — bumped once per REAL probeMlxCapabilitiesWith() attempt (the
 // only place `cached` is ever written); see this file's own header doc
 // for the exact race this closes. Reset alongside every other
 // module-level slot in resetMlxCapsCache() below, so leftover
@@ -147,7 +147,7 @@ export function subscribeMlxCaps(listener: Listener): () => void {
  *  mlx_capabilities() round-trip plus this module's FAIL-CLOSED policy
  *  (see this file's header doc) — no IS_DESKTOP/tauriApi coupling of
  *  its own, so it's directly unit-testable with a fake invoke, no
- *  module-mocking gymnastics required. Resolves the §D F7 envelope
+ *  module-mocking gymnastics required. Resolves the F7 envelope
  *  (`{status, caps}`): a SUCCESSFUL round-trip (mlxSupported true OR
  *  false, a definitive answer either way) caches `caps` and notifies
  *  subscribers, `status:"ok"`; an invoke() rejection resolves
@@ -184,7 +184,7 @@ export async function probeMlxCapabilitiesWith(invoke: InvokeFn): Promise<MlxCap
  *  a cache hit is never itself an error), and a call made while a
  *  probe is already in flight shares that SAME in-flight promise
  *  (never fires a second concurrent invoke). `inFlight` is cleared via
- *  an identity compare (§D F7) — see this file's own header doc — so a
+ *  an identity compare (F7) — see this file's own header doc — so a
  *  concurrent refreshMlxCaps() taking over `inFlight` with its own
  *  fresh probe is never wrongly cleared by THIS call's own settling. */
 export function probeMlxCaps(): Promise<MlxCapsResult> {
@@ -206,7 +206,7 @@ export function probeMlxCaps(): Promise<MlxCapsResult> {
  *  reference, every registered listener, and the request-generation
  *  counter) so the NEXT probeMlxCaps() call re-probes from scratch.
  *  Mirrors audiocapCaps.ts's/osspeechCaps.ts's own reset-cache test
- *  convention for the same module-level state; per §C Gating this is
+ *  convention for the same module-level state; by design this is
  *  ALSO meant to back a user-visible retry (fail-closed never
  *  auto-unlocks on its own, only an explicit re-probe can) — see this
  *  file's header NOTE for the one sharp edge that leaves for whichever
@@ -219,8 +219,8 @@ export function resetMlxCapsCache(): void {
 }
 
 /** Worker A2's resolution of the header NOTE's sharp edge above: the
- *  REAL "重试" affordance a caller wires per §C Gating ("a user-visible
- *  retry" on a fail-closed probe error) — distinct from
+ *  REAL "重试" affordance a caller wires (a user-visible
+ *  retry on a fail-closed probe error) — distinct from
  *  resetMlxCapsCache() in exactly the one way that matters for a live
  *  retry button: it does NOT clear `listeners`, so a caller's own
  *  subscription (registered once, e.g. via subscribeMlxCaps in a
@@ -235,7 +235,7 @@ export function resetMlxCapsCache(): void {
  *  and fail-closed-on-error policy as probeMlxCaps()/
  *  probeMlxCapabilitiesWith() above (a successful resolution — true OR
  *  false — is cached and notified; an error is deliberately left
- *  uncached, so the very next call gets to try again); same §D F7
+ *  uncached, so the very next call gets to try again); same F7
  *  identity-guarded `inFlight` clearing. */
 export function refreshMlxCaps(): Promise<MlxCapsResult> {
   if (!IS_DESKTOP) return Promise.resolve({ status: "error", caps: FAIL_CLOSED });

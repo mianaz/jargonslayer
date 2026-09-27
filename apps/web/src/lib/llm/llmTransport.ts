@@ -65,8 +65,8 @@ const CLIENT_TRANSPORT_BUILD_FLAG = process.env.NEXT_PUBLIC_LLM_TRANSPORT === "c
 
 // Test-only override — bypasses the build-time env var so a test can
 // flip client-transport on/off without a rebuild. `null` (the default)
-// defers to the build-time flag. Documented programmatic override per
-// the S2 design doc; mirrors resetSubscriptionToastLatch's role for
+// defers to the build-time flag. Documented programmatic override;
+// mirrors resetSubscriptionToastLatch's role for
 // SUBSCRIPTION_DIRECT_BUILT-adjacent module state.
 let transportFlagOverride: boolean | null = null;
 

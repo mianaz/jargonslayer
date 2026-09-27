@@ -3,7 +3,7 @@
 // shape for osspeech's OWN Rust command, os_speech_capabilities()
 // — a fully separate probe/cache from audiocapCaps.ts's
 // audiocap_capabilities(): different engine, different wire shape (adds
-// locales/installedLocales), and the blueprint's own Q4 keeps the
+// locales/installedLocales), and decision Q4 keeps the
 // Rust-side probe-memo lifetime independent per command. See
 // audiocapCaps.ts's own header comment for the shared POLICY this
 // module repeats: a DEFINITIVE `{supported:false}` disables the
@@ -11,7 +11,7 @@
 // snapshot) both stay fail-open, since "runtime commands re-check
 // support — UI gating is not a boundary" (D6) applies here identically.
 //
-// ALSO owns preinstallOsSpeech() (§A2 lead adjudication: preinstall is
+// ALSO owns preinstallOsSpeech() (A2 lead adjudication: preinstall is
 // a real 6th Rust command, single-flighted vs a running session) — the
 // wizard's EngineChoiceScreen background preinstall + Settings' 预下载
 // 模型 button (Worker D) import this ONE function and get back a plain
@@ -27,7 +27,7 @@ import { trackOsSpeechAsset, type OsSpeechAssetKind } from "./jobsBridge";
 import { OSSPEECH_TERMINAL_STATUS_KINDS, type OsSpeechStatusKind } from "../stt/osSpeech";
 import { listenOsSpeechStatus } from "../stt/osSpeechTransport";
 
-// {supported, reason, locales, installedLocales} camelCase — §2.4's
+// {supported, reason, locales, installedLocales} camelCase — the
 // exact os_speech_capabilities() wire shape.
 export interface OsSpeechCapabilities {
   supported: boolean;
@@ -92,7 +92,7 @@ export async function probeOsSpeechCapabilitiesWith(invoke: InvokeFn): Promise<O
 }
 
 /** Single-flight cached probe of os_speech_capabilities. IS_TAURI-guarded
- *  (S13 blueprint §6, widened from IS_DESKTOP — the probe/invoke names
+ *  (S13, widened from IS_DESKTOP — the probe/invoke names
  *  are identical on iOS, D2) — resolves the fail-open shape immediately
  *  outside a Tauri build, never calling getInvoke() there (which would
  *  otherwise throw SYNCHRONOUSLY per tauriApi.ts's own "throws outside a
@@ -162,7 +162,7 @@ function isAssetKind(kind: OsSpeechStatusKind): kind is OsSpeechAssetKind {
   );
 }
 
-/** §A2 lead adjudication: preinstall_os_speech is a real 6th Rust
+/** A2 lead adjudication: preinstall_os_speech is a real 6th Rust
  *  command, single-flighted vs a running session (rejects, v1). This
  *  wrapper invokes it, then drives an "os-speech-asset" task row off
  *  its OWN "osspeech://status" listener for the attempt's duration
@@ -175,7 +175,7 @@ function isAssetKind(kind: OsSpeechStatusKind): kind is OsSpeechAssetKind {
  *  straight through. Worker D imports this one function — no other
  *  osspeech wiring needed on that side.
  *
- *  S13 (blueprint §6 Sol F2, BLOCKER): this was osspeechCaps.ts's own
+ *  S13 (Sol F2, BLOCKER): this was osspeechCaps.ts's own
  *  THIRD "osspeech://status" subscription (alongside osSpeech.ts's own
  *  two) — on iOS the macOS global event it used to listen for would
  *  never arrive (plugin events are plugin-scoped), so this now goes

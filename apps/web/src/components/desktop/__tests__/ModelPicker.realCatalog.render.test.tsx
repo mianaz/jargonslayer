@@ -42,7 +42,7 @@ vi.mock("@/lib/desktop/mlxCaps", () => ({
 import ModelPicker from "../ModelPicker";
 import { MODEL_CATALOG } from "@/lib/desktop/modelCatalog";
 
-describe("ModelPicker — REAL MODEL_CATALOG (§C Gating F13, mlxCaps mocked only)", () => {
+describe("ModelPicker — REAL MODEL_CATALOG (F13, mlxCaps mocked only)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
@@ -150,12 +150,12 @@ describe("ModelPicker — REAL MODEL_CATALOG (§C Gating F13, mlxCaps mocked onl
     expect(rowAfter.disabled).toBe(false);
   });
 
-  // S12b fix round FB10 (§F; product default, ON THE VETO LIST §7.7) —
+  // S12b fix round FB10 (product default, ON THE VETO LIST) —
   // the hideDefinitivelyUnsupported policy prop, both surfaces (prop
   // omitted == Settings' own posture; prop true == DesktopWizard.tsx's
   // own posture) crossed with all three real mlxCaps states, against
   // the REAL catalog's own parakeet entry.
-  describe("hideDefinitivelyUnsupported (§F FB10)", () => {
+  describe("hideDefinitivelyUnsupported (FB10)", () => {
     it("prop omitted (Settings' posture) — supported: row visible + selectable", async () => {
       mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: true, reason: null } });
       await mount("small", () => {});

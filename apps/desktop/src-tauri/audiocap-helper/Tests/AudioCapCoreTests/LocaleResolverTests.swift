@@ -1,7 +1,7 @@
 import XCTest
 @testable import AudioCapCore
 
-// S11 (§Q4) — LocaleResolver's pure fallback-candidate logic (no seam,
+// S11 (Q4) — LocaleResolver's pure fallback-candidate logic (no seam,
 // no async needed) plus `resolve(bcp47:)` driven through a fake
 // `LocaleEquivalenceProviding` conformance — never touches
 // Speech.framework/macOS 26 availability at all, matching this file's

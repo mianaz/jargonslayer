@@ -92,7 +92,7 @@ function isMlxInstallPhase(
  *  way. Returns the new task's id (rarely needed by the caller — the
  *  registry is the source of truth from here on).
  *
- *  S12a (§C Provision/Task 7): an mlx-family switch's leading extras
+ *  S12a: an mlx-family switch's leading extras
  *  phase gets its OWN, separate "mlx-install" task row (lazily started
  *  the moment the FIRST mlx-* phase update arrives — never for a plain
  *  whisper-family switch, which emits none) — mirrors trackOsSpeechAsset's
@@ -286,7 +286,7 @@ export interface OsSpeechAssetTracker {
    *  of which already settle the row themselves via `handle` above (see
    *  OsSpeechEngine.handleStatus's own terminal-latch branch, the one
    *  caller). Looks up the CURRENTLY active row via the registry, not
-   *  this tracker's own local id — §J2(b)'s single-flight means the
+   *  this tracker's own local id — J2(b)'s single-flight means the
    *  running row may belong to a DIFFERENT tracker instance entirely
    *  (the preempt-handoff case: a preinstall's row, now being driven by
    *  this session). No-op if no row is running. */
@@ -321,12 +321,12 @@ const OS_SPEECH_ASSET_STOPPED_MESSAGE = "系统识别已停止，语音资源下
  *  lifecycle events — a PUSH-style driver (unlike trackSwitchModel/
  *  trackInstallDiar above, which each subscribe a Promise-returning
  *  DesktopBootstrapHandle action themselves): both OsSpeechEngine's own
- *  osspeech://status listener (mid-session auto-download, §2.6) and
+ *  osspeech://status listener (mid-session auto-download) and
  *  osspeechCaps.ts's preinstallOsSpeech (its own, separate listener)
  *  feed this from whichever asset events THEY observe on their own
  *  lane — this function owns no listener of its own.
  *
- *  Per §2.6, the task row itself only ever starts at "asset-downloading"
+ *  The task row itself only ever starts at "asset-downloading"
  *  (or defensively at "asset-failed", so a checking-phase failure still
  *  surfaces a visible failed row rather than only a status toast) —
  *  "asset-checking" alone never creates a row (a model that's already
@@ -336,7 +336,7 @@ const OS_SPEECH_ASSET_STOPPED_MESSAGE = "系统识别已停止，语音资源下
  *  a no-op otherwise. Call ONCE per session/attempt — a fresh tracker
  *  every time, never reused across sessions (a reused tracker would
  *  attach a LATER session's events onto an EARLIER, already-settled
- *  task id) — §J2(b)'s single-flight check (activeOsSpeechAssetTaskId)
+ *  task id) — J2(b)'s single-flight check (activeOsSpeechAssetTaskId)
  *  is what lets that be true while STILL sharing one row across the
  *  preempt handoff: a fresh tracker's own local `id` starts null every
  *  time, but adopts whatever row is ALREADY running before minting a

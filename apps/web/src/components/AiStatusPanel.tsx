@@ -35,8 +35,7 @@ interface AiStatusRowMeta {
   footnote?: string;
 }
 
-// Row order/labels/footnotes straight from the design doc's table
-// (Part A) — 解释 rides 检测's resolver domain but keeps its OWN
+// Row order/labels/footnotes are fixed by design — 解释 rides 检测's resolver domain but keeps its OWN
 // telemetry bucket, 报告 rides "summary" (its 3 internal sub-calls all
 // land in the one "summary" bucket, hence the footnote instead of a
 // 5th row).
@@ -106,7 +105,7 @@ export const AI_STATUS_HEALTH_DOT_CLASS: Record<AiHealthStatus, string> = {
  *  keyless full/desktop row genuinely has lastStatus:"fail" here; this
  *  function is what keeps that grey instead of amber. A keyless row is
  *  a designed dictionary degrade, not a fault — only ratelimit/upstream
- *  outrank the neutral grey (owner ruling, design doc Part A). */
+ *  outrank the neutral grey (owner ruling). */
 export function deriveHealthStatus(stat: LlmDomainStat): AiHealthStatus {
   if (stat.lastStatus === "ok") return "ok";
   if (stat.lastStatus === "fail" && stat.lastErrorKind !== "nokey") return "fail";
@@ -129,7 +128,7 @@ function healthDotTitle(stat: LlmDomainStat): string {
  *  row has its own key, so the label says so instead of implying the
  *  request still passes through our server); empty + preview -> 服务端
  *  代理; empty + full/desktop -> 未配置 Key. 订阅直连 gets no label of its
- *  own here (design doc's "skip if it adds complexity" escape hatch) —
+ *  own here (skipped: it would add complexity for no gain) —
  *  its own path (agentDetect/agentDefine + settings.subscriptionProvider)
  *  never runs through resolveTaskCreds (see that resolver's own module
  *  doc), so this panel has no signal to distinguish it from "未配置 Key"

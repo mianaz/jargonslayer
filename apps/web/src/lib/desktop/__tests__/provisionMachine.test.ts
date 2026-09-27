@@ -178,7 +178,7 @@ describe("transition — CHECK_RESULT", () => {
 // parakeet-family marker must be capability-checked BEFORE ever
 // reaching STARTING (Sol finding #14's fix), never a health-timeout
 // restart loop.
-// S12a fix round (§D F2, HIGH) — redesigned from a bare boolean to the
+// S12a fix round (F2, HIGH) — redesigned from a bare boolean to the
 // full 4-state MlxUsability matrix (usable | unsupported | invalid-venv
 // | probe-error), lead-adjudicated: (a) unsupported and (b) invalid-venv
 // BOTH land on the identical quarantine (fresh INSTALL_PYTHON) shape —
@@ -186,7 +186,7 @@ describe("transition — CHECK_RESULT", () => {
 // pure reducer only owns the MachineState shape; (c) probe-error does
 // NOT quarantine at all — it parks directly on a NEW, distinct shape
 // (INSTALL_MLX/ERROR), never touching ctx/the marker's own model.
-describe("transition — CHECK_RESULT mlx-usability (F14, redesigned §D F2, mlx-family marker)", () => {
+describe("transition — CHECK_RESULT mlx-usability (F14, redesigned F2, mlx-family marker)", () => {
   const checking: MachineState = { phase: "CHECKING" };
   const parakeetMarkerJson = JSON.stringify({
     schema: MARKER_SCHEMA_VERSION,
@@ -215,7 +215,7 @@ describe("transition — CHECK_RESULT mlx-usability (F14, redesigned §D F2, mlx
     });
   });
 
-  it("§D F2 case (a) {status:'unsupported'} -> QUARANTINE: a FRESH INSTALL_PYTHON entry for 'small', ignoring the marker's own model entirely", () => {
+  it("F2 case (a) {status:'unsupported'} -> QUARANTINE: a FRESH INSTALL_PYTHON entry for 'small', ignoring the marker's own model entirely", () => {
     const result = transition(ctx, checking, {
       type: "CHECK_RESULT",
       probeHealthy: false,
@@ -228,7 +228,7 @@ describe("transition — CHECK_RESULT mlx-usability (F14, redesigned §D F2, mlx
     });
   });
 
-  it("§D F2 case (b) {status:'invalid-venv'} -> the IDENTICAL quarantine MachineState shape as case (a) — the durable-persist-vs-not distinction is bootstrap.ts's own job, not this reducer's", () => {
+  it("F2 case (b) {status:'invalid-venv'} -> the IDENTICAL quarantine MachineState shape as case (a) — the durable-persist-vs-not distinction is bootstrap.ts's own job, not this reducer's", () => {
     const result = transition(ctx, checking, {
       type: "CHECK_RESULT",
       probeHealthy: false,
@@ -241,7 +241,7 @@ describe("transition — CHECK_RESULT mlx-usability (F14, redesigned §D F2, mlx
     });
   });
 
-  it("§D F2 case (c) {status:'probe-error'} -> does NOT quarantine — parks directly on INSTALL_MLX/ERROR with the probe's own message, ZERO writes (no startStep, ctx never touched, no effects)", () => {
+  it("F2 case (c) {status:'probe-error'} -> does NOT quarantine — parks directly on INSTALL_MLX/ERROR with the probe's own message, ZERO writes (no startStep, ctx never touched, no effects)", () => {
     const result = transition(ctx, checking, {
       type: "CHECK_RESULT",
       probeHealthy: false,
@@ -339,7 +339,7 @@ describe("transition — CHECK_RESULT mlx-usability (F14, redesigned §D F2, mlx
   });
 });
 
-describe("ProvisionStep — INSTALL_MLX is a real step identity, deliberately NOT auto-advanced (§C Provision)", () => {
+describe("ProvisionStep — INSTALL_MLX is a real step identity, deliberately NOT auto-advanced", () => {
   it("STEP_OK for a live INSTALL_MLX/RUNNING state is a harmless no-op (no successor defined in STEP_ORDER)", () => {
     const state: MachineState = { phase: "STEP", step: "INSTALL_MLX", status: "RUNNING" };
     expect(transition(ctx, state, { type: "STEP_OK", step: "INSTALL_MLX" })).toEqual({ state, effects: [] });
@@ -364,7 +364,7 @@ describe("ProvisionStep — INSTALL_MLX is a real step identity, deliberately NO
     });
   });
 
-  // S12a fix round (§D F2, case c) — RETRY on an INSTALL_MLX/ERROR
+  // S12a fix round (F2, case c) — RETRY on an INSTALL_MLX/ERROR
   // (only ever reached via the probe-error branch above) means "try
   // the whole capability check again", not "resume a held child/venv
   // build" (nothing was ever started) — re-enters CHECKING from

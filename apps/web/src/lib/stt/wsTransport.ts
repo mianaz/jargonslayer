@@ -496,7 +496,7 @@ export class WsTransport {
         config.diarize = true;
         if (settings.hfToken) config.hf_token = settings.hfToken;
       }
-      // v0.4.7 Lane B (glossary -> recognizer bias, doc §3): only sent
+      // v0.4.7 Lane B (glossary -> recognizer bias): only sent
       // when the lexicon actually projects to something (D1 default-on
       // is unconditional for this free/local mechanism — no settings
       // gate here; see useMeeting.ts's attachEngine for the one

@@ -136,7 +136,7 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
   };
 
   // buildDocxReport dynamically imports "docx" (kept out of the
-  // initial bundle — v05-wave1-blueprint.md §1 Feature 3), so this is
+  // initial bundle — v0.5 Wave-1 Feature 3), so this is
   // the one export action worth a busy state: the click can take a
   // moment on first use (chunk fetch) before the Blob is ready.
   const handleExportDocx = async () => {

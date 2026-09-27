@@ -153,7 +153,7 @@ describe("applySpeakerUpdateToSegments — realtime speaker diarization (beta)",
   });
 });
 
-describe("applySpeakerUpdateToSegments — §5 A2 manual-assignment guard (locked segments)", () => {
+describe("applySpeakerUpdateToSegments — A2 manual-assignment guard (locked segments)", () => {
   it("a LOCKED segment's sttSpeaker still updates, but its display speaker does not", () => {
     const segments = [
       makeSegment({ id: "a", sttSeg: 0, speaker: "Alice", speakerLocked: true }),
@@ -223,7 +223,7 @@ describe("applySpeakerUpdateToSegments — §5 A2 manual-assignment guard (locke
   });
 });
 
-describe("unlockSpeakerInSegments — 跟随识别 (§5 A2)", () => {
+describe("unlockSpeakerInSegments — 跟随识别 (A2)", () => {
   it("clears speakerLocked and recomputes display from aliases[sttSpeaker]", () => {
     const segments = [
       makeSegment({ id: "a", sttSpeaker: "SPEAKER_1", speaker: "Alice", speakerLocked: true }),
@@ -330,7 +330,7 @@ describe("assignSpeakerFollowingInSegments — 应用到本句及之后 (exact r
   });
 });
 
-describe("addSpeakerToRosterList — roster invariants (§5 A1: trimmed-unique, 200 cap)", () => {
+describe("addSpeakerToRosterList — roster invariants (A1: trimmed-unique, 200 cap)", () => {
   it("auto-numbers 说话人 1 on an empty roster when name is omitted", () => {
     const { roster, name } = addSpeakerToRosterList([]);
     expect(name).toBe("说话人 1");
@@ -411,7 +411,7 @@ describe("renameRosterSpeakerList", () => {
   });
 });
 
-describe("deriveRosterFromSegments — legacy-session roster fallback (§5 A2)", () => {
+describe("deriveRosterFromSegments — legacy-session roster fallback (A2)", () => {
   it("collects unique non-empty speaker values, first-seen order", () => {
     const segments = [
       makeSegment({ id: "a", speaker: "Alice" }),
@@ -3216,7 +3216,7 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(s.engine).toBe("webspeech");
   });
 
-  it("preview tier leaves a saved BYOK cloud engine (soniox) selectable — BYOK preview D3: survives UNCONDITIONALLY, same as full tier (superseded the old v0.4 S4 blueprint decision E lock)", () => {
+  it("preview tier leaves a saved BYOK cloud engine (soniox) selectable — BYOK preview D3: survives UNCONDITIONALLY, same as full tier (superseded the old v0.4 S4 decision E lock)", () => {
     const s = applyTierDefaults(withEngine("soniox"), true, true);
     expect(s.engine).toBe("soniox");
   });
@@ -3748,7 +3748,7 @@ describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coer
     expect(s.engine).toBe("appaudio");
   });
 
-  it("desktop coerces a stored tabaudio-cloud to appaudio too — v0.5 Wave-1 F4 / §5 A4, same D7 rationale as tabaudio itself (WKWebView has no tab-share picker, cloud backend or not; tabaudio-cloud is web-only for v0.5)", () => {
+  it("desktop coerces a stored tabaudio-cloud to appaudio too — v0.5 Wave-1 F4 / A4, same D7 rationale as tabaudio itself (WKWebView has no tab-share picker, cloud backend or not; tabaudio-cloud is web-only for v0.5)", () => {
     const s = applyPlatformEngineDefaults(withEngine("tabaudio-cloud"), true);
     expect(s.engine).toBe("appaudio");
   });
@@ -4018,7 +4018,7 @@ describe("migrateSettings — field-test fix composes the OpenRouter model remap
   });
 });
 
-// v0.5 Wave-1 Feature 5 / §5 A3 (BLOCKER) — total, platform-aware `mode`
+// v0.5 Wave-1 Feature 5 / A3 (BLOCKER) — total, platform-aware `mode`
 // back-derivation from a persisted `engine`. modeForPersistedEngine is
 // exercised directly (explicit `platform` argument) rather than only
 // through the real migrateSettings, mirroring applyPlatformEngineDefaults/
@@ -4187,7 +4187,7 @@ describe("isModeLegalForPlatform — platform-legality matrix (Finding 4)", () =
   });
 });
 
-describe("migrateSettings — mode back-derivation end-to-end (§5 A3, real web build)", () => {
+describe("migrateSettings — mode back-derivation end-to-end (A3, real web build)", () => {
   // v0.7.4 osspeech-silence fix: this REVERSES the original A3 "saved
   // mode wins" pin. `mode` is display-only (the engine decides what's
   // captured) and every live engine has exactly one true source, so a

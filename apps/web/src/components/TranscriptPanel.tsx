@@ -44,7 +44,7 @@ import { runGapFill } from "../lib/translate/gapfill";
 export const SCROLL_STICKY_THRESHOLD = 80;
 const HOVER_ENTER_DELAY_MS = 150;
 const HOVER_LEAVE_DELAY_MS = 200;
-// Interim growth throttle (render-perf split, see the design doc):
+// Interim growth throttle (render-perf split):
 // commits an interim UPDATE at most this often (~8fps) — but a
 // transition to null (a final just landed) always commits immediately,
 // never throttled, so there's no stale interim flash after a final.
@@ -382,7 +382,7 @@ function SegmentEditTextarea({
   );
 }
 
-/** v0.5 Wave-1 Feature 1 (live latch, §1 F1 item 4): a compact picker —
+/** v0.5 Wave-1 Feature 1 (live latch, F1 item 4): a compact picker —
  *  a native <select> (rung 4: platform feature over a custom popover)
  *  covers "pick a roster name" / "+ 新建" / "关闭" in one accessible,
  *  mobile-friendly control. Only rendered by the parent while
@@ -469,7 +469,7 @@ interface SegmentRowProps {
   // own segmentTimeLabels memo).
   elapsedLabel: string;
   absoluteTitle: string;
-  // v0.5 Wave-1 Feature 1 (selection mode, §1 F1 item 2): component-
+  // v0.5 Wave-1 Feature 1 (selection mode, F1 item 2): component-
   // local (never touches the store) — see the parent's own selectedIds
   // Set<string> state.
   selectMode: boolean;
@@ -879,7 +879,7 @@ export default function TranscriptPanel({
   // recorded (finished / imported / loaded from history). No editing
   // affordances while live listening.
   const editable = status === "stopped";
-  // v0.5 Wave-1 Feature 1 (§1 F1's own "UX shape"): speaker assignment
+  // v0.5 Wave-1 Feature 1 (F1's "UX shape"): speaker assignment
   // is a USER action, not an engine mutation — available whenever a
   // session exists (listening/paused/stopped), unlike `editable` above
   // (text edit stays stopped-only, untouched).
@@ -929,7 +929,7 @@ export default function TranscriptPanel({
     null,
   );
 
-  // v0.5 Wave-1 Feature 1 (selection mode, §1 F1 item 2) — component-
+  // v0.5 Wave-1 Feature 1 (selection mode, F1 item 2) — component-
   // local by default, never persisted, never touches the store directly
   // (bulk assign goes through the SAME SpeakerAssignPopover as a
   // per-segment chip click — see handleBulkAssignClick below). Mobile
@@ -975,7 +975,7 @@ export default function TranscriptPanel({
     setSelectedIds(allSegmentsSelected ? new Set() : new Set(segments.map((seg) => seg.id)));
   }, [allSegmentsSelected, segments]);
 
-  // v0.5 Wave-1 Feature 1 (speaker assignment popover, §1 F1 items 1/3)
+  // v0.5 Wave-1 Feature 1 (speaker assignment popover, F1 items 1/3)
   // — replaces the old direct chip -> SpeakerRenamePopover trigger;
   // "重命名该说话人的所有发言" still reaches SpeakerRenamePopover, just via
   // handleAssignRenameAll below instead of a direct chip click.
@@ -1211,7 +1211,7 @@ export default function TranscriptPanel({
     return cache.counts;
   }, [segments, meetingGen]);
 
-  // v0.5 Wave-1 Feature 1 (live latch visibility, §1 F1 item 4): "no
+  // v0.5 Wave-1 Feature 1 (live latch visibility, F1 item 4): "no
   // diarized speakers present" = no segment currently displays an
   // ENGINE-provided (non-manual) speaker — a manually-assigned/latched
   // segment always carries speakerLocked:true (see store.ts), so it's

@@ -493,7 +493,7 @@ describe("OsSpeechEngine", () => {
   });
 
   // ---------------------------------------------------------------
-  // status mapping (§2.6)
+  // status mapping
   // ---------------------------------------------------------------
 
   describe("osspeech://status mapping", () => {
@@ -621,7 +621,7 @@ describe("OsSpeechEngine", () => {
       expect(onStatus).toHaveBeenCalledWith("error", expect.any(String));
     });
 
-    it('unsupported maps EXACTLY to onStatus("error","系统识别需要 macOS 26 或更高版本") (blueprint-pinned copy)', async () => {
+    it('unsupported maps EXACTLY to onStatus("error","系统识别需要 macOS 26 或更高版本") (pinned copy)', async () => {
       const { emit } = wireFakes();
       const engine = new OsSpeechEngine();
       const onStatus = vi.fn();
@@ -651,7 +651,7 @@ describe("OsSpeechEngine", () => {
       expect(msg).toContain("en_US");
     });
 
-    it('crashed maps EXACTLY to onStatus("error","系统识别意外退出，请重试") (blueprint-pinned copy)', async () => {
+    it('crashed maps EXACTLY to onStatus("error","系统识别意外退出，请重试") (pinned copy)', async () => {
       const { emit } = wireFakes();
       const engine = new OsSpeechEngine();
       const onStatus = vi.fn();
@@ -742,7 +742,7 @@ describe("OsSpeechEngine", () => {
   });
 
   // ---------------------------------------------------------------
-  // terminal latch (§2.5 TERMINAL kinds) — incl. asset-failed
+  // terminal latch (TERMINAL kinds) — incl. asset-failed
   // ---------------------------------------------------------------
 
   describe("terminal latch", () => {

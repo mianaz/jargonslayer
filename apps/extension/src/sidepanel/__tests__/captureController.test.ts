@@ -1,5 +1,5 @@
 // captureController.ts's whole point is to be testable without a real
-// browser (blueprint Decision A's event-source seam): every test here
+// browser (Decision A's event-source seam): every test here
 // drives a hand-scripted fake STTEngine (captures the STTEvents object
 // passed to start() so the test can fire onFinal/onInterim/onStatus
 // itself) plus injected permission fns and an injected saveSession —
@@ -152,7 +152,7 @@ describe("CaptureController", () => {
       expect(callbacks.onStatusChange).not.toHaveBeenCalledWith("listening", undefined);
     });
 
-    it('"denied" also funnels into the grant affordance (blueprint §7 has no separate panel copy for it)', async () => {
+    it('"denied" also funnels into the grant affordance (there is no separate panel copy for it)', async () => {
       const { controller, callbacks, engineFactory } = createHarness({ permissionState: "denied" });
 
       await controller.start();

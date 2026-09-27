@@ -41,8 +41,8 @@
 //      OTHER shipped entry) is entirely unaffected — mlxGateFor is a
 //      structural no-op for it, same "no-op for every other value"
 //      shape as osspeechCaps.ts's own isOsSpeechFloorLocked.
-//   3. S12b fix round FB10 (§F, product default — ON THE VETO LIST
-//      §7.7) — the caller-opt-in `hideDefinitivelyUnsupported` prop: an
+//   3. S12b fix round FB10 (product default — ON THE VETO LIST) —
+//      the caller-opt-in `hideDefinitivelyUnsupported` prop: an
 //      `mlxOnly` entry whose caps probe has DEFINITIVELY resolved
 //      unsupported (never on "still loading" or a transient probe
 //      ERROR — isDefinitivelyUnsupported below) is hidden the SAME way
@@ -52,7 +52,7 @@
 //      rationale). A structural no-op when the prop is omitted —
 //      every pre-FB10 test/caller is byte-unaffected.
 //
-// S12a fix round (§D F7, LOW, both reviewers) — errored-vs-unsupported
+// S12a fix round (F7, LOW, both reviewers) — errored-vs-unsupported
 // used to be INFERRED from mlxCaps.ts's cache-identity contract
 // (comparing a settled probe against getMlxCapsSnapshot() by
 // reference), which both reviewers flagged as race-sensitive under a
@@ -60,7 +60,7 @@
 // only ever misclassify a SUCCESS as an error, never the reverse, but
 // that's still a real UX bug: a spuriously-shown 重试 button on a
 // genuinely-resolved answer). Fixed at the SOURCE instead: A2's pinned
-// contract (§D F7) has probeMlxCaps()/refreshMlxCaps() return an
+// contract (F7) has probeMlxCaps()/refreshMlxCaps() return an
 // EXPLICIT `{status: "ok" | "error", caps}` envelope — mlxGateFor/
 // useMlxCaps below consume that status directly, no inference left.
 import { useEffect, useState } from "react";
@@ -78,7 +78,7 @@ import {
 export interface ModelPickerProps {
   value: string;
   onChange: (model: string) => void;
-  /** S12b fix round FB10 (§F; product default — ON THE VETO LIST §7.7,
+  /** S12b fix round FB10 (product default — ON THE VETO LIST,
    *  kept cleanly reversible via this one prop rather than baked into
    *  the gating logic): when true, an `mlxOnly` entry whose caps probe
    *  has DEFINITIVELY resolved unsupported is hidden entirely (never
@@ -95,9 +95,9 @@ export interface ModelPickerProps {
   hideDefinitivelyUnsupported?: boolean;
 }
 
-// §C Gating F13's own fallback copy, verbatim — used whenever a
+// Gating F13's own fallback copy, verbatim — used whenever a
 // definitively-unsupported probe result carries no `reason` of its own
-// (mlxCaps.ts's pinned wire shape, §D F7: `reason: string | null`).
+// (mlxCaps.ts's pinned wire shape, F7: `reason: string | null`).
 const MLX_UNSUPPORTED_REASON_FALLBACK = "需要 Apple 芯片（M 系列），macOS 14 或更高";
 
 interface MlxGate {
@@ -107,7 +107,7 @@ interface MlxGate {
   reason: string | null;
   /** Only true on a genuine probe ERROR (fail-closed) — never on a
    *  DEFINITIVE unsupported result, where retrying can't change the
-   *  answer. Sourced directly from A2's pinned `status` field (§D F7) —
+   *  answer. Sourced directly from A2's pinned `status` field (F7) —
    *  see mlxGateFor's own doc comment. */
   showRetry: boolean;
 }
@@ -121,7 +121,7 @@ const MLX_NOT_GATED: MlxGate = { disabled: false, reason: null, showRetry: false
  *  disabled) for every non-mlxOnly entry — every catalog entry shipped
  *  today.
  *
- *  §D F7 fix round: "errored" is now the EXPLICIT `status === "error"`
+ *  F7 fix round: "errored" is now the EXPLICIT `status === "error"`
  *  A2's pinned probeMlxCaps()/refreshMlxCaps() contract hands back
  *  (`Promise<{status: "ok" | "error", caps: MlxCapabilities}>`) — no
  *  more inferring it from whether a resolution happened to get cached
@@ -148,7 +148,7 @@ function mlxGateFor(entry: ModelCatalogEntry, resolved: MlxCapabilities | null, 
  *  MLX_LOADING_GATE and the definitively-unsupported gate share the
  *  same `{disabled:true, showRetry:false}` shape — only `reason`
  *  differs, too fragile a discriminator to reverse-engineer from.
- *  §F FB10's own hideDefinitivelyUnsupported policy (ModelPickerProps)
+ *  FB10's own hideDefinitivelyUnsupported policy (ModelPickerProps)
  *  is the one caller. */
 function isDefinitivelyUnsupported(
   entry: ModelCatalogEntry,
@@ -165,7 +165,7 @@ function isDefinitivelyUnsupported(
  *  (osspeechCaps.ts's useOsSpeechCaps) resolves-on-mount +
  *  subscribes-for-later-resolutions. `errored` is set straight from
  *  A2's pinned `{status, caps}` envelope on every settle (probe AND
- *  retry, §D F7) — see mlxGateFor's own doc comment. */
+ *  retry, F7) — see mlxGateFor's own doc comment. */
 function useMlxCaps(): { resolved: MlxCapabilities | null; errored: boolean; retry: () => void } {
   const [resolved, setResolved] = useState<MlxCapabilities | null>(() => getMlxCapsSnapshot());
   const [errored, setErrored] = useState(false);
@@ -203,10 +203,10 @@ function useMlxCaps(): { resolved: MlxCapabilities | null; errored: boolean; ret
 
 export default function ModelPicker({ value, onChange, hideDefinitivelyUnsupported }: ModelPickerProps) {
   const { resolved: mlxCaps, errored: mlxErrored, retry: retryMlxCaps } = useMlxCaps();
-  // S12a (§C L1): worker B2's own flip point — an entry stays entirely
+  // S12a (L1): worker B2's own flip point — an entry stays entirely
   // OFF the picker until its own `available` reads true (undefined reads
   // as available, matching modelCatalog.ts's own doc on every
-  // pre-existing entry being left unannotated). §F FB10: the caller's
+  // pre-existing entry being left unannotated). FB10: the caller's
   // own hideDefinitivelyUnsupported policy is a SECOND, independent
   // reason a row can be filtered out here — see ModelPickerProps' own
   // doc comment and isDefinitivelyUnsupported above.

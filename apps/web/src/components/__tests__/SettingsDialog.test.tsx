@@ -1066,8 +1066,8 @@ describe("SettingsDialog — 密钥 category (ft6 dedicated keys hub)", () => {
 });
 
 // ---------------------------------------------------------------
-// Soniox engine card + BYOK key field (v0.4 S4 chunk 6, blueprint
-// decision E). PREVIEW_TIER/IS_DESKTOP are import-time consts (see
+// Soniox engine card + BYOK key field (v0.4 S4 chunk 6, decision
+// E). PREVIEW_TIER/IS_DESKTOP are import-time consts (see
 // this file's own header comment) — the previewLocked gating itself
 // (ENGINE_CARDS' byokOnly extension, risk 4's triple gate) is NOT
 // exercised here for the same reason the rest of this file never
@@ -2885,7 +2885,7 @@ describe("SettingsDialog — sanitizes a pasted API Key (zero-width chars + whit
 });
 
 // ---------------------------------------------------------------
-// 转录引擎 更换模型 (v0.4 S4 chunk 4, blueprint decision C's switch
+// 转录引擎 更换模型 (v0.4 S4 chunk 4, decision C's switch
 // flow). Same IS_DESKTOP limitation this file's own Soniox describe
 // block above already documents ("PREVIEW_TIER/IS_DESKTOP are
 // import-time consts... the rest of this file never stubs PREVIEW_
@@ -2951,7 +2951,7 @@ describe("SettingsDialog — 转录引擎 更换模型 (v0.4 S4 chunk 4)", () =>
 });
 
 // ---------------------------------------------------------------
-// 说话人分离 安装扩展 (v0.4 S5 chunk 3, blueprint decision A). Same
+// 说话人分离 安装扩展 (v0.4 S5 chunk 3, decision A). Same
 // IS_DESKTOP limitation the 转录引擎 更换模型 describe block just above
 // already documents in full ("PREVIEW_TIER/IS_DESKTOP are import-time
 // consts... a runtime vi.stubEnv can't flip it here any more than it
@@ -3036,7 +3036,7 @@ describe("SettingsDialog — 说话人分离 安装扩展 (v0.4 S5 chunk 3)", ()
 });
 
 // ---------------------------------------------------------------
-// v0.4.5 AI 检测 additions (design doc v045-ai-transparency-qc.md):
+// v0.4.5 AI 检测 additions:
 // the idiom-cap controls (settings.detectIdiomMaxWords/
 // detectIdiomMaxChars, owner ruling: configurable, not a hardcoded
 // constant) and the AiStatusPanel mirror mounted right after 测试连接.

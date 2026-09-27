@@ -24,7 +24,7 @@ import { createEngine } from "../stt";
 import { getInvoke, type InvokeFn } from "./tauriApi";
 import type { OsSpeechCapabilities } from "./osspeechCaps";
 
-// Blueprint step 3: "wait 15s" before stop() — long enough to observe
+// Wait 15s before stop() — long enough to observe
 // asset-checking/capturing settle without turning the spike into a
 // multi-minute run.
 const SESSION_DURATION_MS = 15000;
@@ -63,7 +63,7 @@ async function runStep(name: string, report: ReportFn, fn: () => Promise<void>):
   }
 }
 
-/** THE Soniox-on-iOS question (blueprint D7): does WKWebView's
+/** THE Soniox-on-iOS question (D7): does WKWebView's
  *  `getUserMedia` even exist/work inside a Tauri `tauri://localhost`
  *  iOS webview? Reports existence first, then the actual call outcome —
  *  a successful stream is stopped immediately (this probe has no use
@@ -103,7 +103,7 @@ async function stepCaps(report: ReportFn, invoke: InvokeFn): Promise<OsSpeechCap
  *  (`createEngine("osspeech")` — see stt/index.ts): start(locale
  *  "en-US") -> wait `SESSION_DURATION_MS` -> stop(), capturing every
  *  status event (full payload) + a count of transcript events (interim
- *  + final both ride the SAME wire "transcript" event, blueprint §2) +
+ *  + final both ride the SAME wire "transcript" event) +
  *  the stop() call-to-resolved latency. Transcript TEXT is never
  *  captured (this codebase's own diagLog privacy rule: labels/counts,
  *  never transcript content). */

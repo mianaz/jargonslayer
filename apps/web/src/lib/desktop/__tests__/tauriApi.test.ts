@@ -45,7 +45,7 @@ describe("tauriApi — outside a Tauri build", () => {
   });
 });
 
-// S13 (§6 D4) — TAURI_BUILD gate: NEXT_PUBLIC_IOS=1 (with
+// S13 (D4) — TAURI_BUILD gate: NEXT_PUBLIC_IOS=1 (with
 // NEXT_PUBLIC_DESKTOP unset) must ALSO pass the gate, not just
 // NEXT_PUBLIC_DESKTOP=1 — this is the whole reason D4 exists (an iOS
 // build sets NEXT_PUBLIC_IOS, not NEXT_PUBLIC_DESKTOP; every getter

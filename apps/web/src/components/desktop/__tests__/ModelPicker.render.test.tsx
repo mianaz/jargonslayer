@@ -13,7 +13,7 @@
 //     "catalog-driven UI assertions" belong here instead, per this
 //     worker's own task spec, against a LOCAL fixture that can freely
 //     include an `available: true` mlxOnly row. (Since worker B2's flip,
-//     §C L1/§E, the real catalog's own parakeet entry ALSO reads
+//     L1, the real catalog's own parakeet entry ALSO reads
 //     `available: true` — the sibling file ModelPicker.realCatalog.
 //     render.test.tsx exercises that real entry, unmocked, against the
 //     same three mlxCaps states this file's own fixture-based gating
@@ -21,8 +21,8 @@
 //     modelCatalog.ts's own future stubs/prelude entries keep an
 //     independent coverage path that never depends on what's currently
 //     shipped.)
-//   - mlxCaps.ts: a hand-rolled fake matching A2's PINNED contract (§D
-//     F7 fix round): probeMlxCaps()/refreshMlxCaps() resolve an
+//   - mlxCaps.ts: a hand-rolled fake matching A2's PINNED contract (F7
+//     fix round): probeMlxCaps()/refreshMlxCaps() resolve an
 //     EXPLICIT `{status: "ok" | "error", caps: MlxCapabilities}`
 //     envelope (superseding the earlier cache-identity heuristic both
 //     reviewers flagged as race-sensitive), and `MlxCapabilities.reason`
@@ -68,7 +68,7 @@ const { MOCK_CATALOG } = vi.hoisted(() => {
       recommended: false,
     },
     // TEST-ONLY fixture twin of the real catalog's parakeet entry (also
-    // `available: true` since worker B2's flip, §C L1/§E) — kept here so
+    // `available: true` since worker B2's flip, L1) — kept here so
     // this file's own mlxOnly gating tests below stay independent of
     // whatever modelCatalog.ts currently ships (see this file's own
     // header comment for the real-catalog counterpart).
@@ -101,7 +101,7 @@ const { MOCK_CATALOG } = vi.hoisted(() => {
 vi.mock("@/lib/desktop/modelCatalog", () => ({ MODEL_CATALOG: MOCK_CATALOG }));
 
 // mlxCaps.ts fake — see this suite's own header doc for why this
-// matches A2's pinned `{status, caps}` contract (§D F7) instead of a
+// matches A2's pinned `{status, caps}` contract (F7) instead of a
 // trivial constant. Built via vi.hoisted for the SAME reason MOCK_CATALOG
 // is above (the vi.mock factory below is hoisted above plain top-level
 // declarations). `mlxState.cached` mirrors mlxCaps.ts's own module-level
@@ -270,7 +270,7 @@ describe("ModelPicker", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("推荐 chip renders only on the medium row — NOT on parakeet, in any mlx caps state (§C Product/L3)", async () => {
+  it("推荐 chip renders only on the medium row — NOT on parakeet, in any mlx caps state (L3)", async () => {
     await mount("small", () => {});
     expect(container!.querySelector('[data-testid="model-option-medium"]')!.textContent).toContain("推荐");
     for (const entry of VISIBLE) {
@@ -297,7 +297,7 @@ describe("ModelPicker", () => {
     expect(row.textContent).toContain("约 2.5 GB");
   });
 
-  // --- S12a mlxOnly gating (§C Gating F13) ---
+  // --- S12a mlxOnly gating (F13) ---
 
   it("mlxOnly row is selectable (not disabled, no reason) when caps report mlxSupported", async () => {
     mlxState.probeImpl = async () => ok({ mlxSupported: true, reason: null });
@@ -383,7 +383,7 @@ describe("ModelPicker", () => {
     expect(retryBtn).not.toBeNull();
 
     // A status:"ok" refresh re-enables the row and drops the retry
-    // affordance — driven purely by the explicit status, per §D F7.
+    // affordance — driven purely by the explicit status, per F7.
     mlxState.refreshImpl = async () => ok({ mlxSupported: true, reason: null });
     await act(async () => {
       retryBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -400,7 +400,7 @@ describe("ModelPicker", () => {
     expect(onChange).toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
   });
 
-  // §D F7 regression: under the OLD reference-identity heuristic, a
+  // F7 regression: under the OLD reference-identity heuristic, a
   // status:"ok" resolution that (for whatever timing reason) did NOT
   // land in mlxState.cached before this component read it back would
   // have been misclassified as "errored" — the exact race both
@@ -458,14 +458,14 @@ describe("ModelPicker", () => {
     expect(MODEL_CATALOG).toBe(MOCK_CATALOG);
   });
 
-  // --- S12b fix round FB10 (§F; product default, ON THE VETO LIST §7.7) ---
+  // --- S12b fix round FB10 (product default, ON THE VETO LIST) ---
   // Core hideDefinitivelyUnsupported contract against this file's own
   // fixture — the full 2-surface × 3-caps-state matrix against the REAL
   // catalog already lives in ModelPicker.realCatalog.render.test.tsx's
-  // own "hideDefinitivelyUnsupported (§F FB10)" describe block; this is
+  // own "hideDefinitivelyUnsupported (FB10)" describe block; this is
   // the fixture-based counterpart so the prop's own contract stays
   // pinned independent of whatever modelCatalog.ts currently ships.
-  describe("hideDefinitivelyUnsupported (§F FB10)", () => {
+  describe("hideDefinitivelyUnsupported (FB10)", () => {
     it("prop omitted (default/Settings' posture): a DEFINITIVELY-unsupported mlxOnly row stays VISIBLE, disabled, with its reason", async () => {
       const reason = "需要 Apple 芯片（M 系列），macOS 14 或更高";
       mlxState.probeImpl = async () => ok({ mlxSupported: false, reason });

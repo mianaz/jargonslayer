@@ -40,8 +40,8 @@ struct CLIArguments {
     let durationSeconds: Double?
 }
 
-/// S11 (§2.1) — `--transcribe`'s own argument bundle: `--exclude-pid` is
-/// required here too (§A5: "same self-exclusion semantics... as
+/// S11 — `--transcribe`'s own argument bundle: `--exclude-pid` is
+/// required here too (A5: "same self-exclusion semantics... as
 /// capture"), plus the BCP-47 `--locale`; `--duration`/`--contextual-json`
 /// are optional (the former mirrors capture's own optional `--duration`,
 /// same meaning: self-stop after N seconds, used for testing).
@@ -72,7 +72,7 @@ struct TranslateArguments {
 // original S9.1 shape, requires --exclude-pid) and --sweep-orphans (the
 // startup best-effort aggregate-device cleanup, OrphanSweep.swift —
 // takes no other arguments at all, needs no pid).
-// S11 (§2.1) adds three more, all macOS-26-gated independently at the
+// S11 adds three more, all macOS-26-gated independently at the
 // entry-point dispatch below (see this file's own comment there):
 // `--transcribe` (the new SpeechAnalyzer lane), `--probe-osspeech`
 // (one-shot capability probe, no other arguments — same "whole argv"
@@ -184,7 +184,7 @@ func parseArguments(_ arguments: [String]) -> CLIMode? {
         return .translate(TranslateArguments(source: source, target: target))
     }
     if wantsTranscribe {
-        // §A5: --exclude-pid required in transcribe mode too.
+        // A5: --exclude-pid required in transcribe mode too.
         guard !wantsPreinstall, let excludePID, let locale else { return nil }
         // Absent --source defaults to .system (backward compatible —
         // today's Rust caller passes no flag at all); present-but-unknown
@@ -267,7 +267,7 @@ func runCapture(excludePID: pid_t, durationSeconds: Double?) -> Never {
 
         let processObjectID = try ProcessTapCapture.translateExcludePID(excludePID)
         if processObjectID == nil {
-            // Blueprint D3 as amended (2026-07-13 spike finding): the
+            // D3 as amended (2026-07-13 spike finding): the
             // exclude PID has no HAL process object — it has never
             // played/captured audio, so it cannot be tapped either;
             // proceed with an empty exclusion list, but say so loudly.
@@ -392,7 +392,7 @@ func runCapture(excludePID: pid_t, durationSeconds: Double?) -> Never {
     }
 }
 
-// S11 (§2.1/§Q4) — `--probe-osspeech`: one shot, no CoreAudio, no tap.
+// S11 (Q4) — `--probe-osspeech`: one shot, no CoreAudio, no tap.
 // `SpeechTranscriber.isAvailable` is a plain sync Bool (spike-verified);
 // `supportedLocales`/`installedLocales` are async, only queried when
 // available at all — the same "top-level Task + DispatchSemaphore to
@@ -417,7 +417,7 @@ func runProbe() -> Never {
     exit(0)
 }
 
-// S11 (§A2/§2.1) — `--preinstall-osspeech`: locale resolve + asset
+// S11 (A2) — `--preinstall-osspeech`: locale resolve + asset
 // ensure only, via the SAME AnalyzerSeam `run`/`preinstall` a real
 // transcribe session uses for its own asset step (SpeechAnalyzerSession
 // .swift) — no tap, no ring, no analyzer.
@@ -586,7 +586,7 @@ func translateStatusWireValue(_ status: LanguageAvailability.Status) -> String {
 // (buffer + split on 0x0A) inline rather than that type itself: this
 // mode's stdin lines are structured translate requests, not
 // StdinCommandMonitor's own hardcoded pause/resume vocabulary, and (per
-// §A1's "the ONLY stdin reader" rule one mode over) there is no second
+// A1's "the ONLY stdin reader" rule one mode over) there is no second
 // thread here to race against — one blocking read loop on the main
 // thread is enough since --translate has no realtime audio producer to
 // keep servicing concurrently.
@@ -728,16 +728,16 @@ func runTranscribe(excludePID: pid_t, locale: String, durationSeconds: Double?, 
     }
 }
 
-// S11 (§0/§Q1) — `--transcribe --source system` (the default): reuses
+// S11 (Q1) — `--transcribe --source system` (the default): reuses
 // the EXACT same CoreAudio setup as runCapture above (translate/create
 // tap/create aggregate/create IOProc — byte-identical calls into
 // AudioCapCore, see each step's own comment in runCapture for the full
 // rationale, not repeated here) up through the ring/ioBlock, then hands
 // off to `AnalyzerSeam` for everything Speech-related (locale/asset/
 // analyzer/results/finalize). Two deliberate deltas from runCapture: (1)
-// no stdout Framing stream header/chunks/EOS at all — blueprint §0: "no
+// no stdout Framing stream header/chunks/EOS at all — by design "no
 // PCM ever leaves the process, and no stdout wire is used"; (2)
-// `ShutdownSignal.startStdinEOFMonitor()` is NOT called — §A1:
+// `ShutdownSignal.startStdinEOFMonitor()` is NOT called — A1:
 // `StdinCommandMonitor` is the ONLY stdin reader in transcribe mode (two
 // threads reading the same stdin would race and split lines
 // unpredictably); EOF handling lives in StdinCommandMonitor's own
@@ -763,7 +763,7 @@ func runTranscribeSystem(excludePID: pid_t, locale: String, durationSeconds: Dou
     }
 
     do {
-        // Same self-exclusion precheck as capture (§A5): a nonexistent
+        // Same self-exclusion precheck as capture (A5): a nonexistent
         // pid is a caller bug (hard typed error); alive-but-not-ours
         // (EPERM) is fine — see runCapture's own comment on this exact
         // check for the full rationale.
@@ -773,7 +773,7 @@ func runTranscribeSystem(excludePID: pid_t, locale: String, durationSeconds: Dou
 
         let processObjectID = try ProcessTapCapture.translateExcludePID(excludePID)
         if processObjectID == nil {
-            // §A5/D3 amendment: HAL-absent exclude PID -> empty exclusion
+            // A5/D3 amendment: HAL-absent exclude PID -> empty exclusion
             // + note, identical semantics to runCapture's own handling.
             StatusEvents.emitNote(
                 state: "exclude-pid-inactive",
@@ -819,8 +819,8 @@ func runTranscribeSystem(excludePID: pid_t, locale: String, durationSeconds: Dou
         ioProcID = resolvedIOProcID
 
         // No stdout stream header (unlike runCapture) — transcribe mode
-        // never opens the Framing/stdout wire at all (blueprint §0).
-        // "starting" is still emitted, reused unchanged (§2.2), as soon
+        // never opens the Framing/stdout wire at all.
+        // "starting" is still emitted, reused unchanged, as soon
         // as the tap's real format is known — same placement/semantics
         // as runCapture's own "starting" emission.
         StatusEvents.emitStatus(state: "starting", sampleRate: sampleRate, channels: channels)
@@ -870,7 +870,7 @@ func runTranscribeSystem(excludePID: pid_t, locale: String, durationSeconds: Dou
 // Dual-capture mic producer — `--transcribe --source mic`: same session
 // structure as runTranscribeSystem immediately above (shutdown/stdin
 // lifecycle, "starting"/"capturing"/"finished" status reused unchanged
-// at the SAME emission sites — §2.2's own state machine, never forked),
+// at the SAME emission sites — one shared state machine, never forked),
 // but the ring is fed by MicCapture instead of a CoreAudio tap: no
 // CATapDescription/aggregate/IOProc at all, so `excludePID` (meaningful
 // only for excluding a process from a system-audio TAP) plays no role
@@ -903,7 +903,7 @@ func runTranscribeMic(locale: String, durationSeconds: Double?, contextualJSON: 
 
         // No stdout stream header (transcribe mode never opens the
         // Framing/stdout wire — see runTranscribeSystem's own comment).
-        // "starting" reused unchanged (§2.2) at the same placement
+        // "starting" reused unchanged at the same placement
         // semantics: emitted once the mic's real format is known, same
         // as runTranscribeSystem's own "starting" emission once the
         // tap's format is known.
@@ -1124,14 +1124,14 @@ guard let cliMode = parseArguments(CommandLine.arguments) else {
 // primary defense and this is belt-and-suspenders for direct/manual
 // invocation.
 //
-// Each CLIMode case gets its OWN independent `if #available` (§2.1:
-// "the three new modes each wrap their body in if #available(macOS
+// Each CLIMode case gets its OWN independent `if #available`
+// ("the three new modes each wrap their body in if #available(macOS
 // 26.0,*)") rather than one shared outer gate: capture/sweepOrphans'
 // OWN behavior on an unsupported OS is completely unchanged from before
 // this slice (same message, same exit(1)) — the two are simply no
 // longer expressed as one shared `if/else` now that CLIMode has grown
 // three more cases with a DIFFERENT floor. Critically, `--probe-osspeech`
-// must NOT be caught by the 14.2 message at all (§2.1: "on <26,
+// must NOT be caught by the 14.2 message at all ("on <26,
 // supported:false without spawning Speech" — that has to work even on
 // an OS below 14.2, reporting the PROBE's own unsupported shape, not a
 // CoreAudio-flavored error it never asked about).

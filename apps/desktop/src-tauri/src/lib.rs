@@ -7,9 +7,9 @@
 // shell, then http (blueprint chunk 2 spec) — single-instance's own
 // exclusivity check should run before anything else does real work (it
 // also means we never get a chance to double-provision from two
-// concurrently-running instances, blueprint §Critical details).
+// concurrently-running instances).
 //
-// S13 (§D3) — none of the
+// S13 (D3) — none of the
 // modules below are needed on iOS v1 (mic-only 系统识别 via a native
 // plugin, no sidecar/uv/provisioning/app-audio-tap/oauth). Gated
 // `#[cfg(desktop)]` rather than deleted so the macOS build stays exactly
@@ -33,10 +33,10 @@ mod mlxcaps;
 mod oauth;
 #[cfg(desktop)]
 mod osspeech;
-// S13 §D1/§2 — Lane B's bridge commands (run_mobile_plugin call sites into
+// S13 D1 — Lane B's bridge commands (run_mobile_plugin call sites into
 // the tauri-plugin-os-speech crate); same six invoke names as desktop's
-// osspeech module above, kept wire-identical per the blueprint's app-
-// command bridge (§D2).
+// osspeech module above, kept wire-identical per the app-command
+// bridge (D2).
 #[cfg(target_os = "ios")]
 mod osspeech_ios;
 // v0.6 iOS lane — same wire-identical-command-name posture as osspeech_ios
@@ -76,11 +76,11 @@ mod uv;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // S13 §D3 — required fix: tauri-plugin-single-instance is Cargo-gated
+    // S13 D3 — required fix: tauri-plugin-single-instance is Cargo-gated
     // to cfg(any(macos, windows, linux)) (see Cargo.toml), so its crate is
     // absent on iOS; the old unconditional `.plugin(single_instance::init(
     // ...))` here was the iOS build-breaker Sol's live aarch64-apple-ios
-    // compile stopped on (blueprint §6, D3's own prediction). Splitting
+    // compile stopped on (D3's own prediction). Splitting
     // into two cfg-gated builder chains — rather than cfg-gating individual
     // `.plugin()`/`.manage()` calls inline — keeps the desktop chain's
     // lines byte-identical to the pre-S13 version (same order, same
@@ -132,7 +132,7 @@ pub fn run() {
         // --translate child, plus its own request-id-keyed pending-reply
         // map, see systranslate::SystemTranslateState's own doc comment.
         .manage(systranslate::SystemTranslateState::default())
-        // S12a §C F16 — a bounded single-flight guard against an
+        // S12a F16 — a bounded single-flight guard against an
         // overlapping `run_uv` invocation racing the same venv/pip
         // target (the "stale processes keep mutating the venv"
         // retry-poisoning gap); see uv::UvInstallState's own doc
@@ -211,15 +211,15 @@ pub fn run() {
         "S13's mobile shell is iOS-only; add an Android lane (plugin dep + bridge module) before building for Android"
     );
 
-    // S13 §D3/§2 + §6 F6 — mobile (iOS v1) shell: the os-speech plugin
+    // S13 D3 + F6 — mobile (iOS v1) shell: the os-speech plugin
     // (Lane B) is the only native-side lane; no single-instance (no
     // second-launch/DBus/mutex concept on iOS), no shell plugin (no
     // sidecar on mobile — D3's shell-plugin note), no `.manage()` state
-    // (the plugin crate owns its own session state, blueprint §3 Lane B)
+    // (the plugin crate owns its own session state, Lane B)
     // and no `.setup()`/exit hooks (nothing to spike/sweep/kill on iOS).
     // http stays registered here too (unconditional Cargo dep, full iOS
     // support per D3) for the client-side BYOK LLM transport; opener is
-    // registered here per §6 F6 (iOS-supported, openExternal.ts routes
+    // registered here per F6 (iOS-supported, openExternal.ts routes
     // through IS_TAURI) and granted via capabilities/ios.json.
     #[cfg(mobile)]
     let builder = tauri::Builder::default()
@@ -292,8 +292,8 @@ pub fn run() {
         // Best-effort orphan-prevention on a graceful exit — see
         // server::kill_held_child_on_exit's own doc comment for the
         // force-quit case this can't catch (accepted for v1, self-heals
-        // via adoption on next launch per the blueprint's risk register
-        // item 4).
+        // via adoption on next launch — a known, accepted v1
+        // risk).
         if matches!(
             event,
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
@@ -315,7 +315,7 @@ pub fn run() {
         }
     });
 
-    // S13 §D3 — mobile v1 has no exit-cleanup child processes to reap
+    // S13 D3 — mobile v1 has no exit-cleanup child processes to reap
     // (no sidecar, no app-audio-tap, no osspeech CLI helper — the plugin
     // owns its own AVAudioEngine/SpeechAnalyzer lifecycle in-process).
     // The one RunEvent it does handle: Ready re-applies the scrollView

@@ -76,7 +76,7 @@ public actor OsSpeechController {
     session = nil
   }
 
-  /// Backs stop/pause/resume — idempotent, no-op-when-idle (§2's own
+  /// Backs stop/pause/resume — idempotent, no-op-when-idle (the
   /// pinned contract): callers get `nil` rather than an error when
   /// nothing is running.
   public func currentSession() -> OsSpeechSession? {

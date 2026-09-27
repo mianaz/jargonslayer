@@ -80,7 +80,7 @@ const keyedSettings: Settings = {
   apiKeyCustom: "sk-custom-secret",
   llmCustomHost: "custom.example.com",
   hfToken: "hf_secret",
-  // v0.4 S4 (blueprint decision E): Soniox BYOK key — hand-listed
+  // v0.4 S4 (decision E): Soniox BYOK key — hand-listed
   // stripped field, same as hfToken/agentToken (see stripKeyMaterial).
   sonioxKey: "soniox-secret",
   // v0.4.7 (Lane D): Deepgram BYOK key — same hand-listed strip.
@@ -262,7 +262,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
     });
   });
 
-  describe("customPacks round-trip (v0.5 Wave-1 F8, §5 A7)", () => {
+  describe("customPacks round-trip (v0.5 Wave-1 F8, A7)", () => {
     it("a named pack created before export round-trips through build -> restore", async () => {
       const glossary = await import("../glossary");
       await glossary.createCustomPack("术语库 A");

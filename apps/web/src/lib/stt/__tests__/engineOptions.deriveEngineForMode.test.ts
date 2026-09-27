@@ -249,7 +249,7 @@ describe("deriveEngineForMode", () => {
     });
   });
 
-  describe("system-audio — unreachable via the real tile set (§3 Q2: absent, not disabled off-desktop) — never crashes, degrades sanely", () => {
+  describe("system-audio — unreachable via the real tile set (Q2: absent, not disabled off-desktop) — never crashes, degrades sanely", () => {
     it("iOS -> osspeech", () => {
       expect(deriveEngineForMode("system-audio", IOS, settings())).toBe("osspeech");
     });

@@ -7,7 +7,7 @@ only start under `if __name__ == "__main__":`).
 Run:
     sidecar/.venv/bin/python sidecar/test_realtime_diar.py
 
-Covers (per the approved architecture blueprint):
+Covers:
   - first pass mints stable ids in order of first appearance
   - second pass with shifted-but-overlapping turns keeps ids
   - swap-resistant: two speakers whose pyannote local numbers permute

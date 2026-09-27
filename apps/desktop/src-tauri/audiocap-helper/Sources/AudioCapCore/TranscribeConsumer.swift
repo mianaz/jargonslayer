@@ -1,13 +1,13 @@
 import Foundation
 
-// S11 (§Q1/§3 Worker A) — the transcribe-mode analog of Writer.swift:
+// S11 (Q1, Worker A) — the transcribe-mode analog of Writer.swift:
 // "a dedicated producer Thread running a Writer-shaped poll loop (~4ms,
 // starvation deadman, stats, dropped-frame accounting) that drains the
 // ring, builds a native-format AVAudioPCMBuffer, runs AVAudioConverter,
 // and continuation.yield(AnalyzerInput(buffer:))". This file is
 // deliberately its OWN copy of that ~40-line poll/starvation/stats
-// skeleton (Writer.swift is Must-NOT-TOUCH, and the blueprint's own
-// rationale is explicit: "keeps the RT invariant and the 'state machine
+// skeleton (Writer.swift is Must-NOT-TOUCH, and the rationale is
+// explicit: "keeps the RT invariant and the 'state machine
 // testable without CoreAudio' property while isolating the one
 // framework-bound seam... behind a protocol") — the ONE thing that
 // differs from Writer is what happens to a drained record: instead of
@@ -58,7 +58,7 @@ public final class TranscribeConsumer: @unchecked Sendable {
     private let channels: UInt16
     private let isNonInterleaved: Bool
     private let sink: FrameSink
-    /// §Q3/§A1 pause semantics: "producer keeps draining the ring but
+    /// Q3/A1 pause semantics: "producer keeps draining the ring but
     /// DISCARDS frames while paused (prevents ring overflow); no
     /// finalize on pause; resume re-enables yielding." Polled once per
     /// `pollOnce()` call (not per-record) so a single poll cycle is
@@ -150,7 +150,7 @@ public final class TranscribeConsumer: @unchecked Sendable {
         return UInt32(Double(windowLoudSamples) / samplesPerMs)
     }
 
-    /// Reused UNCHANGED on the transcribe path (§2.2): the exact same
+    /// Reused UNCHANGED on the transcribe path: the exact same
     /// `StatusEvents.emitStats` call Writer.emitFinalStats makes, with
     /// this consumer's own running counters.
     public func emitFinalStats() {
@@ -232,7 +232,7 @@ public final class TranscribeConsumer: @unchecked Sendable {
     /// regardless of pause state (draining IS still happening, and
     /// peak/windowPeak are diagnostic amplitude readouts a paused
     /// session shouldn't hide), but forwarding to `sink` (the only path
-    /// that can reach the analyzer) is gated on `!paused` — §Q3: "no
+    /// that can reach the analyzer) is gated on `!paused` — Q3: "no
     /// audio should reach SpeechAnalyzer while paused."
     private func handle(frameCount: UInt32, payload: UnsafeRawBufferPointer, paused: Bool) {
         guard frameCount > 0, payload.count > 0 else { return }
@@ -260,7 +260,7 @@ public final class TranscribeConsumer: @unchecked Sendable {
     /// time-compress" rationale): reads the delta in the ring's
     /// cumulative `droppedFrameCount()` since the last poll and forwards
     /// exactly that many all-zero interleaved frames to `sink`, UNLESS
-    /// paused (§Q3: pausing suppresses every path into the analyzer, not
+    /// paused (Q3: pausing suppresses every path into the analyzer, not
     /// just real audio — synthetic silence for a drop that happened
     /// while paused is not meaningful to yield either). The delta itself
     /// is still consumed/recorded even while paused, so it can never be

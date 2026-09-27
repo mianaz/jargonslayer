@@ -15,8 +15,8 @@
 //
 // Swift's ClangImporter cannot call <stdatomic.h>'s own macros directly
 // (atomic_load_explicit et al. are `_Generic` macros, not real linkable
-// symbols), and this helper's technical floor (macOS 14.2, per the
-// blueprint's D1) predates the Synchronization framework's Atomic<T>
+// symbols), and this helper's technical floor (macOS 14.2, per
+// D1) predates the Synchronization framework's Atomic<T>
 // (macOS 15+) — so this tiny always-inline wrapper is the standard
 // bridge used by e.g. apple/swift-atomics for the same pre-Synchronization
 // gap: one real, callable C function per operation, each a thin

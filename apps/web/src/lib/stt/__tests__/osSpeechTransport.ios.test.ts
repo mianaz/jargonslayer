@@ -1,4 +1,4 @@
-// osSpeechTransport.ts (S13 blueprint §2/§6 D2, Lane D) — iOS-branch
+// osSpeechTransport.ts (S13 D2, Lane D) — iOS-branch
 // coverage. IS_IOS is a module-scope import-time const, so this needs
 // its own file/vi.mock — mirrors engineOptions.desktop.test.ts's own
 // split for the identical constraint. See osSpeechTransport.test.ts for
@@ -44,7 +44,7 @@ function makeFakeAddPluginListener(unregisterSpy: () => void): {
   return { addPluginListener, emit };
 }
 
-describe("listenOsSpeechTranscript/listenOsSpeechStatus — iOS branch (S13 §2/§6 D2)", () => {
+describe("listenOsSpeechTranscript/listenOsSpeechStatus — iOS branch (S13 D2)", () => {
   it('listenOsSpeechTranscript subscribes to the "os-speech" plugin\'s "transcript" event via getAddPluginListener(), wrapping the RAW payload into {payload}', async () => {
     const { addPluginListener, emit } = makeFakeAddPluginListener(vi.fn());
     currentAddPluginListener = addPluginListener;

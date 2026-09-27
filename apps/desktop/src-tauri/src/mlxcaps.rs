@@ -1,10 +1,10 @@
-// S12a (v0.4.4, §C Gating F13, fail-CLOSED) —
+// S12a (v0.4.4, F13, fail-CLOSED) —
 // `mlx_capabilities()`: the Parakeet-v3/MLX backend's
 // own capability probe, mirroring osspeech.rs's/audiocap.rs's own
 // `*_capabilities()` shape (a plain, never-`Err` command — see
 // `audiocap_capabilities`'s own doc comment for the precedent this
 // follows) one layer over: a DIFFERENT engine, DIFFERENT wire shape
-// ({mlxSupported, reason}), and — per §C Gating's explicit call-out —
+// ({mlxSupported, reason}), and — deliberately —
 // the OPPOSITE default direction from those two siblings' fail-OPEN
 // posture. This module only computes the Rust-side half of that
 // contract; apps/web/src/lib/desktop/mlxCaps.ts (worker A2) owns the
@@ -14,13 +14,13 @@
 // Gate = native arm64 (never Rosetta-translated) + macOS >= 14.0 (mlx-
 // metal's own floor — a much lower bar than osspeech.rs's macOS-26
 // floor, hence its own is_macos_14_or_later here rather than reusing
-// that module's is_macos_26_or_later). "mlx pinned" (§C Gating's third
+// that module's is_macos_26_or_later). "mlx pinned" (the gate's third
 // clause) is satisfied by construction — requirements-mlx.lock hash-pins
 // the resolved mlx version at install time (worker A4/A1's install
 // flow) — there is no separate RUNTIME probe for it here.
 //
 // Every probe step's failure folds into `{mlxSupported: false, reason:
-// Some(..)}`, distinguishing the THREE reasons §C's blueprint text pins
+// Some(..)}`, distinguishing the THREE reasons the gating rule pins
 // ("Reasons must distinguish intel/rosetta vs os-too-old"): genuine
 // Intel hardware, an arm64-capable Mac running this process translated
 // under Rosetta, and an Apple-Silicon Mac below the macOS 14 floor.
@@ -42,7 +42,7 @@ pub const REASON_INTEL: &str = "需要 Apple 芯片（M 系列）";
 /// This process IS running on Apple-Silicon hardware, but translated
 /// under Rosetta 2 (an x86_64 build, or a universal build launched via
 /// "Open using Rosetta") — deliberately gated UNSUPPORTED regardless of
-/// the underlying hardware's own real capability (§C Gating's fail-
+/// the underlying hardware's own real capability (the gate's fail-
 /// CLOSED posture, conservative direction): a translated parent process
 /// cannot be trusted to have uv provision an arm64-native venv/Python
 /// for it (uv's own platform detection follows the CALLING process'
@@ -136,7 +136,7 @@ fn is_rosetta_translated() -> bool {
 /// Rosetta is checked FIRST: an x86_64 build translated onto real
 /// Apple-Silicon hardware is a materially different, more specific
 /// situation than a flat "not arm64" — REASON_ROSETTA is the more useful
-/// (and per §C Gating, still fail-closed) answer for it, not REASON_
+/// (and, per the gate, still fail-closed) answer for it, not REASON_
 /// INTEL.
 fn capabilities_for(is_aarch64_build: bool, rosetta_translated: bool, macos_major: i64) -> MlxCapabilities {
     if rosetta_translated {
@@ -153,7 +153,7 @@ fn capabilities_for(is_aarch64_build: bool, rosetta_translated: bool, macos_majo
 
 /// The impure half: wires the three probes above into `capabilities_for`.
 /// Reused directly by `mlx_capabilities` (the IPC command) AND by
-/// server.rs's own `start_server` belt re-check (§C F14: "Rust start_
+/// server.rs's own `start_server` belt re-check (F14: "Rust start_
 /// server re-checks mlx_capabilities before spawning parakeet") — kept
 /// as a plain function (not gated behind a `tauri::State`/async command)
 /// so a synchronous, non-`.await`-holding caller like start_server's own

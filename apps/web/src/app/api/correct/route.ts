@@ -86,7 +86,7 @@ export async function POST(req: Request) {
   }
   const { segments, context, lexicon, meetingTitle, model } = parsedBody.data;
 
-  // §5 A5: correction rides the detect-domain config — same kind
+  // A5: correction rides the detect-domain config — same kind
   // define's own route already resolves through (define's server-side
   // resolveLlmConfig behavior is identical for "detect"/"define": both
   // fall through to the shared detectClassModel, only "summary"/

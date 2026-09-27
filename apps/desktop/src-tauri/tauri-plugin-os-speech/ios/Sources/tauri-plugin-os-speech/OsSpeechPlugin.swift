@@ -5,9 +5,9 @@ import Tauri
 import UIKit
 import WebKit
 
-// S13 (§D1/§2, Lane B) —
+// S13 (D1, Lane B) —
 // the Tauri iOS plugin entry point. Six thin `@objc` methods, one per
-// `osspeech_ios.rs` bridge command (§2's pinned table); each does the
+// `osspeech_ios.rs` bridge command (pinned table); each does the
 // SAME two things and nothing else: (1) an `#available(iOS 26.0, *)`
 // pre-check (mirrors osspeech.rs's own `is_macos_26_or_later` runtime
 // re-check — "UI gating is not a boundary"), (2) hand off to
@@ -234,7 +234,7 @@ class OsSpeechPlugin: Plugin {
 
   @objc public func stopTranscribe(_ invoke: Invoke) throws {
     guard #available(iOS 26.0, *) else {
-      invoke.resolve() // idempotent, matches §2's own contract
+      invoke.resolve() // idempotent, matches the pinned contract
       return
     }
     Task {

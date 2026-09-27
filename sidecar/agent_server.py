@@ -38,8 +38,8 @@ distinction in every word of UI copy, error message, and code comment
 that touches this file: never "we connect your subscription" / "we
 give you access" — always "your own local Claude/ChatGPT login, used
 by a tool running on your machine." This is not a legal nicety; it is
-the entire reason this feature is allowed to exist. See the v0.2.2
-design doc (Q0) for the full policy analysis this rests on.
+the entire reason this feature is allowed to exist (v0.2.2 policy
+analysis, Q0).
 
 Experimental: gated behind Settings.subscriptionDirect (default OFF)
 and the NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT build flag (unset =
@@ -48,7 +48,7 @@ src/lib/agent/localHost.ts and SettingsDialog.tsx's "订阅直连（实验性）
 section. Only detect/define are wired to this path; translate/summarize
 always use the existing Next.js /api/* routes, unconditionally, in
 every build. Subject to change or removal without notice if official
-policy tightens (see kill-switch layers 2/3 in the design doc).
+policy tightens (kill-switch layers 2/3).
 
 --------------------------------------------------------------------
 Endpoints (all loopback-only; see parse_args' --host default)
@@ -103,7 +103,7 @@ from agent_prompts import (
 # ingest_origin_allowed for empty/missing Origin. Read this comment
 # fully before touching either gate; conflating the two is the single
 # most dangerous mistake possible in this file (flagged as the #1
-# Codex-review item in the v0.2.2 design doc).
+# Codex-review item in the v0.2.2 review).
 #
 # ingest_origin_allowed (whisper_server.py) guards an SSRF-shaped
 # endpoint (POST /ingest-url can make this machine fetch an arbitrary
@@ -155,7 +155,7 @@ def agent_origin_allowed(origin: Optional[str]) -> bool:
 def health_origin_allowed(origin: Optional[str]) -> bool:
     """Looser gate for GET /agent/health: it leaks no credential and
     no ability to spend quota (see the /agent/health docstring below),
-    so per the design doc it may be relaxed — empty/missing Origin is
+    so by design it may be relaxed — empty/missing Origin is
     allowed here (same posture as ingest_origin_allowed), only a real
     THIRD-PARTY remote origin is rejected. Kept as a distinct function
     (rather than reusing ingest_origin_allowed or agent_origin_allowed)
@@ -197,7 +197,7 @@ def token_matches(expected: str, provided: Optional[str]) -> bool:
 
 
 # ---------------------------------------------------------------
-# ANTHROPIC_API_KEY warning (design doc Q5 / crossed-out item #3):
+# ANTHROPIC_API_KEY warning (Q5 / crossed-out item #3):
 # authentication precedence favors an explicit API key over
 # subscription OAuth, so a stray $ANTHROPIC_API_KEY in this process's
 # environment would silently make Claude calls spend THAT key's
@@ -224,7 +224,7 @@ def check_env_warnings() -> list[str]:
 # ---------------------------------------------------------------
 
 CLAUDE_MODEL_DEFAULT = "claude-haiku-4-5"
-AGENT_CALL_TIMEOUT_S = 15.0  # sidecar's own hard cap — see design doc Q3
+AGENT_CALL_TIMEOUT_S = 15.0  # sidecar's own hard cap (Q3)
 
 
 class AgentCallError(Exception):

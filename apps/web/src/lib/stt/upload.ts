@@ -33,7 +33,7 @@ import { useApp } from "../store";
 import { withBase } from "../basePath";
 import { buildMeetingLexicon, projectForInitialPrompt } from "./lexicon";
 
-// v0.4.7 Lane B (glossary -> recognizer bias, doc §3): uploadRecording/
+// v0.4.7 Lane B (glossary -> recognizer bias): uploadRecording/
 // ingestUrl below are their own "meeting start" — ONE snapshot built
 // per call, satisfying D8 the same way useMeeting.ts's attachEngine
 // does for a live session. Reads the already-loaded module-level
@@ -775,7 +775,7 @@ export async function importAndTrack(
 // ever targets the local Whisper sidecar's job API (no "cloud" mode
 // counterpart, unlike importAndTrack above): the hosted demo can't
 // legally/technically run it (datacenter-side YouTube ripping is a
-// DMCA §1201 liability, and YouTube blocks datacenter IPs anyway).
+// DMCA Section 1201 liability, and YouTube blocks datacenter IPs anyway).
 // ---------------------------------------------------------------
 
 /** POST {httpBase}/ingest-url — same language/diarize/hf_token

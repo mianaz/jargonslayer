@@ -1,8 +1,7 @@
-// Mic first-grant visible-tab page (S7 blueprint §2 Decision A /
-// chunk 3). Opened via micPermission.ts's openPermissionPage()
+// Mic first-grant visible-tab page (S7 Decision A / chunk 3). Opened via micPermission.ts's openPermissionPage()
 // (chrome.tabs.create) because getUserMedia's permission PROMPT
 // cannot render inside the side panel, the popup, or an offscreen
-// document (blueprint anchors 1/5) — a visible extension tab is the
+// document — a visible extension tab is the
 // only place it can. Deliberately does NOT auto-request on load: the
 // prompt only ever appears after an explicit click, never as a
 // surprise the instant this tab opens. Because chrome-extension:// is
@@ -10,7 +9,7 @@
 // origin, so the side panel's SpeechRecognition and the VAD's own
 // getUserMedia both work afterward with no further prompting.
 //
-// Copy note: the blueprint's §7 "麦克风授权（首次）" block has six
+// Copy note: the "麦克风授权（首次）" copy block has six
 // lines total. 标题/授权页正文 are static and already live directly in
 // permission.html (title/body paragraph); SUCCESS_TEXT/DENIED_TEXT
 // below are the two mutually-exclusive OUTCOME strings, both verbatim

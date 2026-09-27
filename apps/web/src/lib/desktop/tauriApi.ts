@@ -85,7 +85,7 @@ export type ChannelFactory = (onmessage: (data: ArrayBuffer) => void) => PcmChan
 export type OpenExternalFn = (url: string) => Promise<void>;
 
 /** Matches `@tauri-apps/api/core`'s `PluginListener` closely enough for
- *  this app's one consumer (S13 blueprint §2 — stt/osSpeechTransport.ts's
+ *  this app's one consumer (S13 — stt/osSpeechTransport.ts's
  *  iOS event-transport shim, Lane D) — trimmed to the one thing that
  *  caller does with it: call `unregister()` to implement the shim's own
  *  `UnlistenFn` return, same "close enough" contract as PcmChannel/
@@ -300,13 +300,13 @@ export function getAppVersion(): Promise<string> {
 }
 
 /** Lazily imports `@tauri-apps/api/core` and resolves its
- *  `addPluginListener` — S13 blueprint §2/§6's iOS event-transport shim
+ *  `addPluginListener` — S13's iOS event-transport shim
  *  (stt/osSpeechTransport.ts, Lane D) is the one caller: macOS keeps
  *  using getListen()'s existing `osspeech://…` global-event path, iOS
  *  has no such path (Swift `trigger()` delivers to plugin-scoped
  *  listeners only) and subscribes via this getter instead
  *  (`addPluginListener("os-speech", "transcript"|"status", cb)`). Cross-
- *  lane pinned contract (blueprint §6): exported under exactly this
+ *  lane pinned contract: exported under exactly this
  *  name. */
 export function getAddPluginListener(): Promise<AddPluginListenerFn> {
   if (!TAURI_BUILD) {

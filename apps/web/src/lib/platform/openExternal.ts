@@ -2,7 +2,7 @@
 // migrates to (this sprint's own wave-2 HANDOFF list covers every existing call
 // site). WKWebView/wry cannot usefully navigate itself to an arbitrary
 // `https://` URL (SettingsDialog.tsx's pre-S10 `window.location.href`
-// dead-end — blueprint triage table item 2), so a Tauri build routes
+// dead-end), so a Tauri build routes
 // through the system browser via tauri-plugin-opener instead of the
 // ordinary web new-tab open.
 //
@@ -37,7 +37,7 @@ export async function openExternalWith(
   window.open(url, "_blank", "noopener");
 }
 
-/** PINNED CONTRACT (S10 blueprint, widened by S13 §6 F6): every Tauri
+/** PINNED CONTRACT (S10, widened by S13 F6): every Tauri
  *  (desktop OR iOS) external link call site swaps to this. */
 export function openExternal(url: string): Promise<void> {
   return openExternalWith(url, IS_TAURI, getOpener);

@@ -1,5 +1,4 @@
-// Soniox cloud STT (BYOK, experimental — v0.4 S4 blueprint decision
-// E): streams 16kHz mono PCM from the mic, via the same AudioWorklet
+// Soniox cloud STT (BYOK, experimental — v0.4 S4 decision E): streams 16kHz mono PCM from the mic, via the same AudioWorklet
 // downsampler whisperSocket.ts/tabAudio.ts use, straight to Soniox's
 // real-time endpoint (wss://stt-rt.soniox.com/transcribe-websocket) —
 // no local sidecar involved. The WebSocket/audio-graph plumbing plus

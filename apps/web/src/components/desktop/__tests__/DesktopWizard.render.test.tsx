@@ -12,7 +12,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 
-// S11 osspeech blueprint (§3 Worker D, §A4) — Worker C's caps module,
+// S11 osspeech (Worker D, A4) — Worker C's caps module,
 // not on disk when this worker started (mocked, never stubbed — see
 // this suite's own new describe block below). `null` is this mock's
 // default (mirrors the real hook's own "not yet probed" snapshot) — S11
@@ -48,7 +48,7 @@ vi.mock("@/lib/desktop/bootstrap", async (importOriginal) => {
 // rendered, since modelCatalog.ts's own stub flips `available: true`
 // this sprint) reads disabled-fail-closed by default, harmlessly, same
 // as an unmocked ModelPicker.render.test.tsx row would. Mocked here only
-// so the TWO new gating tests below (§C Gating F13's "supported" vs
+// so the TWO new gating tests below (F13's "supported" vs
 // "unsupported" states) can drive an explicit result without fighting
 // tauriApi's own dynamic `@tauri-apps/*` import — mirrors ModelPicker.
 // render.test.tsx's own hoisted `mlxState` pattern (probeImpl/refreshImpl
@@ -110,7 +110,7 @@ describe("DesktopWizard — state-driven rendering", () => {
       container.remove();
       container = null;
     }
-    // S11 osspeech blueprint (§3 Worker D) — reset between tests so an
+    // S11 osspeech (Worker D) — reset between tests so an
     // osspeech-specific test never bleeds its caps value into a LATER,
     // unrelated test (every pre-S11 test relies on the null default).
     mockOsSpeechCaps = null;
@@ -174,7 +174,7 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(onDismissConsent).toHaveBeenCalledTimes(1);
   });
 
-  // S12b fix round FB1-copy (§F) — the consent screen's own summary
+  // S12b fix round FB1-copy — the consent screen's own summary
   // paragraph must be honest PER SELECTION, not a static whisper-family
   // description regardless of what's actually picked.
   it("WIZARD_CONSENT_REQUIRED: the summary copy is the pre-existing whisper-family text (byte-identical) while a whisper model is selected — no faster-whisper/size claim leaks under a parakeet pick that hasn't happened yet", async () => {
@@ -193,7 +193,7 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(consent.textContent).not.toContain("仅支持 Apple 芯片（M 系列）。");
   });
 
-  it("WIZARD_CONSENT_REQUIRED: selecting parakeet swaps the summary copy to the honest MLX/2.5GB framing, and hides the whisper-only guidance block (§F FB1-copy)", async () => {
+  it("WIZARD_CONSENT_REQUIRED: selecting parakeet swaps the summary copy to the honest MLX/2.5GB framing, and hides the whisper-only guidance block (FB1-copy)", async () => {
     mockOsSpeechCaps = { supported: false };
     mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: true, reason: null } });
     await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], {});
@@ -272,10 +272,10 @@ describe("DesktopWizard — state-driven rendering", () => {
   // entirely, and no catalog entry is `available:false` today. "Web" is
   // a THIRD, structurally separate gate (page.tsx:297 mounts
   // <DesktopBootstrap>/this wizard only under IS_DESKTOP at all — S12a
-  // §D F15, confirmed, not owned by this worker) — out of scope for a
+  // F15, confirmed, not owned by this worker) — out of scope for a
   // DesktopWizard-level render test, which by construction only ever
   // renders on the "desktop" side of that gate.
-  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker> renders the parakeet-tdt-0.6b-v3 row, selectable, when mlxCaps reports supported (§C Gating F13, §C L1 B2 flip)", async () => {
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker> renders the parakeet-tdt-0.6b-v3 row, selectable, when mlxCaps reports supported (F13, L1 B2 flip)", async () => {
     mockOsSpeechCaps = { supported: false };
     mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: true, reason: null } });
     const onBeginProvision = vi.fn();
@@ -302,14 +302,14 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(onBeginProvision).toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
   });
 
-  // S12b fix round FB10 (§F; product default, ON THE VETO LIST §7.7) —
+  // S12b fix round FB10 (product default, ON THE VETO LIST) —
   // supersedes this suite's own PRE-FB10 "still renders disabled" test:
   // the wizard now passes ModelPicker's own hideDefinitivelyUnsupported
   // prop, so a DEFINITIVELY-unsupported mlxOnly row is hidden entirely
   // here (Settings' own picker keeps the pre-FB10 disabled-with-reason
   // behavior instead — see ModelPicker.realCatalog.render.test.tsx's own
   // "hideDefinitivelyUnsupported" describe block for that side).
-  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker>'s parakeet-tdt-0.6b-v3 row is HIDDEN entirely (not just disabled) when mlxCaps DEFINITIVELY reports unsupported (§F FB10)", async () => {
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker>'s parakeet-tdt-0.6b-v3 row is HIDDEN entirely (not just disabled) when mlxCaps DEFINITIVELY reports unsupported (FB10)", async () => {
     mockOsSpeechCaps = { supported: false };
     const reason = "需要 Apple 芯片（M 系列），macOS 14 或更高";
     mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: false, reason } });
@@ -333,11 +333,11 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(onBeginProvision).not.toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
   });
 
-  // §F FB10's own explicit carve-out: a transient probe ERROR is NEVER
+  // FB10's own explicit carve-out: a transient probe ERROR is NEVER
   // hidden, on EITHER surface — the wizard still shows disabled+重试
   // here, same as pre-FB10 (retrying CAN change this answer, unlike a
   // definitive result).
-  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker>'s parakeet-tdt-0.6b-v3 row still RENDERS disabled with a 重试 affordance (never hidden) on a transient mlxCaps probe ERROR (§F FB10's carve-out)", async () => {
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker>'s parakeet-tdt-0.6b-v3 row still RENDERS disabled with a 重试 affordance (never hidden) on a transient mlxCaps probe ERROR (FB10's carve-out)", async () => {
     mockOsSpeechCaps = { supported: false };
     const FAIL_CLOSED = { mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" };
     mlxState.probeImpl = async () => ({ status: "error", caps: FAIL_CLOSED });
@@ -352,7 +352,7 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3-retry"]')).not.toBeNull();
   });
 
-  // S11 osspeech blueprint (§3 Worker D, §A4) — EngineChoiceScreen
+  // S11 osspeech (Worker D, A4) — EngineChoiceScreen
   // gating: it becomes the WIZARD_CONSENT_REQUIRED screen (replacing
   // ConsentScreen) IFF osspeech caps report supported; osspeech choice
   // skips whisper provisioning entirely and dismisses; whisper choice

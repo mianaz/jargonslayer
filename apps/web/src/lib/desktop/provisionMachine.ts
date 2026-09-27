@@ -19,7 +19,7 @@
 //
 // The crash-restart policy (bottom of this file: RestartState/
 // decideRestart) is deliberately a SEPARATE small reducer, not woven
-// into `transition()` — per the blueprint's own chunk-4 instruction. It
+// into `transition()`, by design. It
 // only decides; CRASH_RESTART/CRASH_TERMINAL below are how a caller
 // applies that decision back onto the main MachineState.
 
@@ -38,7 +38,7 @@ import { PINNED_PYTHON_MINOR, pipInstall, pythonInstall, venvCreate } from "./uv
 // detour (same posture as switchModel()/installDiarization(), neither
 // of which runs through this file's transition()/effects either),
 // chosen specifically because that caller needs live, per-substep
-// progress (§Task 7's three task-row stages) a single opaque Effect
+// progress (the three task-row stages) a single opaque Effect
 // would hide.
 export type ProvisionStep =
   | "INSTALL_PYTHON"
@@ -70,7 +70,7 @@ function nextStep(step: ProvisionStep): ProvisionStep | null {
 export interface ProvisionContext {
   paths: DesktopPaths;
   /** The Whisper model this run provisions/starts — S3 always "small"
-   *  (blueprint architecture decision 4, first-run reliability); S4 is
+   *  (architecture decision 4, first-run reliability); S4 is
    *  the picker that makes this caller-chosen. */
   model: string;
 }
@@ -122,15 +122,15 @@ export const ALLOWED_MARKER_MODELS: readonly string[] = [
   "medium",
   "large-v3",
   "large-v3-turbo",
-  // S12a (v0.4.4, §C L1/Task 6) — parakeet joins the marker allowlist
+  // S12a (v0.4.4, L1) — parakeet joins the marker allowlist
   // now that this file owns its own quarantine handling (see
   // handleCheckResult's mlx-usability branch below); modelCatalog.
   // test.ts's own catalog⊆allowlist invariant carve-out is removed in
-  // lockstep (§C L1's prelude comment addressed to this worker).
+  // lockstep (L1's prelude comment addressed to this worker).
   "parakeet-tdt-0.6b-v3",
 ];
 
-/** S12a (v0.4.4, §C R1/Provision) — the subset of ALLOWED_MARKER_MODELS
+/** S12a (v0.4.4, R1) — the subset of ALLOWED_MARKER_MODELS
  *  that needs the separate, hash-locked MLX venv (uvCommands.ts's
  *  DesktopPaths mlx fields) rather than the shared base whisper venv —
  *  bootstrap.ts's performSwitchModel/ensureMlxExtras and
@@ -146,8 +146,8 @@ export const ALLOWED_MARKER_MODELS: readonly string[] = [
  *  bootstrap.ts can import without pulling in catalog UI copy. */
 export const MLX_ONLY_MARKER_MODELS: readonly string[] = ["parakeet-tdt-0.6b-v3"];
 
-/** S12a (v0.4.4, §C Provision, F14) — handleCheckResult's own quarantine
- *  fallback: "select `small`" verbatim, per §C's own wording. A
+/** S12a (v0.4.4, F14) — handleCheckResult's own quarantine
+ *  fallback: select `small`. A
  *  deliberately independent constant from bootstrap.ts's
  *  DEFAULT_DESKTOP_MODEL (same value, "small", but that constant is
  *  private to bootstrap.ts — this module stays the single source of
@@ -166,7 +166,7 @@ export const MLX_ONLY_MARKER_MODELS: readonly string[] = ["parakeet-tdt-0.6b-v3"
  *  the ordinary whisper pipeline. */
 export const QUARANTINE_FALLBACK_MODEL = "small";
 
-/** S12a fix round (§D F2, HIGH — lead-adjudicated matrix, implemented
+/** S12a fix round (F2, HIGH — lead-adjudicated matrix, implemented
  *  exactly) — replaces the old boolean `mlxUsable` with the FULL
  *  4-state result provisionRunner.ts's probeMlxUsable resolves:
  *  - `usable`: mlx_capabilities resolved supported AND
@@ -201,7 +201,7 @@ export const QUARANTINE_FALLBACK_MODEL = "small";
  *    genuinely unknown, not a resolved answer either way.
  *    handleCheckResult below does NOT quarantine at all: it parks
  *    directly on the EXISTING retriable STEP/ERROR surface (INSTALL_MLX,
- *    §C Provision's own step identity — see startStep's/handleRetry's
+ *    its own step identity — see startStep's/handleRetry's
  *    own INSTALL_MLX handling) with a message using "无法检测" wording,
  *    deliberately distinct from `unsupported`'s "不支持"/"需要 Apple 芯片"
  *    copy — the wizard's EXISTING STEP/ERROR retry UI (PROVISION_STEP_
@@ -282,7 +282,7 @@ export type MachineEvent =
       type: "CHECK_RESULT";
       probeHealthy: boolean;
       markerRaw: string | null;
-      /** S12a (§C Provision, F14; redesigned §D F2) — ONLY ever
+      /** S12a (F14; redesigned F2) — ONLY ever
        *  meaningful (and ONLY ever supplied by provisionRunner.ts's
        *  runEffects) when the parsed marker's model is a member of
        *  MLX_ONLY_MARKER_MODELS above — every ordinary whisper-family
@@ -320,7 +320,7 @@ export interface TransitionResult {
 }
 
 /** Attempts before POLLING_HEALTH gives up and becomes a STEP_ERROR
- *  (blueprint: "POLLING_HEALTH with attempt cap -> STEP_ERROR"). The
+ *  (POLLING_HEALTH with attempt cap -> STEP_ERROR). The
  *  server itself binds fast once spawned (prewarm already paid the
  *  model-load cost as its own decoupled step) — this cap is generous
  *  headroom for process-startup jitter, not model loading. */
@@ -355,7 +355,7 @@ function startStep(ctx: ProvisionContext, step: ProvisionStep): TransitionResult
     // See ProvisionStep's own doc comment above: INSTALL_MLX's own
     // venv-create/pip-install/preflight SEQUENCE has no driven-effect
     // implementation in THIS file — bootstrap.ts's ensureMlxExtras
-    // drives that directly. handleCheckResult's own §D F2 probe-error
+    // drives that directly. handleCheckResult's own F2 probe-error
     // branch DOES construct a real `{step:"INSTALL_MLX", status:
     // "ERROR"}` MachineState directly (a literal object, bypassing
     // startStep entirely) — that's a legitimate, fully-supported use of
@@ -385,8 +385,8 @@ function handleCheckResult(
 
   const marker = parseMarker(event.markerRaw);
   if (marker) {
-    // S12a (§C Provision, F14 — Sol finding #14, "Persisted-parakeet-
-    // marker clamping doesn't work"; redesigned §D F2) — a parakeet-
+    // S12a (F14 — Sol finding #14, "Persisted-parakeet-
+    // marker clamping doesn't work"; redesigned F2) — a parakeet-
     // family marker must be capability-checked BEFORE ever reaching
     // STARTING — spawning a parakeet sidecar process this app already
     // knows can't run (wrong hardware, or a broken mlx venv) would only
@@ -402,7 +402,7 @@ function handleCheckResult(
     if (MLX_ONLY_MARKER_MODELS.includes(marker.model)) {
       const usability = event.mlxUsability;
       if (!usability || usability.status === "probe-error") {
-        // §D F2 case (c): genuinely unknown (a probe error surviving
+        // F2 case (c): genuinely unknown (a probe error surviving
         // provisionRunner.ts's own internal retry-once, or a malformed
         // event carrying no usability info at all) — ZERO writes to
         // marker/preference/ctx: no startStep, no ctx reseed, nothing.
@@ -424,7 +424,7 @@ function handleCheckResult(
         };
       }
       if (usability.status === "unsupported" || usability.status === "invalid-venv") {
-        // §D F2 cases (a)/(b): BOTH land on the identical fresh-
+        // F2 cases (a)/(b): BOTH land on the identical fresh-
         // INSTALL_PYTHON-entry shape (ignoring the marker's own model
         // entirely, falling back to QUARANTINE_FALLBACK_MODEL) — the
         // exact same shape a brand-new install produces, which
@@ -512,7 +512,7 @@ function handleRetry(ctx: ProvisionContext, state: MachineState): TransitionResu
     const started = startStep(ctx, "STARTING");
     return { state: started.state, effects: [{ kind: "stopServer" }, ...started.effects] };
   }
-  // S12a fix round (§D F2, case c) — INSTALL_MLX only ever lands in
+  // S12a fix round (F2, case c) — INSTALL_MLX only ever lands in
   // STEP/ERROR via handleCheckResult's own probe-error branch above
   // (a genuinely unknown mlx-usability answer, zero writes committed).
   // "重试" here must mean a REAL re-probe, not a blind re-attempt at
@@ -583,8 +583,8 @@ export function transition(ctx: ProvisionContext, state: MachineState, event: Ma
   }
 }
 
-// ---- crash-restart policy: a SEPARATE small reducer (blueprint's own
-// wording) — server://exit while HEALTHY -> restart, up to
+// ---- crash-restart policy: a SEPARATE small reducer —
+// server://exit while HEALTHY -> restart, up to
 // MAX_RESTARTS_PER_WINDOW attempts per any rolling RESTART_WINDOW_MS
 // window, then give up. This does NOT touch MachineState itself; a
 // caller applies its verdict by feeding CRASH_RESTART/CRASH_TERMINAL

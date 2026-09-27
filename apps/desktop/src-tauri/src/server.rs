@@ -1,4 +1,4 @@
-// S3 chunk 3 (blueprint §Chunk 3) — the long-lived whisper_server.py
+// S3 chunk 3 — the long-lived whisper_server.py
 // sidecar's lifecycle: prewarm (model download/load, its own decoupled
 // step per architecture decision 4 — "load-before-bind" means the model
 // loads BEFORE :8765/:8766 bind, so downloading during start_server would
@@ -40,7 +40,7 @@ use crate::paths::{resolve_app_paths, AppPaths};
 use crate::uv::{emit_uv_log, ProcessResult};
 
 /// Whisper model sizes sidecar/whisper_server.py's own `--model` argparse
-/// choices accept (parse_args' `choices=[...]`), plus S12a §C's own
+/// choices accept (parse_args' `choices=[...]`), plus S12a's own
 /// Parakeet-v3 model id (`parakeet-tdt-0.6b-v3` — Q1: "a MODEL under
 /// `whisper`, not a new engine kind") — kept in lock-step with that
 /// list, not the full faster-whisper/parakeet-mlx model zoo.
@@ -64,18 +64,18 @@ pub fn validate_model(model: &str) -> Result<(), String> {
     }
 }
 
-/// S12a §C R1 — `parakeet-*` model ids run under the separate, hash-
+/// S12a R1 — `parakeet-*` model ids run under the separate, hash-
 /// locked MLX venv; everything else (the faster-whisper family) runs
 /// under the base venv. A simple prefix match rather than an exact
 /// `ALLOWED_MODELS` lookup: there is currently exactly one parakeet
-/// model id, but the prefix is what §C's own wire contract keys off
+/// model id, but the prefix is what the wire contract keys off
 /// (`backend_for_model`, sidecar-side) — kept in the same shape here so
 /// a future second parakeet size needs no Rust change.
 fn is_parakeet_model(model: &str) -> bool {
     model.starts_with("parakeet-")
 }
 
-/// §C R1 — "`venv_for_model(model)` — base venv python for whisper-
+/// R1 — "`venv_for_model(model)` — base venv python for whisper-
 /// family models, mlx venv python for `parakeet-*` — driving BOTH the
 /// model-download/prewarm spawn and the server spawn." The one place
 /// that decides which venv's python executes a given model; both
@@ -89,7 +89,7 @@ fn venv_for_model<'a>(paths: &'a AppPaths, model: &str) -> &'a Path {
     }
 }
 
-/// S12a §C Q6/§3.5 — the exact env additions every model-download/server
+/// S12a Q6 — the exact env additions every model-download/server
 /// spawn gets, on top of whatever else that spawn already sets: HF_HOME
 /// stays EXACTLY as today (the caller still sets it separately — this fn
 /// deliberately does NOT touch it, so it can never introduce a second,
@@ -98,12 +98,12 @@ fn venv_for_model<'a>(paths: &'a AppPaths, model: &str) -> &'a Path {
 /// diarization's token already flows to the sidecar's own `--hf-token`/
 /// `$HF_TOKEN` fallback, `whisper_server.py:2519-2520` — Q6);
 /// HF_HUB_DISABLE_TELEMETRY=1 always (the "no new telemetry" invariant,
-/// blueprint §1 non-goal e). Shared by prewarm_model (the first-run/
+/// an explicit non-goal). Shared by prewarm_model (the first-run/
 /// download spawn) and start_server (the long-lived sidecar spawn) so
 /// the two spawns can never disagree on how a configured token reaches
 /// HF's resolver.
 ///
-/// F8 (S12a fix round, §D): trims the token and treats a whitespace-
+/// F8 (S12a fix round): trims the token and treats a whitespace-
 /// only value as absent — the pre-fix `!token.is_empty()` check let
 /// "   " through, setting `HF_TOKEN="   "`, which Python's own
 /// `bool("   ")` reads as truthy (diar falsely armed even with no real
@@ -147,7 +147,7 @@ fn lazy_load_args(lazy_load: &Option<bool>) -> Vec<String> {
     }
 }
 
-/// §C F13/F14's "belt" — Rust `start_server` re-checks `mlx_capabilities`
+/// F13/F14's "belt" — Rust `start_server` re-checks `mlx_capabilities`
 /// before spawning a parakeet model (JS's own `provisionMachine`
 /// marker-capability-check is the primary guard; this is defense in
 /// depth against a stale/cross-machine-restored marker or preference
@@ -297,7 +297,7 @@ pub async fn prewarm_model(
     hf_token: Option<String>,
 ) -> Result<ProcessResult, String> {
     validate_model(&model)?;
-    // F5b (S12a fix round, §D): the same INSTALL-time capability belt
+    // F5b (S12a fix round): the same INSTALL-time capability belt
     // start_server already has (F13/F14) — reuse check_mlx_capable_if_
     // parakeet verbatim so a compromised/buggy caller can't kick off a
     // multi-GB parakeet download on an unsupported platform just because
@@ -318,9 +318,9 @@ pub async fn prewarm_model(
     // via download_model_snapshot) and is the SAME helper the :8766
     // model-switch job (chunk 1's JobManager.start_download_job) reuses
     // — "one shared helper, only invocation + progress transport
-    // differ." Bonus (per the blueprint): no longer instantiates+
+    // differ." Bonus: no longer instantiates+
     // discards a CT2 model, pure download.
-    // §C R1 — resolved BEFORE `model` moves into `args` below: the base
+    // R1 — resolved BEFORE `model` moves into `args` below: the base
     // venv for whisper-family models, the separate mlx venv for
     // `parakeet-*` (see venv_for_model's own doc comment).
     let venv_python = venv_for_model(&paths, &model).to_path_buf();
@@ -648,7 +648,7 @@ pub async fn start_server(
     lazy_load: Option<bool>,
 ) -> Result<StartServerResult, String> {
     validate_model(&model)?;
-    // §C F13/F14 belt: re-check mlx capabilities before ever spawning a
+    // F13/F14 belt: re-check mlx capabilities before ever spawning a
     // parakeet model (see check_mlx_capable_if_parakeet's own doc
     // comment) — a no-op for every non-parakeet model.
     check_mlx_capable_if_parakeet(&model)?;
@@ -702,7 +702,7 @@ pub async fn start_server(
         .map_err(|e| format!("failed to open {}: {e}", paths.log_path.display()))?;
     let log_file = Arc::new(Mutex::new(log_file));
 
-    // §C R1 — resolved BEFORE `model` moves into `cmd.args` below: the
+    // R1 — resolved BEFORE `model` moves into `cmd.args` below: the
     // base venv for whisper-family models, the separate mlx venv for
     // `parakeet-*` (see venv_for_model's own doc comment).
     let venv_python = venv_for_model(&paths, &model).to_path_buf();
@@ -726,7 +726,7 @@ pub async fn start_server(
     let mut cmd = StdCommand::new(&venv_python);
     cmd.args(&args)
         .env("HF_HOME", &paths.models_dir)
-        // Q6/§3.5 — HF_TOKEN-when-configured + HF_HUB_DISABLE_TELEMETRY=1-
+        // Q6 — HF_TOKEN-when-configured + HF_HUB_DISABLE_TELEMETRY=1-
         // always, same additions prewarm_model's own spawn gets (hf_extra_env's
         // own doc comment).
         .envs(hf_extra_env(&hf_token));
@@ -796,8 +796,8 @@ fn cancel_prewarm_impl(state: &ServerState) -> Result<(), String> {
 /// std::process::Child::kill() sends SIGKILL on Unix (TerminateProcess on
 /// Windows) — there is no portable graceful-SIGTERM-then-grace-period on
 /// stable std without pulling in an extra dependency (e.g. `nix`) purely
-/// for this one call. Accepted as-is per the blueprint's own "std::process
-/// ::Child::kill is SIGKILL — acceptable, note it" — flagged again in this
+/// for this one call. Accepted as-is by design ("std::process
+/// ::Child::kill is SIGKILL — acceptable, note it") — flagged again in this
 /// chunk's PR report as a deliberate deviation, not an oversight.
 fn kill_and_reap(mut child: Child) {
     let _ = child.kill();
@@ -807,8 +807,8 @@ fn kill_and_reap(mut child: Child) {
 /// Called from lib.rs's RunEvent::ExitRequested/Exit handler — best-
 /// effort cleanup so a graceful app quit never leaves an orphaned
 /// whisper_server.py behind. Force-quit is the one case this can't catch;
-/// the blueprint's own accepted-for-v1 answer for that is self-heal via
-/// adoption on next launch (risk register item 4), not attempted here.
+/// the accepted-for-v1 answer for that is self-heal via adoption on
+/// next launch (a known, accepted risk), not attempted here.
 ///
 /// ACCEPTED GAP (adversarial-review finding, kept as a documented
 /// decision, not an oversight): "adoption on next launch" is a TS-side
@@ -970,7 +970,7 @@ mod tests {
         }
     }
 
-    // ---- S12a §C R1: is_parakeet_model / venv_for_model ----
+    // ---- S12a R1: is_parakeet_model / venv_for_model ----
 
     #[test]
     fn is_parakeet_model_matches_only_the_parakeet_prefix() {
@@ -1048,7 +1048,7 @@ mod tests {
         assert!(err.contains("http"), "{err}");
     }
 
-    // ---- S12a §C Q6/§3.5: hf_extra_env ----
+    // ---- S12a Q6: hf_extra_env ----
 
     #[test]
     fn hf_extra_env_always_disables_telemetry_and_omits_hf_token_when_unset() {
@@ -1072,7 +1072,7 @@ mod tests {
 
     #[test]
     fn hf_extra_env_omits_hf_token_when_the_configured_token_is_whitespace_only() {
-        // F8 (S12a fix round, §D) — red on the pre-fix code: a plain
+        // F8 (S12a fix round) — red on the pre-fix code: a plain
         // `!token.is_empty()` check treats "   " as non-empty and sets
         // HF_TOKEN="   ", which Python's own `bool("   ")` truthiness
         // reads as configured (diar falsely armed) even though there is
@@ -1117,7 +1117,7 @@ mod tests {
         assert_eq!(lazy_load_args(&Some(true)), vec!["--lazy-load".to_string()]);
     }
 
-    // ---- S12a §C F13/F14: check_mlx_capable_if_parakeet ----
+    // ---- S12a F13/F14: check_mlx_capable_if_parakeet ----
 
     #[test]
     fn check_mlx_capable_if_parakeet_is_a_noop_for_every_non_parakeet_model() {

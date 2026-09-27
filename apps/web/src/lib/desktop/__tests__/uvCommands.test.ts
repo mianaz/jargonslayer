@@ -32,7 +32,7 @@ const paths: DesktopPaths = {
 };
 
 describe("uvEnv", () => {
-  it("carries exactly the four blueprint env vars, sourced from the given paths", () => {
+  it("carries exactly the four uv env vars, sourced from the given paths", () => {
     expect(uvEnv(paths)).toEqual({
       UV_PYTHON_INSTALL_DIR: paths.pythonInstallDir,
       UV_CACHE_DIR: paths.uvCacheDir,

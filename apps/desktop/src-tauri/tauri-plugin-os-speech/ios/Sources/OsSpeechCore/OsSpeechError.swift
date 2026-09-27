@@ -2,7 +2,7 @@ import Speech
 
 // S13 (Lane B) — ported near-verbatim (pattern source: apps/desktop/
 // src-tauri/audiocap-helper/Sources/AudioCapCore/OsSpeechError.swift,
-// S11 §2.2/§Q9) from the macOS helper: a CLOSED set of typed
+// S11 Q9) from the macOS helper: a CLOSED set of typed
 // Speech-framework failure modes. Two macOS-only cases are dropped —
 // there is no CoreAudio process tap on iOS, so the tap-level
 // permission-denied/device-changed/unsupported-os codes macOS reuses

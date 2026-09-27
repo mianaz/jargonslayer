@@ -13,8 +13,8 @@ import type { CorrectResponse, LlmProvider } from "@jargonslayer/core/types";
 import { buildCorrectUserMessage, CORRECT_SYSTEM_PROMPT } from "@jargonslayer/core/llm/prompts";
 import { CorrectResponseSchema, type ProviderCaller } from "../providerCore";
 
-// Rides the detect-domain default (§5 A5: "correction rides the
-// detect-domain config") — same fallback id as DEFAULT_DETECT_MODEL/
+// Rides the detect-domain default (A5: correction rides the
+// detect-domain config) — same fallback id as DEFAULT_DETECT_MODEL/
 // DEFAULT_DEFINE_MODEL/DEFAULT_TRANSLATE_MODEL.
 export const DEFAULT_CORRECT_MODEL = "deepseek/deepseek-v4-flash";
 

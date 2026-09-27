@@ -1,10 +1,10 @@
-// S13 (§D1/§2, Lane B) —
+// S13 (D1, Lane B) —
 // the app crate's iOS bridge: 6 thin `#[tauri::command]` fns, one per
-// pinned app-command name (§2's table), each a straight
+// pinned app-command name, each a straight
 // `app.os_speech().<method>().map_err(...)` call into the
 // tauri-plugin-os-speech crate's own `OsSpeechExt` (that crate's
 // mobile.rs, `OsSpeech<R>`) — state/single-flight/generation-guard logic
-// lives THERE, not here (§6 amendment: "lib.rs needs NO extra
+// lives THERE, not here (by design: "lib.rs needs NO extra
 // `.manage`"; this file needs none either, for the same reason).
 //
 // D2's "app-command bridge": kept wire-identical (same 6 invoke names,
@@ -17,7 +17,7 @@
 // (kept compilable standalone: plain code, no per-item cfg dance).
 use tauri_plugin_os_speech::{OsSpeechCapabilities, OsSpeechExt, PreinstallArgs, StartArgs};
 
-/// PINNED CONTRACT (§2): `{ locale: string, contextualJson: string |
+/// PINNED CONTRACT: `{ locale: string, contextualJson: string |
 /// null }` — JS ALWAYS sends `contextualJson` (never omits it, per
 /// osSpeech.ts's own `buildContextualJson`/`start()`), matching
 /// `StartArgs.contextual_json: Option<String>`'s own doc comment

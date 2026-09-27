@@ -1,7 +1,7 @@
-// Renders the "更多能力" locked-features section — S7 Decision D
-// (blueprint §2D): visible-but-disabled rows naming where each
-// capability unlocks, adapted from apps/web's `本地版功能` idiom
-// (PreviewLockedBadge.tsx) to Lite's own unlock ladder (完整版/桌面版).
+// Renders the "更多能力" locked-features section — S7 Decision D:
+// visible-but-disabled rows naming where each capability unlocks,
+// adapted from apps/web's `本地版功能` idiom (PreviewLockedBadge.tsx)
+// to Lite's own unlock ladder (完整版/桌面版).
 // Same vanilla-DOM convention as render.ts: a pure function of its
 // input, no module state, returns a detached node the caller appends
 // — nothing here queries the document or reaches into main.ts.

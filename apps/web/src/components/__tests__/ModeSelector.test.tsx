@@ -70,7 +70,7 @@ describe("ModeSelector — web build, ambient test env", () => {
     return el as HTMLButtonElement;
   }
 
-  it("web (not desktop, not iOS): shows tab/mic/import/url — no system-audio tile (§1 F5: browser has no system-audio capture)", () => {
+  it("web (not desktop, not iOS): shows tab/mic/import/url — no system-audio tile (F5: browser has no system-audio capture)", () => {
     resetStore();
     render();
     expect(container!.querySelector('[data-testid="mode-tile-system-audio"]')).toBeNull();

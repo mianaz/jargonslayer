@@ -227,7 +227,7 @@ try:
         isinstance(raised, RuntimeError),
     )
     check(
-        "check_disk_space: error message carries the spec's exact zh lead-in (磁盘空间不足)",
+        "check_disk_space: error message carries the exact zh lead-in (磁盘空间不足)",
         "磁盘空间不足" in str(raised),
     )
 finally:

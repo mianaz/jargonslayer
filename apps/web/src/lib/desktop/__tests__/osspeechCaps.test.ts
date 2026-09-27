@@ -254,7 +254,7 @@ describe("probeOsSpeechCaps — IS_DESKTOP-guarded singleton wrapper", () => {
   });
 });
 
-describe("preinstallOsSpeech — §A2 6th Rust command, single-flighted", () => {
+describe("preinstallOsSpeech — A2 6th Rust command, single-flighted", () => {
   beforeEach(() => {
     assetTrackers = [];
     mockTrackOsSpeechAsset.mockClear();

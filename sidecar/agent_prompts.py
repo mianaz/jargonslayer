@@ -3,7 +3,7 @@ src/lib/llm/prompts.ts, for the subscription-direct agent server
 (agent_server.py).
 
 DUPLICATION, NOT A SINGLE SOURCE OF TRUTH — this is a deliberate,
-reviewed tradeoff (v0.2.2 design doc Q6 open question #4), not an
+reviewed tradeoff (v0.2.2 Q6 open question #4), not an
 oversight: prompts.ts's language-variant builders
 (buildDetectSystemPrompt/buildDefineSystemPrompt) are template
 functions that splice zh/en text into a base template via string

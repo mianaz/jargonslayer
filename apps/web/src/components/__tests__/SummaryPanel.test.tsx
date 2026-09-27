@@ -25,8 +25,8 @@ vi.mock("@/lib/llm/client", async (importOriginal) => {
 });
 
 // gapfill.ts is worker-B-owned and may not exist on disk while this
-// lane works — this mock IS the pinned contract (v071 blueprint's
-// Shared contract section), not a stand-in for the real module.
+// lane works — this mock IS the pinned shared contract, not a
+// stand-in for the real module.
 const runGapFillMock = vi.fn();
 vi.mock("@/lib/translate/gapfill", () => ({
   runGapFill: (...args: unknown[]) => runGapFillMock(...args),
@@ -195,9 +195,9 @@ describe("SummaryPanel — Bit celebration on summary generation success (v0.5.1
 // v0.7.1 Chamber C — export-path gate. md/docx/复制纪要 all carry the
 // live transcript, so they're gated behind an inline confirm when
 // bilingual translation is on and segments still have gaps; JSON/Anki
-// stay exempt. runGapFill is mocked per the pinned worker-B contract
-// (v071 blueprint's Shared contract section) — the mock itself IS the
-// contract, not a stand-in for gapfill.ts's real behavior.
+// stay exempt. runGapFill is mocked per the pinned worker-B contract —
+// the mock itself IS the contract, not a stand-in for gapfill.ts's
+// real behavior.
 describe("SummaryPanel — export-path gate (v0.7.1 Chamber C)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;

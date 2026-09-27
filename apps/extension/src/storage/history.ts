@@ -1,4 +1,4 @@
-// Hand-rolled IndexedDB helper (S7 blueprint §2 decision C) + the
+// Hand-rolled IndexedDB helper (S7 decision C) + the
 // LiteSession history store built on top of it. Chosen over
 // chrome.storage.local (savedLookups.ts's mechanism) because history
 // holds growing transcripts: storage.local caps at 10MB and its
@@ -9,7 +9,7 @@
 // that dependency (if ever wanted) is a drop-in — v1 ships with zero
 // new npm dependencies (S6's no-remote-code posture).
 //
-// Coexistence (S7 blueprint §2 decision C): savedLookups.ts's
+// Coexistence (S7 decision C): savedLookups.ts's
 // chrome.storage.local key and this module's IndexedDB database are
 // separate surfaces. This module MUST NEVER reference the `chrome`
 // global — see storage/__tests__/history.test.ts's coexistence guard.
@@ -121,7 +121,7 @@ export interface KeyValueStore {
 const idbStore: KeyValueStore = { get: idbGet, set: idbSet, del: idbDel, keys: idbKeys };
 
 // ---------------------------------------------------------------
-// LiteSession (S7 blueprint §2 decision C) — its own light type,
+// LiteSession (S7 decision C) — its own light type,
 // mirroring core field names, same discipline as savedLookups.ts's
 // SavedLookup vs core's CustomEntry. Deliberately omits summary/
 // diarization/SRS/pauseIntervals — dictionary-only Lite capture

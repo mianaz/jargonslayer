@@ -7,7 +7,7 @@
 // web build entirely wherever this is statically false, instead of
 // shipping that code dead-but-present).
 //
-// CRITICAL SEMANTICS (blueprint D4 — do not "fix" this by widening
+// CRITICAL SEMANTICS (D4 — do not "fix" this by widening
 // IS_DESKTOP instead): `IS_DESKTOP` means EXACTLY "macOS desktop shell"
 // and MUST stay false on iOS — every sidecar/uv/wizard/diarization/
 // model-management call site gated on it today (SettingsDialog's ~30

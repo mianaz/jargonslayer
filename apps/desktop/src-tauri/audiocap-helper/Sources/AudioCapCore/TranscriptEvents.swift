@@ -1,11 +1,11 @@
 import Foundation
 
-// S11 (§2.2) — the transcribe-mode NDJSON records, on the SAME stderr
+// S11 — the transcribe-mode NDJSON records, on the SAME stderr
 // lane StatusEvents.swift already owns for capture mode (raw-output
 // stderr, reassembled on arbitrary chunk boundaries by Rust's own
 // LineReassembler — see StatusEvents.swift's own header comment). A
 // NEW file/enum rather than added cases on StatusEvents (Must-NOT-TOUCH
-// per the blueprint's worker split) — modeled directly on it: each
+// for this worker) — modeled directly on it: each
 // record is a private Encodable struct with a fixed `type` field, and
 // the real `emit*` functions use the exact same try?-guarded "never
 // crash on a closed stderr pipe" write discipline, just duplicated here
@@ -40,7 +40,7 @@ public enum TranscriptEvents {
         let channel: String?
     }
 
-    /// One struct for all four asset lifecycle states (§2.2) rather than
+    /// One struct for all four asset lifecycle states rather than
     /// four separate record types: `progress`/`message` are `Optional`,
     /// and Swift's synthesized `Encodable` conformance calls
     /// `encodeIfPresent` for `Optional` stored properties — a `nil`
@@ -67,8 +67,8 @@ public enum TranscriptEvents {
     /// dependency on any Speech-framework type (plain String/Bool
     /// values only), so this record (and the `emitProbe`/`probeBytes`
     /// functions below) stay callable from an UNGATED context:
-    /// main.swift's runProbe calls this on macOS <26 too (§2.1: "on
-    /// <26, `supported:false` without spawning Speech").
+    /// main.swift's runProbe calls this on macOS <26 too (on <26 it
+    /// reports `supported:false` without spawning Speech).
     private struct ProbeRecord: Encodable {
         let type = "osspeech-probe"
         let supported: Bool
@@ -76,7 +76,7 @@ public enum TranscriptEvents {
         let installed: [String]
     }
 
-    /// The clean-stop sentinel (§2.2: "the transcribe analog of framing
+    /// The clean-stop sentinel ("the transcribe analog of framing
     /// EOS — Rust's `finished_seen`") — deliberately ONLY `type`+`state`,
     /// no other fields (unlike StatusEvents.StatusRecord, which always
     /// carries sampleRate/channels); see the wire contract's own
@@ -156,7 +156,7 @@ public enum TranscriptEvents {
         write(localeBytes(requested: requested, resolved: resolved, supported: supported))
     }
 
-    /// Called on EVERY macOS version (§2.1/§2.4) — see `ProbeRecord`'s
+    /// Called on EVERY macOS version — see `ProbeRecord`'s
     /// own doc comment for why this function itself carries no
     /// availability gate.
     public static func emitProbe(supported: Bool, locales: [String], installed: [String]) {
@@ -180,7 +180,7 @@ public enum TranscriptEvents {
 
     // ---- shared helpers ----
 
-    /// CMTime seconds -> integer ms (§Q10: "CMTime seconds x 1000,
+    /// CMTime seconds -> integer ms (Q10: "CMTime seconds x 1000,
     /// rounded"). Takes a plain `Double` (callers pass `cmTime.seconds`)
     /// rather than `CMTime` itself so this file has no need to `import
     /// CoreMedia` for one arithmetic helper — every ms field on the wire
@@ -190,7 +190,7 @@ public enum TranscriptEvents {
         Int64((seconds * 1_000).rounded())
     }
 
-    /// Truncates `text` to at most 4096 UTF-8 bytes (§Q2's own text
+    /// Truncates `text` to at most 4096 UTF-8 bytes (Q2's own text
     /// guard), backing off from a raw 4096-byte cut to the nearest
     /// earlier byte that ISN'T a UTF-8 continuation byte (top two bits
     /// `10`) — i.e. the nearest earlier scalar boundary — so a

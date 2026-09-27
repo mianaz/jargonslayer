@@ -122,7 +122,7 @@ export function canPause(
   settings: Pick<Settings, "realtimeDiarize">,
 ): boolean {
   if (engine === "whisper") return !settings.realtimeDiarize;
-  // v0.4 S4 (blueprint decision E, risk 4): Soniox (soniox.ts)
+  // v0.4 S4 (decision E, risk 4): Soniox (soniox.ts)
   // implements no pause()/resume() — explicit false rather than
   // relying on the trailing webspeech/tabaudio/appaudio check below,
   // so a future STTEngineKind added to that OR can't silently start

@@ -1196,7 +1196,7 @@ describe("packTermsForBias", () => {
     expect(result).toContainEqual({ term: "gene-x", pack: "__test_remote_pack__" });
   });
 
-  it("expressions are never included — bias is term-only (doc §3, terms-not-idioms rationale)", () => {
+  it("expressions are never included — bias is term-only (terms-not-idioms rationale)", () => {
     // No expression fixture to check against directly (packTermsForBias's
     // own return shape has no expression field at all) — this pins the
     // CONTRACT: the function signature only ever returns {term, pack}.

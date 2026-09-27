@@ -9,7 +9,7 @@
 // straight into the store.
 //
 // Public API is PINNED (worker C's export-gate flow calls runGapFill()
-// directly) — see the blueprint's "Shared contract" section.
+// directly).
 
 import { useApp } from "@/lib/store";
 import { NoKeyError, RateLimitApiError } from "@/lib/llm/client";

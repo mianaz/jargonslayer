@@ -9,7 +9,7 @@
 // never navigates here regardless: the PKCE verifier stays in this
 // module's own closure for the whole hop).
 //
-// SMOKE-TEST CAVEAT (Q1 verdict, carried verbatim from the blueprint):
+// SMOKE-TEST CAVEAT (Q1 verdict):
 // OpenRouter's PKCE docs bless "localhost callbacks ... on any port"
 // but literally say "localhost", never "127.0.0.1". CALLBACK_HOST below
 // is the one knob to flip (to "localhost") if live testing shows
@@ -45,7 +45,7 @@ import { remapOpenRouterModelDefaults } from "./openrouterModelDefaults";
 /** See this module's own header comment. */
 const CALLBACK_HOST = "127.0.0.1";
 
-/** ~180s (blueprint) — deliberately shorter than oauth.rs's own ~300s
+/** ~180s — deliberately shorter than oauth.rs's own ~300s
  *  overall deadline, so JS is always the side that gives up first; the
  *  Rust deadline is only the backstop for a JS timer that somehow never
  *  fires (e.g. a suspended/backgrounded webview). */
@@ -127,8 +127,8 @@ export function cancelOpenRouterConnect(): void {
   cancelCurrentAttempt?.();
 }
 
-/** The testable core (blueprint: "Dependency-injected internals ...
- *  following the BootstrapDeps injection pattern") — see this module's
+/** The testable core (dependency-injected internals,
+ *  following the BootstrapDeps injection pattern) — see this module's
  *  header comment for the full flow. Every dep is taken as a plain
  *  injected function value, same contract as bootstrap.ts's own
  *  BootstrapDeps, so this is exercised in tests with fakes and imports
@@ -336,7 +336,7 @@ async function resolveSettingsAccess(): Promise<{
   };
 }
 
-/** PINNED CONTRACT (S10 blueprint): the wizard's OAuth button (Chunk C)
+/** PINNED CONTRACT (S10): the wizard's OAuth button (Chunk C)
  *  imports exactly this — the thin real wrapper, resolving every dep
  *  from tauriApi.ts (+ store.ts for updateSettings) and delegating to
  *  the testable core above. Mirrors bootstrap.ts's own

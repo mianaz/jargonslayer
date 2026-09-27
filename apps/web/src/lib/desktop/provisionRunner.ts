@@ -90,13 +90,13 @@ export interface PrewarmProgressEvent {
 
 export type OnDownloadProgress = (progress: PrewarmProgressEvent) => void;
 
-/** S12a (v0.4.4, §C Provision) — mirrors the pinned cross-lane contract
+/** S12a (v0.4.4) — mirrors the pinned cross-lane contract
  *  for the new Rust `mlx_import_preflight` command (task spec: "an
  *  invoke `mlx_import_preflight` → {ok: boolean, stderr: string}
  *  (hardcoded import list Rust-side)"): a real `<mlxVenvPython> -c
  *  "import parakeet_mlx, websockets, numpy, huggingface_hub"` attempt,
  *  camelCase per this app's own Tauri-command-result convention.
- *  Exported so bootstrap.ts's ensureMlxExtras (§Provision's
+ *  Exported so bootstrap.ts's ensureMlxExtras (the
  *  transactional venv build) reuses this ONE type rather than a second,
  *  hand-duplicated copy — same "shared Rust-command-result shape lives
  *  in this file" precedent as ProcessResult/StartServerResult above. */
@@ -108,7 +108,7 @@ export interface MlxImportPreflightResult {
 export interface RunnerDeps {
   invoke: InvokeFn;
   listen: ListenFn;
-  /** Fixed managed-mode probe target (blueprint architecture decision
+  /** Fixed managed-mode probe target (architecture decision
    *  6: managed mode's whisperUrl is fixed, not user-editable) — the
    *  ONLY field of Settings probeSidecar actually reads. Callers thread
    *  the real Settings.DEFAULT_SETTINGS through today (its whisperUrl
@@ -257,10 +257,10 @@ async function readMarkerEffect(deps: RunnerDeps): Promise<string | null> {
   }
 }
 
-/** S12a fix round (§D F2, HIGH) — one capabilities probe attempt, with
+/** S12a fix round (F2, HIGH) — one capabilities probe attempt, with
  *  ONE automatic retry when the FIRST attempt itself errored (an
  *  invoke() rejection/spawn failure — mlxCaps.ts's own
- *  probeMlxCapabilitiesWith never throws, it resolves the §D F7
+ *  probeMlxCapabilitiesWith never throws, it resolves the F7
  *  `{status,caps}` envelope either way, so "errored" here means
  *  `status === "error"`, not a caught exception). A RESOLVED answer —
  *  even a resolved `mlxSupported:false` — is trusted immediately, no
@@ -276,7 +276,7 @@ async function probeMlxCapabilitiesRetried(deps: RunnerDeps): Promise<MlxCapsRes
   return probeMlxCapabilitiesWith(deps.invoke); // one retry — whatever it resolves is final either way
 }
 
-/** S12a fix round (§D F2) — mirrors probeMlxCapabilitiesRetried's own
+/** S12a fix round (F2) — mirrors probeMlxCapabilitiesRetried's own
  *  "one retry on a genuine invoke() rejection only" contract for
  *  mlx_import_preflight, which (unlike mlx_capabilities) has no
  *  mlxCaps.ts-side wrapper of its own to reuse — this file owns the
@@ -297,7 +297,7 @@ async function invokeImportPreflightRetried(deps: RunnerDeps): Promise<MlxImport
   }
 }
 
-/** §D F2's own "无法检测" wording (mlx_capabilities half) — deliberately
+/** F2's own "无法检测" wording (mlx_capabilities half) — deliberately
  *  distinct from the `unsupported` status's "不支持"/"需要 Apple 芯片"
  *  copy (see MlxUsability's own doc comment, provisionMachine.ts) so a
  *  user-facing STEP/ERROR message never conflates "we don't know" with
@@ -308,14 +308,14 @@ const MLX_CAPABILITIES_PROBE_ERROR_MESSAGE = "无法检测 Apple 芯片支持状
  *  half) — see MLX_CAPABILITIES_PROBE_ERROR_MESSAGE's own doc comment. */
 const MLX_PREFLIGHT_PROBE_ERROR_MESSAGE = "无法检测 MLX 运行环境状态，请重试";
 
-/** S12a (v0.4.4, §C Provision, F14; redesigned §D F2, HIGH) —
+/** S12a (v0.4.4, F14; redesigned F2, HIGH) —
  *  CHECKING's own mlx-usability probe, ONLY ever run when the
  *  just-parsed marker claims an mlx-family model (see runEffects'
  *  CHECKING branch below) — every ordinary whisper-family marker never
  *  pays this extra round trip. Resolves the FULL 4-state
  *  provisionMachine.ts#MlxUsability result (see that type's own doc
  *  comment for the complete matrix this implements) rather than the
- *  old collapsed boolean — §D F2's own fix: a transient probe error
+ *  old collapsed boolean — F2's own fix: a transient probe error
  *  used to be indistinguishable from a definitive "unsupported"
  *  (both collapsed to `false`), which durably persisted the fallback
  *  model over a merely-flaky probe and diverged ctx from the
@@ -414,7 +414,7 @@ function processResultToEvent(step: ProvisionStep, result: ProcessResult): Machi
  *  already allow-list-validated by our own correct-by-construction
  *  builders (uvCommands.ts) or a fixed, non-malformed invocation, so in
  *  practice the only failures reachable here are transient (uv/network/
- *  disk) — exactly the class the blueprint's escape-hatch/retry UX is
+ *  disk) — exactly the class the escape-hatch/retry UX is
  *  for. */
 async function runStepEffect(
   step: ProvisionStep,
@@ -510,7 +510,7 @@ export async function runEffects(state: MachineState, effects: Effect[], deps: R
         }
       }),
     );
-    // S12a (§C Provision, F14; redesigned §D F2) — only probed when the
+    // S12a (F14; redesigned F2) — only probed when the
     // marker itself claims an mlx-family model (see probeMlxUsable's
     // own doc comment above for the full rationale); every other
     // marker leaves `mlxUsability` undefined, matching
@@ -594,8 +594,8 @@ export async function stopServer(invoke: InvokeFn): Promise<void> {
 
 /** app_paths() — also not a provisionMachine Effect (it's the
  *  prerequisite bootstrap.ts resolves BEFORE building the machine's own
- *  ProvisionContext, see the blueprint's Data flow section: "fetch
- *  app_paths -> build machine initial()"); exposed here so its Rust-
+ *  ProvisionContext: fetch app_paths -> build machine
+ *  initial()); exposed here so its Rust-
  *  command-name/shape (paths.rs's `app_paths()`, no args) lives beside
  *  every other command this file already mirrors. */
 export async function getAppPaths(invoke: InvokeFn): Promise<DesktopPaths> {

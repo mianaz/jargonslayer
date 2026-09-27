@@ -8,12 +8,12 @@ url.py/test_realtime_diar.py's existing style/harness.
 Run:
     sidecar/.venv/bin/python sidecar/test_agent_server.py
 
-Covers (per the v0.2.2 design doc's test-plan section):
+Covers (the v0.2.2 test plan):
   - agent_origin_allowed: empty Origin MUST be rejected here (the
     single most important check in this file — deliberately the
     OPPOSITE of whisper_server.ingest_origin_allowed's empty-Origin-
     allowed posture; conflating the two is the #1 Codex-review item
-    called out in both the design doc and this module's own comments)
+    called out in the v0.2.2 review and this module's own comments)
   - health_origin_allowed: looser gate, empty Origin allowed
   - token_matches: connection-code gate (missing/wrong/correct)
   - check_env_warnings: ANTHROPIC_API_KEY detection
@@ -115,7 +115,7 @@ check(
 
 # =================================================================
 # health_origin_allowed (looser gate — GET /agent/health leaks no
-# credential, so per the design doc empty Origin is fine here)
+# credential, so by design empty Origin is fine here)
 # =================================================================
 
 check(
@@ -173,7 +173,7 @@ check(
 )
 
 # =================================================================
-# check_env_warnings (ANTHROPIC_API_KEY detection — design doc Q5 /
+# check_env_warnings (ANTHROPIC_API_KEY detection — Q5 /
 # crossed-out item #3: never auto-unset, only warn)
 # =================================================================
 

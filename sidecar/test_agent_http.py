@@ -14,7 +14,7 @@ the handler leans on (agent_origin_allowed, token_matches,
 ERROR_CODE_STATUS, _extract_profile, ...), but the handler ITSELF —
 the ORDER those gates run in, and which status/body each outcome maps
 to — had no test at all. Ordering is exactly where the money is here:
-the design doc's #1 review item is that the Origin gate must fire
+the #1 review item is that the Origin gate must fire
 BEFORE any body handling (a rejected drive-by must never get its body
 read), and the token gate before JSON parsing; a refactor that keeps
 every pure function green could still silently reorder do_POST and

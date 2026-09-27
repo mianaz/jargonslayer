@@ -35,7 +35,7 @@ describe("LOCKED_FEATURES registry", () => {
     }
   });
 
-  // Verbatim zh copy from the S7 blueprint §7 "更多能力" block,
+  // Verbatim zh copy of the "更多能力" block's approved wording,
   // hardcoded independently of lockedFeatures.ts so an accidental edit
   // to the registry's copy fails HERE instead of drifting silently.
   it("locks the section title/subtitle copy verbatim", () => {

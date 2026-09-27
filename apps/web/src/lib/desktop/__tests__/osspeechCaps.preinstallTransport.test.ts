@@ -1,5 +1,5 @@
 // osspeechCaps.ts's preinstallOsSpeech() — proves it subscribes via
-// osSpeechTransport.ts's listenOsSpeechStatus (S13 blueprint §6 Sol F2,
+// osSpeechTransport.ts's listenOsSpeechStatus (S13 F2,
 // BLOCKER), not a direct tauriApi.getListen() call. osspeechCaps.test.ts
 // covers the end-to-end BEHAVIOR (tracker forwarding, resolve/reject)
 // against a mocked tauriApi with the REAL shim in between; this file
@@ -45,7 +45,7 @@ vi.mock("../jobsBridge", () => ({
 
 import { preinstallOsSpeech } from "../osspeechCaps";
 
-describe("preinstallOsSpeech — routed through the osSpeechTransport shim (S13 §6 Sol F2)", () => {
+describe("preinstallOsSpeech — routed through the osSpeechTransport shim (S13 F2)", () => {
   afterEach(() => {
     capturedCb = null;
     mockListenOsSpeechStatus.mockClear();

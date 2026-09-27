@@ -28,7 +28,7 @@ import {
   type DesktopLogLine,
 } from "@/lib/desktop/bootstrap";
 import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "@/lib/desktop/modelCatalog";
-// S11 osspeech blueprint (§3 Worker D, §A4) — Worker C's caps module,
+// S11 osspeech (Worker D, A4) — Worker C's caps module,
 // mocked via vi.mock in every test that reaches this file (not stubbed
 // on disk). { supported: false } reads as "not supported" below — see
 // this file's own EngineChoiceScreen gating comment for why that
@@ -267,7 +267,7 @@ function ConsentScreen({
   onBeginProvision: (model: string) => void;
   onDismiss: () => void;
 }) {
-  // S4 chunk 3 (blueprint decision A): the picker's own selection state
+  // S4 chunk 3 (decision A): the picker's own selection state
   // is UI-only, local to this screen — mirrors LogPane's `expanded`/
   // EscapeHatch's `checking` above (this file's own "the only local
   // state this file owns is its own UI-only toggles" header contract).
@@ -275,9 +275,9 @@ function ConsentScreen({
   // see modelCatalog.ts's own doc comment on that constant).
   const [model, setModel] = useState<string>(WIZARD_PRESELECTED_MODEL);
   const chosen = MODEL_CATALOG.find((m) => m.id === model) ?? MODEL_CATALOG[0];
-  // S12b fix round FB1-copy (§F, blueprint's own "the wizard's consent/
-  // summary copy promises faster-whisper and 0.5–1.5 GB regardless of a
-  // parakeet selection" finding) — the summary paragraph above
+  // S12b fix round FB1-copy (finding: "the wizard's consent/summary
+  // copy promises faster-whisper and 0.5–1.5 GB regardless of a
+  // parakeet selection") — the summary paragraph above
   // <ModelPicker> must be honest PER SELECTION, not a static whisper-
   // family description. `chosen.mlxOnly` is modelCatalog.ts's own
   // existing discriminator (today only the parakeet entry), so this
@@ -319,14 +319,14 @@ function ConsentScreen({
         {/* S12 (v0.4.4, Q8/L1, worker A3 + B2) — ModelPicker.tsx itself
            needs no branching for parakeet: it's gated independently on mlxOnly/
            mlxCaps (worker A3) — selectable on supported Apple Silicon,
-           disabled-with-reason otherwise; §F FB10 additionally hides any
+           disabled-with-reason otherwise; FB10 additionally hides any
            DEFINITIVELY-unsupported mlx row here specifically (product
-           default, veto-listed §7.7 — see hideDefinitivelyUnsupported's
+           default, veto-listed — see hideDefinitivelyUnsupported's
            own doc comment on ModelPicker.tsx), so a first-run user on
            non-Apple-Silicon never sees an unreachable row at all. */}
         <ModelPicker value={model} onChange={setModel} hideDefinitivelyUnsupported />
 
-        {/* zh-en guidance (blueprint decision A, verbatim) — honest,
+        {/* zh-en guidance (decision A) — honest,
            no overselling: Whisper's own ~30s-per-window language
            detection is stated plainly, right where the pick is made.
            S12b FB1-copy: this guidance is whisper-model-specific
@@ -602,7 +602,7 @@ export default function DesktopWizard({
   onBackgroundDownload,
   onCancelPrewarm,
 }: DesktopWizardProps) {
-  // S11 osspeech blueprint (§3 Worker D, §A4): called unconditionally,
+  // S11 osspeech (Worker D, A4): called unconditionally,
   // ahead of every early-return branch below (Rules of Hooks) — only
   // ever CONSULTED inside the WIZARD_CONSENT_REQUIRED branch. caps is
   // null until Worker C's probe resolves (a helper process spawn,
@@ -619,8 +619,8 @@ export default function DesktopWizard({
   // and DesktopOnboardingSteps' own `step` sequencer below): sequences
   // EngineChoiceScreen -> ConsentScreen for the SAME WIZARD_CONSENT_
   // REQUIRED phase without ANY bootstrap.ts involvement for the whisper
-  // branch — "the existing consent/provisioning flow COMPLETELY
-  // unchanged" (blueprint §3 Worker D). Never reset explicitly: this
+  // branch — the existing consent/provisioning flow stays COMPLETELY
+  // unchanged (Worker D). Never reset explicitly: this
   // component only stays mounted continuously across a WIZARD_CONSENT_
   // REQUIRED -> STEP transition (DesktopBootstrap.tsx's own `visible`
   // stays true throughout that specific transition), at which point the

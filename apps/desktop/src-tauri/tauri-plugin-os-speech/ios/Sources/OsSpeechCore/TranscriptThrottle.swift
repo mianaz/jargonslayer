@@ -2,7 +2,7 @@ import Foundation
 
 // S13 (Lane B) — ported verbatim (pattern source: apps/desktop/
 // src-tauri/audiocap-helper/Sources/AudioCapCore/TranscriptThrottle.swift,
-// S11 §Q2/§1) from the macOS helper: pure throttle deciding whether a
+// S11 Q2) from the macOS helper: pure throttle deciding whether a
 // given transcript result is actually worth an event emission. Same
 // rule: a volatile (interim) result is emitted at most every 150ms OR
 // whenever the result's time range advances (start or end moved) —

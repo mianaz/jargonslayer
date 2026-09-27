@@ -25,7 +25,7 @@ try {
 }
 const missing = REQUIRED.filter((k) => !text.includes(`<key>${k}</key>`));
 if (missing.length) {
-  console.error(`check-ios-plist: ${missing.join(", ")} missing from ${plist} — a tauri ios init/XcodeGen regen dropped the privacy strings (S13 blueprint §6). Restore them from gen/apple/project.yml info.properties before building; shipping without them kills the process at first mic access.`);
+  console.error(`check-ios-plist: ${missing.join(", ")} missing from ${plist} — a tauri ios init/XcodeGen regen dropped the privacy strings (S13). Restore them from gen/apple/project.yml info.properties before building; shipping without them kills the process at first mic access.`);
   process.exit(1);
 }
 

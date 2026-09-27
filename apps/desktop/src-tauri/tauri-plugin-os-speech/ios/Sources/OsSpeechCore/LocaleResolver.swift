@@ -2,7 +2,7 @@ import Foundation
 
 // S13 (Lane B) — ported
 // verbatim (pattern source: apps/desktop/src-tauri/audiocap-helper/
-// Sources/AudioCapCore/LocaleResolver.swift, S11 §Q4) from the macOS
+// Sources/AudioCapCore/LocaleResolver.swift, S11 Q4) from the macOS
 // helper: resolves the plugin's `locale` arg (a BCP-47 tag, e.g.
 // "zh-Hans", "en-US") to the Locale `SpeechTranscriber` actually
 // supports. Split in two, same spirit as the macOS original: a SEAM

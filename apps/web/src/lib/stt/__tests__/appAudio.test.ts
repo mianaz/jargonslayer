@@ -614,7 +614,7 @@ describe("AppAudioEngine", () => {
   });
 
   // ---------------------------------------------------------------
-  // F17 (S12 blueprint §2.6′, generation-safe appAudio stop-wait parity
+  // F17 (S12, generation-safe appAudio stop-wait parity
   // — the S11 J4 fix, ported generation-safe): a rejected
   // start_app_audio invoke() routes through stop() (see start()'s own
   // catch block) with unlistenStatus already registered — pre-fix, that
@@ -666,7 +666,7 @@ describe("AppAudioEngine", () => {
       await startP;
     });
 
-    // Sol finding 17 (S12 blueprint §B): the naive shared-boolean port
+    // Sol finding 17 (S12): the naive shared-boolean port
     // (a single `helperStarted` flag, unconditionally set true right
     // alongside the LOCAL flag at the successful invoke, BEFORE checking
     // superseded()) would let an OLDER generation's late-resolving

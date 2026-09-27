@@ -237,7 +237,7 @@ describe("trackSwitchModel", () => {
   // S12a (v0.4.4, Provision/Task 7) — an mlx-family switch's leading extras phase
   // gets its OWN "mlx-install" task row, separate from the
   // "model-download" row trackSwitchModel already starts immediately.
-  describe("mlx-install task row (§C Provision/Task 7)", () => {
+  describe("mlx-install task row", () => {
     it("a plain whisper-family switch (no mlx-* phase ever fires) never creates a second task row", () => {
       let listener: ((p: SwitchModelProgress | null) => void) | null = null;
       const handle = fakeHandle({
@@ -701,7 +701,7 @@ describe("trackOsSpeechAsset", () => {
     mockPostTaskWebhook.mockClear();
   });
 
-  it("asset-checking alone never starts a task row (§2.6: only asset-downloading does)", () => {
+  it("asset-checking alone never starts a task row (only asset-downloading does)", () => {
     const tracker = trackOsSpeechAsset();
     tracker.handle("asset-checking");
     expect(useTasks.getState().tasks).toEqual({});

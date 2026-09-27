@@ -1,4 +1,4 @@
-// S3 chunk 3 (blueprint §Chunk 3) — run_uv: the ONLY way this app talks to
+// S3 chunk 3 — run_uv: the ONLY way this app talks to
 // the uv sidecar (architecture decision 2 — Rust owns all process
 // spawning; TS only ever builds {args,env} and invoke()s, see apps/web/
 // src/lib/desktop/uvCommands.ts, chunk 4). HARDENING: `args`/`env` arrive
@@ -140,7 +140,7 @@ fn is_pinned_minor_version(s: &str) -> bool {
 
 /// Full-shape validation against the exact call shapes uvCommands.ts's
 /// builders (pythonInstall/venvCreate/pipInstall/pipInstallDiar, plus
-/// S12a §C R1's own mlx-venv builders riding these SAME shapes — see
+/// S12a R1's own mlx-venv builders riding these SAME shapes — see
 /// this fn's own S12a arms below) ever produce — exact arg counts and
 /// literal positions, not just args[0]: a bare "args[0] is python/venv/
 /// pip" check let `pip install --target /anywhere <any-package>`
@@ -171,7 +171,7 @@ pub fn validate_uv_args(args: &[String], roots: &UvRoots) -> Result<(), String> 
             }
             Ok(())
         }
-        // S12a §C "Transactional venv build" (Provision state machine) —
+        // S12a "Transactional venv build" (Provision state machine) —
         // the `--clear` variant, used on retry: discharges the retry-
         // poisoning debt (`uv venv`
         // previously had no way to force a clean rebuild of a possibly-
@@ -213,7 +213,7 @@ pub fn validate_uv_args(args: &[String], roots: &UvRoots) -> Result<(), String> 
             }
             Ok(())
         }
-        // S12a §C R1's "import preflight" step 3 also runs `uv pip
+        // S12a R1's "import preflight" step 3 also runs `uv pip
         // check --python <mlx_venv_python>` (alongside the separate
         // mlx_import_preflight command below, which runs the actual
         // `-c "import ..."` script) — a fresh arm, not a variant of the
@@ -306,8 +306,8 @@ pub struct UvLogEvent {
 }
 
 /// Emits one `uv://log` line — reused by prewarm_model (server.rs) per
-/// the blueprint's "streams combined output as uv://log too (reuse the
-/// event)" instruction, so the wizard UI (chunk 6) only ever needs one
+/// the "streams combined output as uv://log too (reuse the event)"
+/// requirement, so the wizard UI (chunk 6) only ever needs one
 /// listener for both uv provisioning steps and the model-prewarm step.
 pub fn emit_uv_log(app: &tauri::AppHandle, stream: &'static str, line: impl Into<String>) {
     let _ = app.emit(
@@ -319,7 +319,7 @@ pub fn emit_uv_log(app: &tauri::AppHandle, stream: &'static str, line: impl Into
     );
 }
 
-/// S12a §C "Provision state machine" F16 — a single-flight guard against
+/// S12a "Provision state machine" F16 — a single-flight guard against
 /// the "stale processes keep mutating the venv" retry-poisoning gap:
 /// `run_uv` previously spawned and
 /// immediately discarded its own child handle (`let (mut rx, _child) =
@@ -342,7 +342,7 @@ pub fn emit_uv_log(app: &tauri::AppHandle, stream: &'static str, line: impl Into
 /// child is still parked here before taking ownership of the new one,
 /// rather than letting two uv processes race the same venv/pip target.
 ///
-/// F1 (S12a fix round, §D) — IDENTITY-SCOPED, not a bare `Option<
+/// F1 (S12a fix round) — IDENTITY-SCOPED, not a bare `Option<
 /// CommandChild>`: the slot now also records the occupant's own pid.
 /// Pre-fix, exit-time cleanup did an UNCONDITIONAL `*guard = None` —
 /// which is exactly the bug: if overlapping run A and run B raced (B's
@@ -375,7 +375,7 @@ fn should_clear_slot(occupant_pid: Option<u32>, my_pid: u32) -> bool {
     occupant_pid == Some(my_pid)
 }
 
-// ---- F5a (S12a fix round, §D) — the Rust capability belt (§C's own
+// ---- F5a (S12a fix round) — the Rust capability belt (the
 // "belt at both INSTALL and START") existed only on start_server
 // (server.rs's check_mlx_capable_if_parakeet); run_uv had no equivalent,
 // so a compromised/buggy webview could still walk the mlx venv into
@@ -555,7 +555,7 @@ pub async fn run_uv(
     Ok(ProcessResult { code })
 }
 
-// ---- mlx_import_preflight — S12a §C R1's "import preflight" step 3
+// ---- mlx_import_preflight — S12a R1's "import preflight" step 3
 // ("<mlx_venv_python> -c 'import parakeet_mlx, websockets, numpy,
 // huggingface_hub'"). A DELIBERATELY separate spawn path from run_uv:
 // this never touches the uv sidecar/validate_uv_args/validate_uv_env at
@@ -566,7 +566,7 @@ pub async fn run_uv(
 // module-level import whisper_server.py needs resolve inside THIS
 // venv", which only that venv's own interpreter can answer. ----
 
-/// The exact, HARDCODED import list (§C R1's own module-level-import
+/// The exact, HARDCODED import list (R1's own module-level-import
 /// constraint: parakeet_mlx/websockets/numpy/huggingface_hub must
 /// resolve at whisper_server.py's own top level under the mlx venv;
 /// faster_whisper/torch stay lazy-imported inside FasterWhisperBackend
@@ -721,13 +721,13 @@ mod tests {
         .is_ok());
     }
 
-    // ---- S12a §C R1: the mlx venv rides the SAME `pip install --python
+    // ---- S12a R1: the mlx venv rides the SAME `pip install --python
     // <py> -r <req>` shape as the base venv — verified here, not extended
     // — plus the new `--clear`/`pip check` shapes. ----
 
     #[test]
     fn accepts_pip_install_targeting_the_mlx_venv_python_and_the_bundled_mlx_lock_unchanged() {
-        // §C R1's own claim ("run_uv validator unchanged — S5-verified -r
+        // R1's own claim ("run_uv validator unchanged — S5-verified -r
         // under resource_dir already allowed"), verified directly: the
         // EXISTING `pip install --python <py> -r <req>` arm above accepts
         // this shape purely because both `mlx_venv_python` and
@@ -1105,7 +1105,7 @@ mod tests {
         assert!(state.0.lock().unwrap().is_none());
     }
 
-    // ---- mlx_import_preflight (S12a §C R1's "import preflight" step) ----
+    // ---- mlx_import_preflight (S12a R1's "import preflight" step) ----
 
     #[test]
     fn mlx_import_preflight_script_imports_exactly_the_pinned_module_set() {
@@ -1147,7 +1147,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ---- F5a (S12a fix round, §D): the run_uv INSTALL belt ----
+    // ---- F5a (S12a fix round): the run_uv INSTALL belt ----
 
     fn supported_caps() -> MlxCapabilities {
         MlxCapabilities {
@@ -1265,7 +1265,7 @@ mod tests {
         assert!(result.unwrap_err().contains("需要 Apple 芯片（M 系列）"));
     }
 
-    // ---- F1 (S12a fix round, §D): identity-scoped single-flight ----
+    // ---- F1 (S12a fix round): identity-scoped single-flight ----
 
     #[test]
     fn should_clear_slot_is_true_only_when_the_occupant_pid_matches_our_own() {

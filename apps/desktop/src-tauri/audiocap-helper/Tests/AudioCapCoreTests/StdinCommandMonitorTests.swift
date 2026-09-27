@@ -1,7 +1,7 @@
 import XCTest
 @testable import AudioCapCore
 
-// S11 (§2.3/§A1) — StdinCommandMonitor's line parsing/pause-state
+// S11 (A1) — StdinCommandMonitor's line parsing/pause-state
 // machine, exercised entirely SYNCHRONOUSLY: `classify(_:)` is a pure
 // static function, and `feed(_:)`/`readOnce()` are driven directly
 // against in-memory `Data`/a real `Pipe()` with data already written
@@ -26,7 +26,7 @@ final class StdinCommandMonitorTests: XCTestCase {
     }
 
     func testClassifyIsCaseSensitiveAndHasNoWhitespaceTolerance() {
-        // §2.3 specifies the exact bytes `pause\n`/`resume\n` — no
+        // The protocol specifies the exact bytes `pause\n`/`resume\n` — no
         // fuzzy matching.
         XCTAssertEqual(StdinCommandMonitor.classify("Pause"), .unknown("Pause"))
         XCTAssertEqual(StdinCommandMonitor.classify("PAUSE"), .unknown("PAUSE"))

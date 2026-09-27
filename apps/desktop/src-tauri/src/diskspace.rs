@@ -1,16 +1,16 @@
-// S12a fix round (§D, F6) —
+// S12a fix round (F6) —
 // the combined pre-Phase-1 disk check both adversarial reviewers
 // flagged as unbuilt (Sol6=Opus2, MED): before ensureMlxExtras (worker
 // A2) ever mutates the mlx venv (venv create -> pip install -> pip
 // check), it needs ONE honest "will this actually fit" precheck against
 // the mlx-venv (~1GB) + uv cache + 2.51GB model + headroom reserve
-// (~5GB total, §C R1's own sizing section) — replacing the old model-
+// (~5GB total, R1's own sizing) — replacing the old model-
 // only ×1.2 check. This module owns exactly the Rust half of that: how
 // much free space is actually left on the volume the app-data dir
 // lives on. The JS-side reserve/threshold math is worker A2's own
 // concern; this command only ever reports a number.
 //
-// PINNED CROSS-LANE CONTRACT (§D F6): `app_data_disk_free` ->
+// PINNED CROSS-LANE CONTRACT (F6): `app_data_disk_free` ->
 // `{freeBytes: number}` (u64, JSON-number-safe — disk sizes never
 // approach f64's ~9e15 safe-integer ceiling). A2 mocks this exact
 // name/shape in its own tests; this module's own shape must match it
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn disk_free_result_serializes_free_bytes_as_a_camel_case_json_number() {
-        // Pins the §D F6 cross-lane wire contract byte-for-byte:
+        // Pins the F6 cross-lane wire contract byte-for-byte:
         // `{freeBytes: number}` — A2 mocks exactly this shape.
         let result = DiskFreeResult { free_bytes: 5_368_709_120 };
         let json = serde_json::to_value(result).expect("DiskFreeResult serializes");

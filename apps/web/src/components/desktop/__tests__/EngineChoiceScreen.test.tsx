@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// S11 osspeech blueprint (§3 Worker D) — EngineChoiceScreen render +
+// S11 osspeech (Worker D) — EngineChoiceScreen render +
 // selection + 继续 routing. Mirrors DesktopWizard.render.test.tsx's own
 // createRoot/act pattern (no @testing-library/react in this repo's test
 // stack). Purely presentational (this component's own header comment) —
@@ -47,7 +47,7 @@ describe("EngineChoiceScreen", () => {
     expect(osspeechCard.getAttribute("aria-pressed")).toBe("true");
     expect(whisperCard.getAttribute("aria-pressed")).toBe("false");
 
-    // both cards' own copy renders (pinned per the blueprint's §3 Worker D copy).
+    // both cards' own copy renders (pinned Worker D copy).
     expect(osspeechCard.textContent).toContain("系统识别");
     expect(osspeechCard.textContent).toContain("无需配置");
     expect(osspeechCard.textContent).toContain("无需下载");

@@ -34,7 +34,7 @@ import type { PrewarmProgressEvent } from "@/lib/desktop/provisionRunner";
 import { trackPrewarm } from "@/lib/desktop/jobsBridge";
 import DesktopWizard, { DesktopOnboardingSteps } from "./DesktopWizard";
 
-// Blueprint §Chunk 6: "cap the buffer ~500 lines".
+// Cap the buffer at ~500 lines.
 const LOG_BUFFER_CAP = 500;
 
 function describeError(error: unknown): string {
@@ -52,7 +52,7 @@ export default function DesktopBootstrap() {
   // snapshot-then-subscribe shape as `state`/`logLines` below (initial
   // currentDownloadProgress() read, then a downloadProgress$ subscribe).
   const [downloadProgress, setDownloadProgress] = useState<PrewarmProgressEvent | null>(null);
-  // "稍后再说" / "关闭，稍后处理" (blueprint §Chunk 6 + §Chunk 7), plus
+  // "稍后再说" / "关闭，稍后处理", plus
   // the STEP/ERROR 关闭 (v0.4.0 field fix — see DesktopWizardProps.
   // onDismissStepError): three INDEPENDENT dismiss flags, each
   // auto-reset the moment its own triggering phase/status is left (see
