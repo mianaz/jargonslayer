@@ -1562,6 +1562,53 @@ export async function runTranslateEngineMigration(
   return { patch: { translateEngineMigrated: true } };
 }
 
+/** Out-of-box defaults: the bilingual transcript is the product's
+ *  headline, so a brand-new install turns it on, but ONLY where an
+ *  on-device translator can actually serve it. Turning it on anywhere
+ *  else would make the first meeting open on a stalled 翻译 chip. This
+ *  stays a probe instead of a DEFAULT_SETTINGS flip so that a returning
+ *  user's saved blob (from any version, including ones that predate the
+ *  field) never changes.
+ *
+ *  Called by hydrate() only when storage held no settings blob at all.
+ *  Pure apart from the probe: returns the patch to apply, `{}` for "leave
+ *  it off".
+ *  - Native (desktop/iOS): on only when Apple's language pack for this
+ *    pair is already "installed". "supported" means the user has to
+ *    download the pack in System Settings first; the translate queue
+ *    would just report not-installed. The desktop first-run 开始前检查
+ *    screen covers that case with an explicit button instead.
+ *  - Web: on when Chrome's Translator API reports the pair "available"
+ *    or downloadable. The model download is started by the 开始 click's
+ *    own prepare() gesture, and the queue already self-heals across a
+ *    "downloading" window. Absent API (Safari/Firefox) or "unavailable"
+ *    leaves it off.
+ *  Never throws. `native` is injectable for tests; production passes the
+ *  build-time platform constants. */
+export async function runFreshInstallBilingualDefault(
+  settings: Settings,
+  native: boolean = IS_DESKTOP || IS_IOS,
+): Promise<Partial<Settings>> {
+  if (settings.bilingualTranscript) return {};
+  if (settings.translateEngine !== "system") return {};
+  if (settings.language.split("-")[0] === settings.explainLanguage) return {};
+  try {
+    const { probeSystemTranslateSupport, checkSystemTranslatorAvailability, langPairFromSettings } =
+      await import("./translate/providers");
+    const pair = langPairFromSettings(settings);
+    if (native) {
+      const probe = await probeSystemTranslateSupport(pair);
+      return probe.status === "installed" ? { bilingualTranscript: true } : {};
+    }
+    const availability = await checkSystemTranslatorAvailability(pair);
+    return availability === "available" || availability === "downloadable" || availability === "downloading"
+      ? { bilingualTranscript: true }
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 // ---------------------------------------------------------------
 // v0.5.1 appearance sprint — display-mirror/DOM-effect helpers shared
 // by hydrate() and updateSettings() below, same "thin store action
@@ -2243,6 +2290,20 @@ export const useApp = create<AppState>((set, get) => ({
       get().updateSettings(patch);
       if (toast) get().showToast(toast);
     });
+
+    // Out-of-box defaults: a genuinely fresh install (storage held no
+    // settings blob at all) gets the bilingual transcript turned on
+    // wherever an on-device translator can serve it. See
+    // runFreshInstallBilingualDefault's own doc. Fire-and-forget like the
+    // migration above. Re-reads LIVE settings before applying, so a
+    // toggle the user already flipped on mid-probe is left alone.
+    if (saved === null || saved === undefined) {
+      void runFreshInstallBilingualDefault(settings).then((patch) => {
+        if (Object.keys(patch).length === 0) return;
+        if (get().settings.bilingualTranscript) return;
+        get().updateSettings(patch);
+      });
+    }
   },
 
   updateSettings: (patch, opts) => {

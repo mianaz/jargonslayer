@@ -47,6 +47,7 @@ import EngineChoiceScreen from "./EngineChoiceScreen";
 import ModelPicker from "./ModelPicker";
 import OnboardingByokStep from "./OnboardingByokStep";
 import OnboardingDiarizeStep from "./OnboardingDiarizeStep";
+import ReadinessScreen from "./ReadinessScreen";
 
 export interface DesktopWizardProps {
   state: DesktopBootstrapState;
@@ -629,27 +630,35 @@ export default function DesktopWizard({
   // conditionally renders `null` otherwise), which resets it for free on
   // the next mount.
   const [pastEngineChoice, setPastEngineChoice] = useState(false);
+  // Out-of-box defaults: true once 系统识别 was picked, which swaps
+  // EngineChoiceScreen for the 开始前检查 ReadinessScreen. Same
+  // never-reset-explicitly lifetime as pastEngineChoice above.
+  const [showReadiness, setShowReadiness] = useState(false);
 
   if (state.phase === "WIZARD_CONSENT_REQUIRED") {
     if (osSpeechCaps === null) {
       return <OsSpeechProbeScreen />;
     }
     const osspeechSupported = osSpeechCaps.supported === true;
+    if (osspeechSupported && showReadiness) {
+      // The wizard dismisses through the EXISTING onDismissConsent
+      // callback (today's 稍后再说 pathway), now once the user is done
+      // with (or skips) the pre-flight check rather than immediately.
+      return <ReadinessScreen onDone={onDismissConsent} />;
+    }
     if (osspeechSupported && !pastEngineChoice) {
       return (
         <EngineChoiceScreen
           onChooseWhisper={() => setPastEngineChoice(true)}
           onChooseOsSpeech={() => {
             // Fire-and-forget, mirroring chooseOsSpeechEngine's own
-            // "never block the wizard from dismissing" contract (see
-            // that function's own doc comment in bootstrap.ts) — the
-            // wizard dismisses immediately via the EXISTING
-            // onDismissConsent callback (today's 稍后再说 pathway, reused
-            // rather than threading a new prop through
-            // DesktopBootstrap.tsx), while the persist+preinstall settle
-            // in the background.
+            // "never block the wizard" contract (see that function's
+            // own doc comment in bootstrap.ts): the persist + speech
+            // model preinstall settle in the background while the user
+            // goes through ReadinessScreen. That screen's own 授权并试听
+            // re-asserts the engine with the chosen capture mode.
             void chooseOsSpeechEngine();
-            onDismissConsent();
+            setShowReadiness(true);
           }}
         />
       );

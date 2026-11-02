@@ -296,8 +296,14 @@ describe("usage/ledger.ts", () => {
         record({ day: "2026-06-01" }),
         record({ day: "2026-07-20" }),
       ] satisfies UsageRecord[]);
+      // Pin the clock: getUsage also prunes past the 90-day retention
+      // window, so against the real clock these fixed July rows age out
+      // and the test fails purely because time passed.
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-25"));
       const ledger = await import("../ledger");
       const records = await ledger.getUsage({ since: "2026-07-01" });
+      vi.useRealTimers();
       expect(records.map((r) => r.day)).toEqual(["2026-07-20"]);
     });
   });

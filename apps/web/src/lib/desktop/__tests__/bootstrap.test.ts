@@ -1065,6 +1065,14 @@ describe("chooseOsSpeechEngine() (S11 Worker D, A4)", () => {
     expect(useApp.getState().settings.engine).toBe("osspeech");
     expect(mockPreinstallOsSpeech).toHaveBeenCalledWith("zh-CN");
   });
+
+  it("writes mode 'system-audio' with the engine, so a fresh install's DEFAULT mode:'mic' can't leak in and pin the first meeting to the user's own mic", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, mode: "mic" }, hydrated: true });
+
+    await chooseOsSpeechEngine();
+
+    expect(useApp.getState().settings).toMatchObject({ engine: "osspeech", mode: "system-audio" });
+  });
 });
 
 describe("bootstrapDesktop — state$ subscription", () => {

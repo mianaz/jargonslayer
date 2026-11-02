@@ -34,8 +34,8 @@ type EngineChoice = "osspeech" | "whisper";
 export interface EngineChoiceScreenProps {
   /** Fires once the user has 系统识别 selected and hits 继续. The caller
    *  is responsible for persisting the choice, firing the background
-   *  preinstall, and dismissing the wizard — this component only
-   *  reports the choice itself. */
+   *  preinstall, and moving on to the 开始前检查 ReadinessScreen — this
+   *  component only reports the choice itself. */
   onChooseOsSpeech: () => void;
   /** Fires once the user has Whisper selected and hits 继续 — the caller
    *  advances to the existing ConsentScreen, completely unchanged. */
