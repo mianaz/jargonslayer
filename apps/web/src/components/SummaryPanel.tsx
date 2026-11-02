@@ -16,6 +16,7 @@ import {
   copyMarkdownToClipboard,
   downloadBlob,
   downloadFile,
+  sessionFlashcards,
   shareMarkdownFile,
 } from "@/lib/history/export";
 import { exportSessionToObsidian } from "@/lib/history/connectors/obsidian";
@@ -80,9 +81,14 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
         "text/markdown",
       );
     } else if (kind === "tsv") {
+      const flashcards = sessionFlashcards(session);
+      if (flashcards.length === 0) {
+        showToast("本场还没有卡片可导出");
+        return;
+      }
       void downloadFile(
         `${session.title}.tsv`,
-        buildAnkiTSV(session.summary?.flashcards ?? []),
+        buildAnkiTSV(flashcards),
         "text/tab-separated-values",
       );
     } else {

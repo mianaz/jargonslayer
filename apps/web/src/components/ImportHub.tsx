@@ -182,6 +182,16 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // The hub mounts (closed) before hydrate() resolves, so the reset above
+  // captures DEFAULT_SETTINGS' bilingualTranscript, not the saved one —
+  // and it only re-runs when `open` changes. Keep the 逐句翻译 default
+  // tracking the live setting while the hub is closed, so the first
+  // import after a page load starts from the user's real preference.
+  // Never touches it while open: the user's own checkbox edit wins.
+  useEffect(() => {
+    if (!open) setTranslate(settings.bilingualTranscript);
+  }, [open, settings.bilingualTranscript]);
+
   // Debounced live parse preview for the 文稿 tab.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);

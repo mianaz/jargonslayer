@@ -35,6 +35,7 @@ import {
   DeepLTranslationProvider,
   LlmTranslationProvider,
   SystemTranslatorUnavailableError,
+  SYSTEM_TRANSLATOR_READY_GRACE_MS,
   checkSystemTranslatorAvailability,
   isSystemTranslatorSupported,
   langPairFromSettings,
@@ -340,27 +341,50 @@ describe("ChromeTranslatorProvider", () => {
     expect(fake.create).not.toHaveBeenCalled();
   });
 
-  it("translate() fails fast with reason 'downloading' while create()'s promise is still pending — never blocks waiting for it", async () => {
-    let resolveCreate!: (v: unknown) => void;
-    installFakeTranslator({
-      create: vi.fn(() => new Promise((res) => { resolveCreate = res; })),
+  it("translate() reports 'downloading' once a still-pending create() outlasts the one-time grace — later retries fail fast without waiting again", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveCreate!: (v: unknown) => void;
+      installFakeTranslator({
+        create: vi.fn(() => new Promise((res) => { resolveCreate = res; })),
+      });
+      const provider = new ChromeTranslatorProvider();
+      provider.prepare({ source: "en", target: "zh" });
+
+      const first = provider.translate([{ id: "1", text: "hi" }], "zh");
+      const firstSettled = expect(first).rejects.toMatchObject({ reason: "downloading" });
+      await vi.advanceTimersByTimeAsync(SYSTEM_TRANSLATOR_READY_GRACE_MS);
+      await firstSettled;
+      await expect(first).rejects.toBeInstanceOf(SystemTranslatorUnavailableError);
+
+      // Grace already spent: a retry during a genuine download fails
+      // immediately — no timer advance needed, so it never stalls the queue.
+      await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toMatchObject({
+        reason: "downloading",
+      });
+
+      // Self-heals once create() actually resolves — no fresh prepare()
+      // needed (A6: translate() never re-triggers create()).
+      resolveCreate({ translate: vi.fn(async (t: string) => `zh:${t}`) });
+      await vi.advanceTimersByTimeAsync(0);
+      const result = await provider.translate([{ id: "1", text: "hi" }], "zh");
+      expect(result).toEqual([{ id: "1", text: "zh:hi" }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("field-test regression: translate() called right after prepare() succeeds when create() settles within the grace (model already installed)", async () => {
+    const fake = installFakeTranslator({
+      // Async like the real API even with nothing to download.
+      create: vi.fn(async () => ({ translate: vi.fn(async (t: string) => `zh:${t}`) })),
     });
     const provider = new ChromeTranslatorProvider();
     provider.prepare({ source: "en", target: "zh" });
-
-    await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toBeInstanceOf(
-      SystemTranslatorUnavailableError,
-    );
-    await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toMatchObject({
-      reason: "downloading",
-    });
-
-    // Self-heals once create() actually resolves — no fresh prepare()
-    // needed (A6: translate() never re-triggers create()).
-    resolveCreate({ translate: vi.fn(async (t: string) => `zh:${t}`) });
-    await flush();
+    // Same tick as prepare(), exactly how gapfill.ts calls it.
     const result = await provider.translate([{ id: "1", text: "hi" }], "zh");
     expect(result).toEqual([{ id: "1", text: "zh:hi" }]);
+    expect(fake.create).toHaveBeenCalledTimes(1);
   });
 
   it("translate() throws reason 'unavailable' once create() itself rejects — and a LATER prepare() retries (no permanent wedge)", async () => {

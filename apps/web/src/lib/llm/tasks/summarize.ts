@@ -382,7 +382,7 @@ function termToFlashcard(t: DetectedTerm): Flashcard {
   };
 }
 
-function buildFlashcards(
+export function buildFlashcards(
   liveExpressions: DetectedExpression[],
   sweepExpressions: DetectedExpression[],
   liveTerms: DetectedTerm[],
