@@ -576,6 +576,15 @@ export function probeSystemTranslateSupport(pair: TranslationLangPair): Promise<
   return promise;
 }
 
+/** Re-probes `pair`, bypassing the cached result. For an explicit
+ *  重新检查 button: the user may have just downloaded the language pack
+ *  in System Settings, and the cached "supported" answer would hide that.
+ *  Joins an already-running probe rather than starting a second one. */
+export function refreshSystemTranslateProbe(pair: TranslationLangPair): Promise<SystemTranslateProbeResult> {
+  systemProbeCache.delete(pairKey(pair));
+  return probeSystemTranslateSupport(pair);
+}
+
 export function resetSystemTranslateProbeCacheForTests(): void {
   systemProbeCache.clear();
   systemProbeInFlight.clear();

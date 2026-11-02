@@ -2631,7 +2631,15 @@ export async function chooseOsSpeechEngine(): Promise<void> {
     });
   }
   const { settings, updateSettings } = useApp.getState();
-  updateSettings({ engine: "osspeech" });
+  // Out-of-box defaults: write the capture mode alongside the engine.
+  // Engine alone left a fresh install on DEFAULT_SETTINGS' mode:"mic",
+  // and because the saved blob then paired {engine:"osspeech",
+  // mode:"mic"}, migrateSettings kept it on every later launch: the
+  // first meeting heard only the user's own microphone, never the call.
+  // "system-audio" is modeForPersistedEngine's documented desktop
+  // osspeech default (store.ts) and adds no microphone prompt. Upgrading
+  // to dual capture is ReadinessScreen's explicit 授权并试听 action.
+  updateSettings({ engine: "osspeech", mode: "system-audio" });
   void preinstallOsSpeech(settings.language).catch(() => {});
 }
 

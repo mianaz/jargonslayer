@@ -369,7 +369,7 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(container!.querySelector('[data-testid="desktop-wizard-consent"]')).toBeNull();
   });
 
-  it("WIZARD_CONSENT_REQUIRED + osspeech supported: choosing 系统识别 -> 继续 fires chooseOsSpeechEngine() and dismisses via onDismissConsent — provisioning is skipped entirely", async () => {
+  it("WIZARD_CONSENT_REQUIRED + osspeech supported: choosing 系统识别 -> 继续 fires chooseOsSpeechEngine(), shows the 开始前检查 screen, and dismisses via onDismissConsent only once that's skipped — provisioning is skipped entirely", async () => {
     mockOsSpeechCaps = { supported: true };
     const onBeginProvision = vi.fn();
     const onDismissConsent = vi.fn();
@@ -382,6 +382,16 @@ describe("DesktopWizard — state-driven rendering", () => {
     });
 
     expect(mockChooseOsSpeechEngine).toHaveBeenCalledTimes(1);
+    expect(container!.querySelector('[data-testid="engine-choice-screen"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="readiness-screen"]')).not.toBeNull();
+    expect(onDismissConsent).not.toHaveBeenCalled();
+
+    await act(async () => {
+      container!.querySelector('[data-testid="btn-readiness-skip"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
     expect(onDismissConsent).toHaveBeenCalledTimes(1);
     expect(onBeginProvision).not.toHaveBeenCalled();
     // never advances into the provisioning ConsentScreen/StepRowsScreen.
