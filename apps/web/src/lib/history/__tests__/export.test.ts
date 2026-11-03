@@ -6,6 +6,7 @@ import {
   buildObsidianFrontmatter,
   copyToClipboard,
   markdownToClipboardHtml,
+  sessionFlashcards,
 } from "../export";
 import type { ExpressionCard, Flashcard, MeetingSession, TermCard } from "@jargonslayer/core/types";
 
@@ -111,6 +112,46 @@ describe("buildAnkiTSV — escaping", () => {
 
   it("returns an empty string for zero flashcards", () => {
     expect(buildAnkiTSV([])).toBe("");
+  });
+});
+
+describe("sessionFlashcards — what the Anki .tsv export contains", () => {
+  const reportCard: Flashcard = {
+    front: "from report",
+    back_zh: "报告",
+    back_en: "report",
+    example: "",
+    tags: ["expression"],
+  };
+
+  it("uses the generated report's flashcards when there are any", () => {
+    const session = makeSession({
+      cards: [makeCard()],
+      summary: { flashcards: [reportCard] } as MeetingSession["summary"],
+    });
+    expect(sessionFlashcards(session)).toEqual([reportCard]);
+  });
+
+  it("field-test regression: with no report (no API key) it falls back to the live cards and terms instead of an empty file", () => {
+    const session = makeSession({ cards: [makeCard()], terms: [makeTerm()] });
+    const fronts = sessionFlashcards(session).map((f) => f.front);
+    expect(fronts).toEqual(["circle back", "ARR"]);
+    const tsv = buildAnkiTSV(sessionFlashcards(session));
+    expect(tsv.split("\n")).toHaveLength(2);
+    expect(tsv).toContain("回头再聊");
+    expect(tsv).toContain("年度经常性收入");
+  });
+
+  it("also falls back when a report exists but produced no flashcards", () => {
+    const session = makeSession({
+      cards: [makeCard()],
+      summary: { flashcards: [] as Flashcard[] } as MeetingSession["summary"],
+    });
+    expect(sessionFlashcards(session).map((f) => f.front)).toEqual(["circle back"]);
+  });
+
+  it("is empty only when the session has no cards or terms at all", () => {
+    expect(sessionFlashcards(makeSession())).toEqual([]);
   });
 });
 

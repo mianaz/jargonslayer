@@ -224,6 +224,13 @@ export function useProviderModels(opts: {
       return;
     }
     if (justEnabled) {
+      // No key yet: don't contact the provider on our own. Merely opening
+      // 设置 → AI 检测 used to send a keyless GET to openrouter.ai (its
+      // model list is public) for a user who never chose a cloud engine,
+      // at odds with "nothing leaves the device unless you opt in". The
+      // curated static list still fills the picker, and 刷新模型列表
+      // fetches explicitly, key or not.
+      if (!apiKey) return;
       debounceRef.current = setTimeout(() => {
         fetchNow(false);
       }, DEBOUNCE_MS);
