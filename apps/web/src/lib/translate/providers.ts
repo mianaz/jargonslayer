@@ -357,7 +357,22 @@ export async function checkSystemTranslatorAvailability(
 interface SessionEntry {
   status: "pending" | "ready" | "failed";
   session?: ChromeTranslatorSession;
+  /** Settles (never rejects) once create() does — lets translate() give
+   *  a just-primed entry a short grace instead of failing on the very
+   *  first call. */
+  settled?: Promise<void>;
+  /** The grace above is spent once per entry: later retries during a
+   *  genuine download keep failing fast, as before. */
+  graceUsed?: boolean;
 }
+
+/** How long translate() waits for a still-pending create() before
+ *  reporting "downloading". prepare() and the first translate() run back
+ *  to back (gapfill.ts calls them on the same tick), so without this an
+ *  already-installed model always failed the first attempt: create() is
+ *  async even when nothing needs downloading. Short enough that a real
+ *  first-use download still fails fast instead of stalling the queue. */
+export const SYSTEM_TRANSLATOR_READY_GRACE_MS = 2_000;
 
 // Module-level (not per-provider-instance) cache, keyed by "source:
 // target": deliberate — the underlying browser model download is a
@@ -397,7 +412,7 @@ function primeSystemTranslator(pair: TranslationLangPair): SessionEntry | null {
 
   const entry: SessionEntry = { status: "pending" };
   sessionCache.set(key, entry);
-  api.create({ sourceLanguage: pair.source, targetLanguage: pair.target }).then(
+  entry.settled = api.create({ sourceLanguage: pair.source, targetLanguage: pair.target }).then(
     (session) => {
       entry.status = "ready";
       entry.session = session;
@@ -470,6 +485,20 @@ export class ChromeTranslatorProvider implements TranslationProvider {
     const entry = readSystemTranslatorEntry(pair);
     if (!entry) {
       throw new SystemTranslatorUnavailableError("unavailable", "系统翻译不可用");
+    }
+    if (entry.status === "pending" && entry.settled && !entry.graceUsed) {
+      entry.graceUsed = true;
+      // Short, bounded grace for a create() that is merely async (model
+      // already installed). Never calls create() — just waits on the one
+      // prepare() already started.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        entry.settled,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, SYSTEM_TRANSLATOR_READY_GRACE_MS);
+        }),
+      ]);
+      clearTimeout(timer);
     }
     if (entry.status === "pending") {
       // Fail fast — never block this batch (and thus the whole queue,

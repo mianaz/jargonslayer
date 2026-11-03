@@ -43,6 +43,7 @@ import { runTracked, runTrackedAsync, type TaskKind } from "@/lib/tasks/registry
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
 import { decideVideoRouting, resolveImportPath, type ImportPath } from "@/lib/tasks/videoRouting";
+import { prepareImportTranslator, releaseImportTranslator } from "@/lib/translate/importTranslator";
 
 const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地转录服务";
 const FILE_ACCEPT = "audio/*,.m4a,.mp3,.wav,.flac,.mp4,.webm,.mov,.mkv,.m4v,video/*";
@@ -182,6 +183,16 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // The hub mounts (closed) before hydrate() resolves, so the reset above
+  // captures DEFAULT_SETTINGS' bilingualTranscript, not the saved one —
+  // and it only re-runs when `open` changes. Keep the 逐句翻译 default
+  // tracking the live setting while the hub is closed, so the first
+  // import after a page load starts from the user's real preference.
+  // Never touches it while open: the user's own checkbox edit wins.
+  useEffect(() => {
+    if (!open) setTranslate(settings.bilingualTranscript);
+  }, [open, settings.bilingualTranscript]);
+
   // Debounced live parse preview for the 文稿 tab.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -250,9 +261,13 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
           });
         });
       } else {
-        runTrackedAsync(kind, file.name, (onProgress) =>
-          importAudio({ file, translate: settings.bilingualTranscript, settings, onProgress }),
-        )
+        // Prepared here, on the click's own stack — see importTranslator.ts.
+        const translator = prepareImportTranslator(settings, settings.bilingualTranscript);
+        const tracked = runTrackedAsync(kind, file.name, (onProgress) =>
+          importAudio({ file, translate: settings.bilingualTranscript, settings, onProgress, translator }),
+        );
+        void tracked.result.finally(() => releaseImportTranslator(translator)).catch(() => {});
+        tracked
           .result.then(async ({ sessionId, warnings }) => {
             await loadSession(sessionId);
             await useApp.getState().hydrate();
@@ -281,16 +296,21 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
   const handleConfirmText = () => {
     if (!canConfirmText) return;
     const label = filename ?? "粘贴的文稿";
-    runTrackedAsync("import-text", label, (onProgress) =>
+    // Prepared here, on the click's own stack — see importTranslator.ts.
+    const translator = prepareImportTranslator(settings, translate);
+    const tracked = runTrackedAsync("import-text", label, (onProgress) =>
       importTranscriptText({
         raw,
         filename,
         translate,
+        translator,
         settings,
         onProgress: (phase, done, total) =>
           onProgress(total > 0 ? done / total : 0, `${TEXT_PHASE_LABEL[phase]} ${done}/${total}`),
       }),
-    )
+    );
+    void tracked.result.finally(() => releaseImportTranslator(translator)).catch(() => {});
+    tracked
       .result.then(async ({ sessionId, warnings }) => {
         await loadSession(sessionId);
         await useApp.getState().hydrate();

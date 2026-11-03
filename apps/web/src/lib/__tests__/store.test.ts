@@ -1020,7 +1020,31 @@ describe("beginMeeting / loadSession / newMeeting reset the roster + latch + cor
     expect(s.correctionBusy).toBe(false);
   });
 
-  // Auto meeting-context detection (field request: "need AI to auto
+  describe("currentSessionSnapshot title matches the saved title (field-test regression: exports said 「当前会议」)", () => {
+  it("an unsaved session exports under the same auto title saveCurrentSession will use", () => {
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      activeSessionId: null,
+      sessions: [],
+      summary: null,
+    });
+    expect(currentSessionSnapshot()?.title).toBe(autoMeetingTitle(1000));
+  });
+
+  it("a saved session keeps its persisted title (e.g. an import's 导入 … name)", () => {
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      activeSessionId: "m1",
+      sessions: [{ id: "m1", title: "导入 meeting.mp3" } as never],
+      summary: null,
+    });
+    expect(currentSessionSnapshot()?.title).toBe("导入 meeting.mp3");
+  });
+});
+
+// Auto meeting-context detection (field request: "need AI to auto
   // detect the context for better detection") — a stale context/
   // attempt count from a PREVIOUS meeting must never survive into a
   // fresh one (same rationale as speakerRoster/activeSpeaker above).

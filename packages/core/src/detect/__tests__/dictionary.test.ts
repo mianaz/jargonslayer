@@ -89,6 +89,18 @@ describe("scanDictionary — base entry matching, word boundary", () => {
 // former "REAL BEHAVIOR" pins below documented the misses this closes
 // (a phrasal idiom's verb is usually its FIRST word, which the old
 // last-word-only suffix group could never flex).
+describe("scanDictionary — field-test misses (this/that variants, belt-tightening)", () => {
+  it.each([
+    ["I'll take that offline with finance.", "take this offline"],
+    ["Fine, let's put a pin in that and sync next week.", "put a pin in it"],
+    ["Our burn rate is up, so we need to tighten the belt.", "tighten the belt"],
+    ["We all have to tighten our belts this quarter.", "tighten the belt"],
+  ])("%s → %s", (sentence, expression) => {
+    const res = scanDictionary(sentence);
+    expect(res.expressions.map((e) => e.expression)).toContain(expression);
+  });
+});
+
 describe("scanDictionary — first+last word inflection", () => {
   it("a single-word entry (e.g. 'bandwidth') matches its own inflected forms since it IS the last word", () => {
     const res = scanDictionary("Do we have the bandwidths for this?");

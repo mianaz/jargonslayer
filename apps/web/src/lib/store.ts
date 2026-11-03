@@ -1748,6 +1748,19 @@ export function autoMeetingTitle(startedAt: number): string {
   return `会议 ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** The title the current session is (or will be) saved under — shared
+ *  by saveCurrentSession and currentSessionSnapshot so an export's file
+ *  name and heading match what 会议历史 shows (field test: exports used to
+ *  say a fixed 「当前会议」 for the same meeting history listed by date). */
+function resolveCurrentSessionTitle(
+  s: Pick<AppState, "sessions" | "activeSessionId" | "summary">,
+  autoTitle: string,
+): string {
+  const priorTitle = s.sessions.find((m) => m.id === s.activeSessionId)?.title;
+  const topic = s.summary?.summary.topic.zh?.trim();
+  return topic && (priorTitle === undefined || priorTitle === autoTitle) ? topic : priorTitle ?? autoTitle;
+}
+
 // Quit-time settings durability (field fix, real desktop/Tauri report:
 // an API key saved shortly before quitting the app was lost) —
 // updateSettings persists via a fire-and-forget `storage.saveSettings`
@@ -3047,10 +3060,7 @@ export const useApp = create<AppState>((set, get) => ({
     // diverged from that shape was set by something other than this
     // same auto-fill (a future rename feature, most likely) and must
     // never be overwritten.
-    const priorTitle = s.sessions.find((m) => m.id === s.activeSessionId)?.title;
-    const topic = s.summary?.summary.topic.zh?.trim();
-    const title =
-      topic && (priorTitle === undefined || priorTitle === autoTitle) ? topic : priorTitle ?? autoTitle;
+    const title = resolveCurrentSessionTitle(s, autoTitle);
     const session: MeetingSession = {
       id: s.activeSessionId ?? newId(),
       title,
@@ -3670,7 +3680,7 @@ export function currentSessionSnapshot(): MeetingSession | null {
   if (s.segments.length === 0) return null;
   return {
     id: s.activeSessionId ?? "unsaved",
-    title: "当前会议",
+    title: resolveCurrentSessionTitle(s, autoMeetingTitle(s.startedAt ?? s.segments[0].startedAt)),
     startedAt: s.startedAt ?? s.segments[0].startedAt,
     endedAt: s.segments[s.segments.length - 1].endedAt,
     engine: s.settings.engine,

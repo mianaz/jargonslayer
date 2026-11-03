@@ -14,6 +14,7 @@ import { getAllPacks } from "@jargonslayer/core/detect/packs";
 import { formatElapsedClock, resolveSessionElapsedBasis, segmentElapsedMs } from "../segmentElapsed";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
+import { buildFlashcards } from "@/lib/llm/tasks/summarize";
 
 const ENGINE_LABELS: Record<STTEngineKind, string> = {
   demo: "演示模式",
@@ -220,6 +221,17 @@ export function buildAnkiTSV(flashcards: Flashcard[]): string {
     return `${front}\t${back}`;
   });
   return rows.join("\n");
+}
+
+/** The flashcards a session's Anki export should contain. A generated
+ *  report's own flashcards win; without one (no API key, or the report
+ *  was never generated) the session's live cards and terms are used, so
+ *  a keyless meeting still exports what the user saw on screen — the
+ *  summary panel promises exactly that (无 Key 也可以直接导出词典卡片). */
+export function sessionFlashcards(session: Pick<MeetingSession, "summary" | "cards" | "terms">): Flashcard[] {
+  const fromReport = session.summary?.flashcards ?? [];
+  if (fromReport.length > 0) return fromReport;
+  return buildFlashcards(session.cards ?? [], [], session.terms ?? [], []);
 }
 
 /** Pretty-printed raw session JSON, for archival/debugging. */

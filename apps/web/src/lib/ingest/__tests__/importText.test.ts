@@ -33,6 +33,7 @@ vi.mock("../../llm/client", () => ({
 import { detectApi, translateApi, RateLimitApiError, NoKeyError } from "../../llm/client";
 import * as storage from "../../history/storage";
 import { importTranscriptText } from "../importText";
+import { SystemTranslatorUnavailableError, type TranslationProvider } from "../../translate/providers";
 
 const mockDetectApi = vi.mocked(detectApi);
 const mockTranslateApi = vi.mocked(translateApi);
@@ -393,5 +394,58 @@ describe("importTranscriptText", () => {
     });
     const session = await storage.getSession(sessionId);
     expect(session!.title).toBe("导入的文稿 2026-03-15 09:30");
+  });
+});
+
+describe("importTranscriptText — translates through the user's engine (field-test regression)", () => {
+  beforeEach(() => {
+    memStore.clear();
+    (globalThis as { indexedDB?: unknown }).indexedDB = {} as never;
+    mockDetectApi.mockReset();
+    mockDetectApi.mockResolvedValue(emptyDetectRes());
+    mockTranslateApi.mockReset();
+    mockTranslateApi.mockResolvedValue(emptyTranslateRes());
+  });
+
+  const raw = ["Alice: first line.", "Bob: second line."].join("\n");
+
+  it("a supplied translator (e.g. the on-device 系统翻译 engine) is used instead of the LLM /api/translate — no key needed", async () => {
+    const translator: TranslationProvider = {
+      kind: "system",
+      prepare: vi.fn(),
+      translate: vi.fn(async (items: { id: string; text: string }[], lang: string) => {
+        expect(lang).toBe(DEFAULT_SETTINGS.explainLanguage);
+        return items.map((it) => ({ id: it.id, text: `zh:${it.text}` }));
+      }),
+    };
+    const { sessionId, warnings } = await importTranscriptText({
+      raw,
+      translate: true,
+      translator,
+      settings: makeSettings({ aiDetect: false }),
+      onProgress: vi.fn(),
+    });
+    const session = await storage.getSession(sessionId);
+    expect(Object.values(session!.translations ?? {})).toEqual(["zh:first line.", "zh:second line."]);
+    expect(mockTranslateApi).not.toHaveBeenCalled();
+    expect(warnings).toEqual([]);
+  });
+
+  it("an on-device engine that isn't ready stops translating with one warning pointing at 补全翻译 — no per-batch retries", async () => {
+    const translate = vi.fn(async () => {
+      throw new SystemTranslatorUnavailableError("downloading");
+    });
+    const translator: TranslationProvider = { kind: "system", prepare: vi.fn(), translate };
+    const { sessionId, warnings } = await importTranscriptText({
+      raw,
+      translate: true,
+      translator,
+      settings: makeSettings({ aiDetect: false }),
+      onProgress: vi.fn(),
+    });
+    expect(translate).toHaveBeenCalledTimes(1);
+    expect(warnings.some((w) => w.includes("补全翻译"))).toBe(true);
+    const session = await storage.getSession(sessionId);
+    expect(session!.segments).toHaveLength(2);
   });
 });
