@@ -14,7 +14,12 @@ import {
   type Settings,
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
-import { NoKeyError, RateLimitApiError, translateApi } from "../llm/client";
+import { NoKeyError, RateLimitApiError } from "../llm/client";
+import {
+  LlmTranslationProvider,
+  SystemTranslatorUnavailableError,
+  type TranslationProvider,
+} from "../translate/providers";
 import { formatLlmDetectFailureWarning, runDetectionPipeline } from "../stt/upload";
 import * as storage from "../history/storage";
 import { parseTranscript, ParseTranscriptError } from "./parseTranscript";
@@ -39,6 +44,10 @@ export interface ImportTextOptions {
   translate: boolean;
   settings: Settings;
   onProgress: (phase: "parse" | "detect" | "translate", done: number, total: number) => void;
+  /** The user's translation engine, already prepare()d by the caller
+   *  inside the 导入 click (Chrome's on-device Translator needs that live
+   *  user gesture — see prepareImportTranslator). Omitted: the LLM path. */
+  translator?: TranslationProvider;
 }
 
 export interface ImportTextResult {
@@ -110,7 +119,8 @@ function buildSegments(
   });
 }
 
-/** Sequential batches of TRANSLATE_BATCH_SIZE through /api/translate,
+/** Sequential batches of TRANSLATE_BATCH_SIZE through the user's
+ *  translation engine (`translator`; defaults to the LLM /api/translate),
  *  same rate-limit pacing shape as runDetectionPipeline: a 429 waits
  *  65s and retries the same batch, up to MAX_WAITS_PER_BATCH per batch
  *  and MAX_WAITS_PER_RUN for the whole call — beyond the run-level cap
@@ -125,6 +135,7 @@ export async function runTranslation(
   settings: Settings,
   warnings: string[],
   onProgress: ImportTextOptions["onProgress"],
+  translator: TranslationProvider = new LlmTranslationProvider(() => settings),
 ): Promise<Record<string, string>> {
   const translations: Record<string, string> = {};
   const batches: TranscriptSegment[][] = [];
@@ -141,16 +152,25 @@ export async function runTranslation(
 
     for (;;) {
       try {
-        const res = await translateApi(
-          {
-            segments: batch.map((s) => ({ id: s.id, text: s.text })),
-            lang: settings.explainLanguage,
-          },
-          settings,
+        const res = await translator.translate(
+          batch.map((s) => ({ id: s.id, text: s.text })),
+          settings.explainLanguage,
         );
-        for (const t of res.translations) translations[t.id] = t.text;
+        for (const t of res) translations[t.id] = t.text;
         break;
       } catch (err) {
+        if (err instanceof SystemTranslatorUnavailableError) {
+          // On-device engine not usable right now (pack still downloading,
+          // pair unsupported). Retrying per batch can't help; keep what
+          // landed and point at the post-import recovery path.
+          warnings.push(
+            err.reason === "downloading"
+              ? "系统翻译语言包下载中，部分内容未翻译，稍后可点「补全翻译」"
+              : "系统翻译在此设备不可用，已跳过中文对照（可在设置中更换翻译引擎）",
+          );
+          onProgress("translate", batches.length, batches.length);
+          return translations;
+        }
         if (
           err instanceof RateLimitApiError &&
           batchWaits < MAX_WAITS_PER_BATCH &&
@@ -202,7 +222,7 @@ export async function runTranslation(
 export async function importTranscriptText(
   opts: ImportTextOptions,
 ): Promise<ImportTextResult> {
-  const { raw, filename, translate, settings, onProgress } = opts;
+  const { raw, filename, translate, settings, onProgress, translator } = opts;
 
   onProgress("parse", 0, 1);
   const parsed = parseTranscript(raw, filename);
@@ -231,7 +251,7 @@ export async function importTranscriptText(
 
   let translations: Record<string, string> | undefined;
   if (translate && segments.length > 0) {
-    translations = await runTranslation(segments, settings, warnings, onProgress);
+    translations = await runTranslation(segments, settings, warnings, onProgress, translator);
   }
 
   const startedAt = segments.length > 0 ? segments[0].startedAt : base;

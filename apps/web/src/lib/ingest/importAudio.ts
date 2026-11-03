@@ -23,6 +23,7 @@
 import { type MeetingSession, type Settings } from "@jargonslayer/core/types";
 import { buildSessionFromSegments, type PlainTranscriptSegment } from "../stt/upload";
 import { runTranslation } from "./importText";
+import type { TranslationProvider } from "../translate/providers";
 import * as storage from "../history/storage";
 import { transcribeInBrowser, type TranscribedSegment } from "./whisperBrowser";
 import { isVideoFile, extractAudioFromVideo } from "./ffmpegExtract";
@@ -141,6 +142,8 @@ export interface ImportAudioOptions {
   file: File;
   translate: boolean;
   settings: Settings;
+  /** See ImportTextOptions.translator. */
+  translator?: TranslationProvider;
   // progress is undefined for the download phase whenever the CDN
   // response carried no Content-Length header — see whisper.worker.ts/
   // whisperBrowser.ts — so the task tray shows the (still honest) stage
@@ -161,7 +164,7 @@ export interface ImportAudioResult {
  *  transcribed TEXT reaches the detect/translate API calls, same
  *  privacy boundary as every other import path. */
 export async function importAudio(opts: ImportAudioOptions): Promise<ImportAudioResult> {
-  const { file, translate, settings, onProgress } = opts;
+  const { file, translate, settings, onProgress, translator } = opts;
 
   // Video routing (#43 phase 2b): a browser's AudioContext can't
   // decode a video container directly, so extract the audio track to
@@ -240,6 +243,7 @@ export async function importAudio(opts: ImportAudioOptions): Promise<ImportAudio
       settings,
       warnings,
       (_phase, done, total) => onProgress(total > 0 ? done / total : 0, "翻译"),
+      translator,
     );
     session.translations = translations;
   }
